@@ -7,7 +7,7 @@ symbols: ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
 time_horizons: ["1m"]
 
 # Date range for historical data
-start_date: "2026-06-23"
+start_date: "2023-01-01"
 end_date: "now"
 
 # How many candles to fetch per API call (Bybit max is 200)
