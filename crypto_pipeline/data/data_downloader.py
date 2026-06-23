@@ -19,6 +19,17 @@ from datetime import datetime, timezone
 # Set up logger for this module
 logger = logging.getLogger(__name__)
 
+# Maps each timeframe to the correct pandas Timedelta for one candle.
+# Used when computing actual_start for incremental runs so we step forward
+# by exactly one candle interval, not always one minute.
+_TIMEFRAME_DELTA = {
+    "1m":  pd.Timedelta(minutes=1),
+    "5m":  pd.Timedelta(minutes=5),
+    "15m": pd.Timedelta(minutes=15),
+    "1h":  pd.Timedelta(hours=1),
+    "1d":  pd.Timedelta(days=1),
+}
+
 
 # ── Helpers ─────────────────────────────────────────────────────────────────────
 
@@ -242,7 +253,7 @@ def download_data(config: dict, exchange_fetcher, conn):
                 last_timestamp = get_last_timestamp(conn, exchange, symbol, timeframe)
 
                 if last_timestamp:
-                    actual_start = last_timestamp + pd.Timedelta(minutes=1)
+                    actual_start = last_timestamp + _TIMEFRAME_DELTA[timeframe]
                     actual_start = _strip_tz(actual_start)
                     logger.info(f"Resuming from last stored timestamp: {actual_start}")
                 else:
