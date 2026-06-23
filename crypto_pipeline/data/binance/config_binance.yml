@@ -1,13 +1,13 @@
 # ── Binance Data Fetching Configuration ───────────────────────────────────────
 exchange: "binance"
 # Trading pairs to fetch
-symbols: ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
+symbols: ["doge"]
 
 # Candlestick timeframes to fetch
 time_horizons: ["1m"]
 
 # Date range for historical data
-start_date: "2026-06-23"
+start_date: "2023-01-01"
 end_date: "now"
 
 # How many candles to fetch per API call (Binance max is 1000)
