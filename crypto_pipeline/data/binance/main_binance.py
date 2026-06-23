@@ -1,14 +1,3 @@
-"""
-main_binance.py
----------------
-Entry point for the Binance data pipeline.
-Handles:
-    - Setting up logging
-    - Loading config from config_binance.yml
-    - Establishing PostgreSQL connection
-    - Calling the data downloader for all Binance symbols
-"""
-
 import logging
 import yaml
 from pathlib import Path
