@@ -163,8 +163,12 @@ def insert_candles(conn, exchange: str, symbol: str, timeframe: str, df):
     )
 
     rows = list(df[["date_time", "open", "high", "low", "close", "volume"]].itertuples(index=False, name=None))
-    cursor.executemany(insert_query, rows)
+
+    inserted = 0
+    for row in rows:
+        cursor.execute(insert_query, row)
+        inserted += cursor.rowcount
 
     conn.commit()
-    logger.info(f"Inserted {cursor.rowcount} new rows into {exchange}.{table_name}")
+    logger.info(f"Inserted {inserted} new rows into {exchange}.{table_name} (skipped {len(rows) - inserted} duplicates)")
     cursor.close()
