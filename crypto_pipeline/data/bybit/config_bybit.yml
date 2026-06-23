@@ -1,7 +1,7 @@
 # ── Bybit Data Fetching Configuration ─────────────────────────────────────────
 exchange: "bybit"
 # Trading pairs to fetch
-symbols: ["doge"]
+symbols: ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
 
 # Candlestick timeframes to fetch
 time_horizons: ["1m"]
