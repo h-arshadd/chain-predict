@@ -92,22 +92,18 @@ def parse_candles(raw_candles: list) -> pd.DataFrame:
         Clean pandas DataFrame with columns [date_time, open, high, low, close, volume],
         sorted oldest -> newest, with any exact-duplicate timestamps removed.
     """
-    records = []
-    for candle in raw_candles:
-        records.append({
-            # Bybit start_time is in milliseconds → convert to UTC datetime
-            "date_time": datetime.fromtimestamp(int(candle[0]) / 1000, tz=timezone.utc).replace(tzinfo=None),
-            "open":      float(candle[1]),
-            "high":      float(candle[2]),
-            "low":       float(candle[3]),
-            "close":     float(candle[4]),
-            "volume":    float(candle[5]),
-        })
+    if not raw_candles:
+        return pd.DataFrame()
 
-    df = pd.DataFrame(records)
-
-    if df.empty:
-        return df
+    # Bybit start_time is in milliseconds → convert to naive UTC datetime
+    df = pd.DataFrame([{
+        "date_time": datetime.fromtimestamp(int(c[0]) / 1000, tz=timezone.utc).replace(tzinfo=None),
+        "open":      float(c[1]),
+        "high":      float(c[2]),
+        "low":       float(c[3]),
+        "close":     float(c[4]),
+        "volume":    float(c[5]),
+    } for c in raw_candles])
 
     # Bybit returns newest first — sort to get chronological order.
     # Pagination batches can overlap at the edges (see fetch_candles below),
@@ -141,11 +137,10 @@ def fetch_candles(symbol: str, timeframe: str, start_date, end_date: datetime, c
     Args:
         symbol     : coin name from config e.g. "doge"
         timeframe  : e.g. "1m"
-        start_date : start date as either a "YYYY-MM-DD" string (used on a
-                     symbol's very first run, straight from the yml config)
-                     or a datetime/pandas Timestamp (used on incremental
-                     runs and gap-fills, computed from the last stored
-                     timestamp). Both forms are handled here.
+        start_date : start date as either a "YYYY-MM-DD" string (first run,
+                     straight from the yml config) or a datetime/pandas
+                     Timestamp (incremental run, computed from the last
+                     stored timestamp). Both forms are handled here.
         end_date   : datetime object for end of range
         config     : full config dictionary (for retries, delay, etc.)
 
@@ -181,16 +176,10 @@ def fetch_candles(symbol: str, timeframe: str, start_date, end_date: datetime, c
     retries     = config.get("retries", 5)
     retry_delay = config.get("retry_delay", 10)
 
-    # Candle duration in seconds, used to step the window backward by one
+    # Candle duration in seconds — used to step the window backward by one
     # candle so we don't re-fetch the oldest candle of the previous batch.
-    timeframe_seconds_map = {
-        "1m": 60,
-        "5m": 300,
-        "15m": 900,
-        "1h": 3600,
-        "1d": 86400,
-    }
-    step_seconds = timeframe_seconds_map.get(timeframe, 60)
+    _TIMEFRAME_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "1d": 86400}
+    step_seconds = _TIMEFRAME_SECONDS.get(timeframe, 60)
 
     all_candles = []
     current_end_sec = end_sec
