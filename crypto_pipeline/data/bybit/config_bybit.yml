@@ -1,0 +1,22 @@
+# ── Bybit Data Fetching Configuration ─────────────────────────────────────────
+exchange: "bybit"
+# Trading pairs to fetch
+symbols: ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
+
+# Candlestick timeframes to fetch
+time_horizons: ["1m"]
+
+# Date range for historical data
+start_date: "2026-06-23"
+end_date: "now"
+
+# How many candles to fetch per API call (Bybit max is 200)
+candles_per_fetch: 200
+
+# Missing candle handling
+filling_missing_method: "interpolation"
+fill_zero_volume: "ffill"
+
+# API retry settings
+retries: 5
+retry_delay: 10
