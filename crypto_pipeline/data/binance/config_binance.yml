@@ -1,21 +1,21 @@
 # ── Binance Data Fetching Configuration ───────────────────────────────────────
 exchange: "binance"
+
 # Trading pairs to fetch
 symbols: ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
 
 # Candlestick timeframes to fetch
 time_horizons: ["1m"]
 
-# Date range for historical data
-start_date: "2023-01-01"
-end_date: "now"
-
-# How many candles to fetch per API call (Binance max is 1000)
-candles_per_fetch: 1000
+# Date range for historical data (always fetches up to now)
+start_date: "2026-06-24"
 
 # Missing candle handling
 filling_missing_method: "interpolation"
+
 fill_zero_volume: "ffill"
+
+# Default timeframe to resample 1m data into for live/runtime use
 
 # API retry settings
 retries: 5

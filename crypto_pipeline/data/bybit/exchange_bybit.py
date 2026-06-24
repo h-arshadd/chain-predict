@@ -5,167 +5,66 @@ Handles all Bybit API interactions for fetching OHLCV candle data.
 Uses the pybit library.
 
 Key details:
-    - Bybit timestamps are in MILLISECONDS in the response — we convert to datetime
+    - Bybit timestamps are in MILLISECONDS
     - Uses linear perpetual contracts (linear category)
     - Fetches 200 candles per API call (Bybit max)
     - Retries on failure with configurable delay
-    - Bybit returns candles NEWEST FIRST — we must account for that during
-      pagination, not just at the end when we build the DataFrame
+    - Bybit returns candles NEWEST FIRST, so unlike Binance we paginate
+      backward from the end date instead of forward from the start
 """
 
 import time
 import logging
-import pandas as pd
 from datetime import datetime, timezone
 from pybit.unified_trading import HTTP
 
-# Set up logger for this module
 logger = logging.getLogger(__name__)
 
-# ── Timeframe mapping ──────────────────────────────────────────────────────────
-
-# Map our config timeframe strings to Bybit interval strings
-TIMEFRAME_MAP = {
-    "1m":  "1",
-    "5m":  "5",
-    "15m": "15",
-    "1h":  "60",
-    "1d":  "D",
-}
+INTERVAL = "1"          # Bybit's code for 1-minute candles
+STEP_SECONDS = 60        # length of one candle, used to step the window back
 
 
 class BybitExchange:
-    """
-    Handles all Bybit API interactions for fetching OHLCV candle data.
-    Uses the pybit library with linear perpetual contracts.
-
-    Bybit returns candles NEWEST FIRST, so pagination walks backward
-    from the end date rather than forward from the start.
-    """
 
     def __init__(self):
-        # Bybit client — no API key needed for public market data
+        # No API key needed for public market data
         self.client = HTTP()
 
-    # ── Raw candle fetcher ─────────────────────────────────────────────────────
-
-    def fetch_batch(self, symbol: str, interval: str, start_sec: int, end_sec: int) -> list:
+    def fetch_batch(self, symbol, start_sec, end_sec):
         """
-        Fetch a single batch of up to 200 candles from Bybit.
+        Fetch a single batch of up to 200 raw candles from Bybit.
         Uses linear category (linear perpetual contracts).
-
-        Args:
-            symbol    : trading pair e.g. "DOGEUSDT"
-            interval  : Bybit interval string e.g. "1"
-            start_sec : start timestamp in SECONDS
-            end_sec   : end timestamp in SECONDS
-
-        Returns:
-            List of raw candle data from Bybit API, NEWEST FIRST (as Bybit returns it)
         """
         response = self.client.get_kline(
-            category="linear",
+            category="spot",
             symbol=symbol,
-            interval=interval,
-            start=start_sec * 1000,   # Bybit API actually expects ms here
+            interval=INTERVAL,
+            start=start_sec * 1000,
             end=end_sec * 1000,
-            limit=200                  # maximum allowed per call
+            limit=200
         )
 
-        # Bybit response structure: response["result"]["list"]
         if response["retCode"] != 0:
             raise Exception(f"Bybit API error: {response['retMsg']}")
 
         return response["result"]["list"]
 
-    # ── Candle parser ──────────────────────────────────────────────────────────
-
-    def parse_candles(self, raw_candles: list) -> pd.DataFrame:
+    def fetch_candles(self, symbol, start_date, end_date, config):
         """
-        Parse raw Bybit API response into a clean OHLCV DataFrame.
+        Fetch all raw OHLCV candles for a symbol from Bybit in batches.
 
-        Bybit returns each candle as a list:
-            [start_time, open, high, low, close, volume, turnover]
+        Bybit returns the newest candles first inside a [start, end] window,
+        so we page by walking the end of the window backward after each
+        batch, then reverse everything into chronological order at the end.
 
-        Important: Bybit returns candles in DESCENDING order (newest first)
-        so we sort them into chronological order here.
+        start_date arrives as either a "YYYY-MM-DD" string (first run) or a
+        datetime/Timestamp (incremental run). Both are handled here.
 
-        Timestamps from Bybit are in MILLISECONDS in the response
-        — divide by 1000 to get seconds, then convert to UTC datetime.
-
-        Args:
-            raw_candles : list of raw candle lists from Bybit API
-
-        Returns:
-            Clean pandas DataFrame with columns [date_time, open, high, low, close, volume],
-            sorted oldest -> newest, with any exact-duplicate timestamps removed.
+        Returns raw candle lists, oldest to newest, ready for the same
+        parse_candles() used for Binance.
         """
-        if not raw_candles:
-            return pd.DataFrame()
-
-        # Bybit start_time is in milliseconds → convert to naive UTC datetime
-        df = pd.DataFrame([{
-            "date_time": datetime.fromtimestamp(int(c[0]) / 1000, tz=timezone.utc).replace(tzinfo=None),
-            "open":      float(c[1]),
-            "high":      float(c[2]),
-            "low":       float(c[3]),
-            "close":     float(c[4]),
-            "volume":    float(c[5]),
-        } for c in raw_candles])
-
-        # Bybit returns newest first — sort to get chronological order.
-        # Pagination batches can overlap at the edges (see fetch_candles below),
-        # so we also drop any duplicate timestamps here as a safety net before
-        # this DataFrame is ever reindexed against an expected_index elsewhere.
-        df = df.sort_values("date_time").drop_duplicates(subset="date_time", keep="last")
-        df = df.reset_index(drop=True)
-
-        return df
-
-    # ── Main fetch function ────────────────────────────────────────────────────
-
-    def fetch_candles(self, symbol: str, timeframe: str, start_date, end_date: datetime, config: dict) -> pd.DataFrame:
-        """
-        Fetch all historical OHLCV candles for a symbol from Bybit in batches.
-
-        IMPORTANT — how Bybit's get_kline actually paginates:
-        Given a [start, end] window, Bybit returns the MOST RECENT `limit`
-        candles inside that window (newest first), not the earliest ones. This
-        means the only reliable way to page through a large range is to walk
-        the END of the window BACKWARD after each batch — not push the start
-        forward. Pushing start forward (as a naive implementation might) barely
-        shrinks the effective window near the end date and causes the same
-        nearly-identical batch to be re-fetched over and over.
-
-        So this method fetches from the end of the range backward in chunks
-        of up to 200 candles, then reverses everything into chronological order
-        at the end.
-
-        Args:
-            symbol     : coin name from config e.g. "doge"
-            timeframe  : e.g. "1m"
-            start_date : start date as either a "YYYY-MM-DD" string (first run,
-                         straight from the yml config) or a datetime/pandas
-                         Timestamp (incremental run, computed from the last
-                         stored timestamp). Both forms are handled here.
-            end_date   : datetime object for end of range
-            config     : full config dictionary (for retries, delay, etc.)
-
-        Returns:
-            Combined DataFrame of all fetched candles, chronologically sorted,
-            with duplicate timestamps removed.
-        """
-        # Append USDT to make the full trading pair symbol
         full_symbol = f"{symbol.upper()}USDT"
 
-        # Get Bybit interval string
-        interval = TIMEFRAME_MAP.get(timeframe)
-        if not interval:
-            raise ValueError(f"Unsupported timeframe: {timeframe}")
-
-        # start_date arrives as either a "YYYY-MM-DD" string (first run) or a
-        # datetime/Timestamp (incremental run / gap-fill). Normalize both into
-        # a tz-aware UTC datetime, same approach as exchange_binance.py.
         if isinstance(start_date, str):
             start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         else:
@@ -179,31 +78,22 @@ class BybitExchange:
         start_sec = int(start_dt.timestamp())
         end_sec   = int(end_date.timestamp())
 
-        # Read retry settings from config
         retries     = config.get("retries", 5)
         retry_delay = config.get("retry_delay", 10)
-
-        # Candle duration in seconds — used to step the window backward by one
-        # candle so we don't re-fetch the oldest candle of the previous batch.
-        _TIMEFRAME_SECONDS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "1d": 86400}
-        step_seconds = _TIMEFRAME_SECONDS.get(timeframe, 60)
 
         all_candles = []
         current_end_sec = end_sec
 
-        logger.info(f"Fetching Bybit candles for {full_symbol} | {timeframe} | from {start_date} to {end_date}")
+        logger.info(f"Fetching Bybit candles for {full_symbol} | from {start_date} to {end_date}")
 
-        # ── Pagination loop ────────────────────────────────────────────────────
-        # Walk backward from end_sec toward start_sec, one ~200-candle batch at a time.
         while current_end_sec > start_sec:
             attempt = 0
             batch = None
 
-            # ── Retry loop ─────────────────────────────────────────────────────
             while attempt < retries:
                 try:
-                    batch = self.fetch_batch(full_symbol, interval, start_sec, current_end_sec)
-                    break  # success — exit retry loop
+                    batch = self.fetch_batch(full_symbol, start_sec, current_end_sec)
+                    break
 
                 except Exception as e:
                     attempt += 1
@@ -215,41 +105,26 @@ class BybitExchange:
                         logger.error(f"All {retries} attempts failed for {full_symbol}. Skipping batch.")
                         break
 
-            # If batch is empty or None, there's nothing left in this range.
             if not batch:
                 break
 
             all_candles.extend(batch)
 
-            # Bybit returns this batch NEWEST FIRST, so the OLDEST candle in the
-            # batch is the LAST item in the list. Step the window's end back to
-            # just before that candle, so the next call asks for everything
-            # strictly older than what we already have.
-            oldest_candle_in_batch_ms = int(batch[-1][0])
-            oldest_candle_in_batch_sec = oldest_candle_in_batch_ms // 1000
-            current_end_sec = oldest_candle_in_batch_sec - step_seconds
+            # Batch is newest-first, so the oldest candle is the last item.
+            # Step the window's end back to just before it.
+            oldest_candle_sec = int(batch[-1][0]) // 1000
+            current_end_sec = oldest_candle_sec - STEP_SECONDS
 
             logger.info(f"Fetched batch of {len(batch)} candles. Total so far: {len(all_candles)}")
-
-            # Small delay to be respectful to the API rate limits
             time.sleep(0.1)
 
         if not all_candles:
             logger.warning(f"No candles fetched for {full_symbol}.")
-            return pd.DataFrame()
+            return []
 
-        # Parse all raw candles into a clean, sorted, de-duplicated DataFrame.
-        # parse_candles() sorts ascending and drops duplicate timestamps, which
-        # also cleans up any small overlap at batch boundaries.
-        df = self.parse_candles(all_candles)
-        logger.info(f"Total candles fetched for {full_symbol}: {len(df)}")
+        # Bybit gives candles newest-first — reverse to chronological order
+        # so parse_candles() in data_downloader.py gets the same order Binance gives it.
+        all_candles.reverse()
 
-        return df
-
-
-# ── Module-level instance and convenience function (backward-compatible wrapper) ─
-
-_bybit_exchange = BybitExchange()
-
-def fetch_candles(symbol: str, timeframe: str, start_date, end_date: datetime, config: dict) -> pd.DataFrame:
-    return _bybit_exchange.fetch_candles(symbol, timeframe, start_date, end_date, config)
+        logger.info(f"Total raw candles fetched for {full_symbol}: {len(all_candles)}")
+        return all_candles
