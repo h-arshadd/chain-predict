@@ -24,6 +24,7 @@ from crypto_pipeline.utils.db_utils import (
 logger = logging.getLogger(__name__)
 
 TIMEFRAME_DELTA = pd.Timedelta(minutes=1)
+CANDLE_COLUMNS = ["datetime", "open", "high", "low", "close", "volume"]
 
 
 class DataDownloader:
@@ -42,14 +43,9 @@ class DataDownloader:
         if not raw_candles:
             return pd.DataFrame()
 
-        df = pd.DataFrame([{
-            "datetime": datetime.fromtimestamp(int(c[0]) / 1000, tz=timezone.utc).replace(tzinfo=None),
-            "open":      float(c[1]),
-            "high":      float(c[2]),
-            "low":       float(c[3]),
-            "close":     float(c[4]),
-            "volume":    float(c[5]),
-        } for c in raw_candles])
+        df = pd.DataFrame(raw_candles, columns=CANDLE_COLUMNS)
+        df["datetime"] = pd.to_datetime(df["datetime"].astype(int), unit="ms", utc=True).dt.tz_localize(None)
+        df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
 
         return df
 
@@ -141,9 +137,6 @@ class DataDownloader:
         expected_index = pd.date_range(start=actual_start, end=end_date - TIMEFRAME_DELTA, freq="1min", name="date_time")
         df = self.fill_missing_candles(df, expected_index, filling_method)
         df = self.fill_zero_volume(df, zero_volume_method)
-
-        # Volume as % change vs previous candle (makes it comparable across coins)
-        df["volume"] = df["volume"].pct_change().fillna(0) * 100
 
         # Rounding removed — store full precision from exchange
 
