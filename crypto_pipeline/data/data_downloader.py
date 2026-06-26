@@ -96,7 +96,7 @@ class DataDownloader:
         If df is not given, reads the stored 1m candles for the symbol from the DB.
         Pass df directly to resample data that isn't (or isn't only) in the DB yet.
 
-        Returns a DataFrame with columns: date_time, open, high, low, close, volume
+        Returns a DataFrame with columns: datetime, open, high, low, close, volume
         """
         # if df is None:
         #     df = get_candles(self.conn, exchange, symbol)
@@ -105,7 +105,7 @@ class DataDownloader:
         #     logger.warning(f"No 1m data found for {exchange} | {symbol}. Cannot resample.")
         #     return df
 
-        # df = df.set_index("date_time")
+        # df = df.set_index("datetime")
 
         # pandas resample needs "5min" not "5m" — only the minute suffix differs
         pandas_timeframe = timeframe.replace("m", "min") if timeframe.endswith("m") else timeframe
@@ -127,14 +127,14 @@ class DataDownloader:
         Apply the same cleaning steps used in download() to a raw 1m DataFrame:
         fill missing candles, fill zero volume, convert volume to % change, round.
 
-        df must have a "date_time" column (not yet set as index).
-        Returns a cleaned DataFrame with "date_time" as a column again.
+        df must have a "datetime" column (not yet set as index).
+        Returns a cleaned DataFrame with "datetime" as a column again.
         """
-        df = df.set_index("date_time")
+        df = df.set_index("datetime")
         if df.index.tz is not None:
             df.index = df.index.tz_localize(None)
 
-        expected_index = pd.date_range(start=actual_start, end=end_date - TIMEFRAME_DELTA, freq="1min", name="date_time")
+        expected_index = pd.date_range(start=actual_start, end=end_date - TIMEFRAME_DELTA, freq="1min", name="datetime")
         df = self.fill_missing_candles(df, expected_index, filling_method)
         df = self.fill_zero_volume(df, zero_volume_method)
 
@@ -142,49 +142,45 @@ class DataDownloader:
 
         return df.reset_index()
 
-    def get_data(self, exchange, symbol, resample_timeframe, start_date=None, end_date=None, df_1m=False):
+    def get_data(self, exchange, symbol, resample_timeframe, start_date, end_date, df_1m=False):
         """
-        Get the most current data for a symbol, in both 1-minute and the
-        requested bigger timeframe, even if the DB hasn't caught up yet.
+        Get 1-minute and resampled data for a symbol between start_date and end_date.
 
-        Reads whatever 1m data is already in the DB. If it's behind the
-        current minute, fetches the missing recent candles directly from
-        the exchange (without saving them), cleans them the same way
-        download() does, and combines both into one continuous 1m series,
-        then resamples that into the timeframe.
+        end_date can be "now" (use the current time) or a fixed datetime.
+
+        Reads whatever 1m data is already in the DB for [start_date, end_date].
+        If the DB hasn't caught up to end_date yet, fetches the missing recent
+        candles directly from the exchange (without saving them) and combines
+        both into one continuous 1m series, then resamples that into the timeframe.
 
         Runtime only — nothing is written to the DB.
 
         Returns a dict: {"one_min": DataFrame, "resampled": DataFrame}
         """
-        # filling_method = self.config["filling_missing_method"]
-        # zero_volume_method = self.config["fill_zero_volume"]
+        if end_date == "now":
+            end_date = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
 
-        db_df = get_candles(self.conn, exchange, symbol)
+        last_complete_minute = end_date - TIMEFRAME_DELTA
 
-        now = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
-        last_complete_minute = now - TIMEFRAME_DELTA
-
-        db_last_timestamp = db_df["date_time"].max() if not db_df.empty else None
+        db_last_timestamp = get_last_timestamp(self.conn, exchange, symbol)
 
         is_stale = db_last_timestamp is None or db_last_timestamp < last_complete_minute
 
         if is_stale:
-            fetch_start = (db_last_timestamp + TIMEFRAME_DELTA) if db_last_timestamp is not None else self.config["start_date"]
-            logger.info(f"DB data for {exchange} | {symbol} is behind. Fetching live gap from {fetch_start} to {now}.")
+            fetch_start = (db_last_timestamp + TIMEFRAME_DELTA) if db_last_timestamp is not None else start_date
+            logger.info(f"DB data for {exchange} | {symbol} is behind. Fetching live gap from {fetch_start} to {end_date}.")
 
             try:
                 raw_candles = self.exchange_fetcher.fetch_candles(
                     symbol=symbol,
                     start_date=fetch_start,
-                    end_date=now,
+                    end_date=end_date,
                     config=self.config
                 )
                 live_df = self.parse_candles(raw_candles)
 
                 if not live_df.empty:
                     live_df = live_df.iloc[:-1]  # drop the still-forming current-minute candle
-                    live_df = self.clean_candles(live_df, fetch_start, now, filling_method, zero_volume_method)
 
             except Exception as e:
                 logger.error(f"Live fetch failed for {exchange} | {symbol}: {e}. Using DB data only.")
@@ -192,13 +188,17 @@ class DataDownloader:
         else:
             live_df = pd.DataFrame()
 
+        db_df = get_candles(self.conn, exchange, symbol, start_date, end_date)
         one_min_df = pd.concat([db_df, live_df], ignore_index=True)
-        one_min_df = one_min_df.drop_duplicates(subset="date_time", keep="last").sort_values("date_time")
+        # one_min_df = one_min_df.drop_duplicates(subset="datetime", keep="last")
+        one_min_df = one_min_df.sort_values("datetime")
         one_min_df = one_min_df.reset_index(drop=True)
 
-        resampled_df = self.resample(exchange, symbol, timeframe, df=one_min_df)
+        resampled_df = self.resample(exchange, symbol, resample_timeframe, df=one_min_df)
 
-        return {"one_min": one_min_df, "resampled": resampled_df}
+        if df_1m:
+            return {"one_min": one_min_df, "resampled": resampled_df}
+        return {"resampled": resampled_df}
 
     def download(self):
         config             = self.config
