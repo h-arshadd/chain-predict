@@ -129,24 +129,24 @@ def insert_candles(conn, exchange, symbol, df):
     logger.info(f"Inserted {inserted} new rows into {exchange}.{table_name} (skipped {len(rows) - inserted} duplicates)")
 
 
-def get_candles(conn, exchange, symbol):
+def get_candles(conn, exchange, symbol, start_date, end_date):
     """
-    Return all stored 1m candles for a symbol as a DataFrame.
-    Columns: date_time, open, high, low, close, volume
+    Return stored 1m candles for a symbol between start_date and end_date (inclusive), as a DataFrame.
+    Columns: datetime, open, high, low, close, volume
     """
-    conn = get_db_connection()
     cursor = conn.cursor()
     table_name = f"{symbol}_{TIMEFRAME}"
 
     cursor.execute(sql.SQL(
-        "SELECT date_time, open, high, low, close, volume FROM {schema}.{table} ORDER BY date_time"
+        "SELECT date_time, open, high, low, close, volume FROM {schema}.{table} "
+        "WHERE date_time BETWEEN %s AND %s ORDER BY date_time"
     ).format(
         schema=sql.Identifier(exchange),
         table=sql.Identifier(table_name)
-    ))
+    ), (start_date, end_date))
     rows = cursor.fetchall()
     cursor.close()
 
-    df = pd.DataFrame(rows, columns=["date_time", "open", "high", "low", "close", "volume"])
-    df["date_time"] = pd.to_datetime(df["date_time"])
+    df = pd.DataFrame(rows, columns=["datetime", "open", "high", "low", "close", "volume"])
+    df["datetime"] = pd.to_datetime(df["datetime"])
     return df
