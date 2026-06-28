@@ -6,8 +6,9 @@ symbols: ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
 # Candlestick timeframes to fetch
 time_horizons: ["1m"]
 
-# Date range for historical data (always fetches up to now)
+# Date range for historical data
 start_date: "2026-06-24"
+end_date: "now"  # "now" or a fixed date like "2026-06-24"
 
 # Missing candle handling
 filling_missing_method: "interpolation"

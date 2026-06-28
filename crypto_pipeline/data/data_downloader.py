@@ -49,6 +49,87 @@ class DataDownloader:
 
         return df
 
+    # ----- used by get_data() -----
+
+    def resample(self, timeframe, df):
+        """
+        Resample 1-minute candles into a bigger timeframe.
+        timeframe must be a pandas-native offset string, e.g. "5min", "1h", "1D".
+
+        df must already be indexed by datetime.
+        Returns a DataFrame with columns: datetime, open, high, low, close, volume
+        """
+        resampled = df.resample(timeframe).agg({
+            "open":   "first",
+            "high":   "max",
+            "low":    "min",
+            "close":  "last",
+            "volume": "sum",
+        })
+
+        resampled = resampled.reset_index()
+        return resampled
+
+    def get_data(self, exchange, symbol, start_date, end_date, df_1m=False):
+        """
+        Get 1-minute and resampled data for a symbol between start_date and end_date.
+
+        end_date can be "now" (use the current time) or a fixed datetime.
+
+        Reads whatever 1m data is already in the DB for [start_date, end_date].
+        If the DB hasn't caught up to end_date yet, fetches the missing recent
+        candles directly from the exchange (without saving them) and combines
+        both into one continuous 1m series, then resamples that into the timeframe.
+
+        Runtime only — nothing is written to the DB.
+
+        Returns a dict: {"one_min": DataFrame, "resampled": DataFrame}
+        """
+        resample_timeframe = "5min"  # TODO: not finalized yet, hardcoded for now
+
+        if end_date == "now":
+            end_date = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
+
+        last_complete_minute = end_date - TIMEFRAME_DELTA
+
+        db_last_timestamp = get_last_timestamp(self.conn, exchange, symbol)
+
+        is_stale = db_last_timestamp is None or db_last_timestamp < last_complete_minute
+
+        if is_stale:
+            fetch_start = (db_last_timestamp + TIMEFRAME_DELTA) if db_last_timestamp is not None else start_date
+            logger.info(f"DB data for {exchange} | {symbol} is behind. Fetching live gap from {fetch_start} to {end_date}.")
+
+            try:
+                raw_candles = self.exchange_fetcher.fetch_candles(
+                    symbol=symbol,
+                    start_date=fetch_start,
+                    end_date=end_date,
+                    config=self.config
+                )
+                live_df = self.parse_candles(raw_candles)
+
+                if not live_df.empty:
+                    live_df = live_df.iloc[:-1]  # drop the still-forming current-minute candle
+
+            except Exception as e:
+                logger.error(f"Live fetch failed for {exchange} | {symbol}: {e}. Using DB data only.")
+                live_df = pd.DataFrame()
+        else:
+            live_df = pd.DataFrame()
+
+        db_df = get_candles(self.conn, exchange, symbol, start_date, end_date)
+        one_min_df = pd.concat([db_df, live_df], ignore_index=True)
+
+        resampled_df = self.resample(resample_timeframe, df=one_min_df.set_index("datetime"))
+        logger.info(f"Resampled {exchange} | {symbol} into {resample_timeframe}: {len(resampled_df)} candles")
+
+        if df_1m:
+            return {"one_min": one_min_df, "resampled": resampled_df}
+        return {"resampled": resampled_df}
+
+    # ----- used by download() -----
+
     def fill_missing_candles(self, df, expected_index, method):
         if df.index.duplicated().any():
             dup_count = df.index.duplicated().sum()
@@ -89,39 +170,6 @@ class DataDownloader:
 
         return df
 
-    def resample(self, exchange, symbol, timeframe, df=None):
-        """
-        Resample 1-minute candles into a bigger timeframe (e.g. "5m", "15m", "1h", "1d").
-
-        If df is not given, reads the stored 1m candles for the symbol from the DB.
-        Pass df directly to resample data that isn't (or isn't only) in the DB yet.
-
-        Returns a DataFrame with columns: datetime, open, high, low, close, volume
-        """
-        # if df is None:
-        #     df = get_candles(self.conn, exchange, symbol)
-
-        # if df.empty:
-        #     logger.warning(f"No 1m data found for {exchange} | {symbol}. Cannot resample.")
-        #     return df
-
-        # df = df.set_index("datetime")
-
-        # pandas resample needs "5min" not "5m" — only the minute suffix differs
-        pandas_timeframe = timeframe.replace("m", "min") if timeframe.endswith("m") else timeframe
-
-        resampled = df.resample(pandas_timeframe).agg({
-            "open":   "first",
-            "high":   "max",
-            "low":    "min",
-            "close":  "last",
-            "volume": "sum",
-        })
-
-        resampled = resampled.reset_index()
-        logger.info(f"Resampled {exchange} | {symbol} into {timeframe}: {len(resampled)} candles")
-        return resampled
-
     def clean_candles(self, df, actual_start, end_date, filling_method, zero_volume_method):
         """
         Apply the same cleaning steps used in download() to a raw 1m DataFrame:
@@ -141,64 +189,6 @@ class DataDownloader:
         # Rounding removed — store full precision from exchange
 
         return df.reset_index()
-
-    def get_data(self, exchange, symbol, resample_timeframe, start_date, end_date, df_1m=False):
-        """
-        Get 1-minute and resampled data for a symbol between start_date and end_date.
-
-        end_date can be "now" (use the current time) or a fixed datetime.
-
-        Reads whatever 1m data is already in the DB for [start_date, end_date].
-        If the DB hasn't caught up to end_date yet, fetches the missing recent
-        candles directly from the exchange (without saving them) and combines
-        both into one continuous 1m series, then resamples that into the timeframe.
-
-        Runtime only — nothing is written to the DB.
-
-        Returns a dict: {"one_min": DataFrame, "resampled": DataFrame}
-        """
-        if end_date == "now":
-            end_date = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
-
-        last_complete_minute = end_date - TIMEFRAME_DELTA
-
-        db_last_timestamp = get_last_timestamp(self.conn, exchange, symbol)
-
-        is_stale = db_last_timestamp is None or db_last_timestamp < last_complete_minute
-
-        if is_stale:
-            fetch_start = (db_last_timestamp + TIMEFRAME_DELTA) if db_last_timestamp is not None else start_date
-            logger.info(f"DB data for {exchange} | {symbol} is behind. Fetching live gap from {fetch_start} to {end_date}.")
-
-            try:
-                raw_candles = self.exchange_fetcher.fetch_candles(
-                    symbol=symbol,
-                    start_date=fetch_start,
-                    end_date=end_date,
-                    config=self.config
-                )
-                live_df = self.parse_candles(raw_candles)
-
-                if not live_df.empty:
-                    live_df = live_df.iloc[:-1]  # drop the still-forming current-minute candle
-
-            except Exception as e:
-                logger.error(f"Live fetch failed for {exchange} | {symbol}: {e}. Using DB data only.")
-                live_df = pd.DataFrame()
-        else:
-            live_df = pd.DataFrame()
-
-        db_df = get_candles(self.conn, exchange, symbol, start_date, end_date)
-        one_min_df = pd.concat([db_df, live_df], ignore_index=True)
-        # one_min_df = one_min_df.drop_duplicates(subset="datetime", keep="last")
-        one_min_df = one_min_df.sort_values("datetime")
-        one_min_df = one_min_df.reset_index(drop=True)
-
-        resampled_df = self.resample(exchange, symbol, resample_timeframe, df=one_min_df)
-
-        if df_1m:
-            return {"one_min": one_min_df, "resampled": resampled_df}
-        return {"resampled": resampled_df}
 
     def download(self):
         config             = self.config
