@@ -2,14 +2,13 @@ import logging
 from pathlib import Path
 
 from crypto_pipeline.utils.db_utils import get_db_connection
-from crypto_pipeline.utils.pipeline_utils import setup_logging, load_config
+from crypto_pipeline.utils.pipeline_utils import initialize_pipeline
 from crypto_pipeline.data.data_downloader import DataDownloader
 from crypto_pipeline.data.bybit.exchange_bybit import BybitExchange
 
 
 def main():
-    config = load_config(Path(__file__).parent / "config_bybit.yml")
-    setup_logging(config["exchange"])
+    config = initialize_pipeline(Path(__file__).parent / "config_bybit.yml")
     logger = logging.getLogger(__name__)
 
     logger.info("Starting Bybit data pipeline")
@@ -21,7 +20,12 @@ def main():
         downloader.download()
 
         for symbol in config["symbols"]:
-            downloader.get_data(exchange=config["exchange"], symbol=symbol, timeframe="5m")
+            downloader.get_data(
+                exchange=config["exchange"],
+                symbol=symbol,
+                start_date=config["start_date"],
+                end_date=config["end_date"]
+            )
 
         logger.info("Bybit data pipeline completed successfully.")
 
