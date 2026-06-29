@@ -20,6 +20,11 @@ Layout per chart:
   9.  OBV
   10. Parabolic SAR
 
+Data comes from DataDownloader.get_data(), not a direct DB read — get_data
+already merges whatever's stored with any live gap (fetching from the
+exchange itself if the DB hasn't caught up) and resamples it into the
+configured timeframe before handing it back.
+
 Output:
   One HTML file per indicator saved to ./indicator_charts/
   Open any file in a browser — fully interactive (zoom, hover, etc.)
@@ -35,7 +40,9 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from crypto_pipeline.utils.db_utils import get_db_connection, get_candles_from_db
+from crypto_pipeline.utils.db_utils import get_db_connection
+from crypto_pipeline.data.data_downloader import DataDownloader
+from crypto_pipeline.data.binance.exchange_binance import BinanceExchange
 from crypto_pipeline.indicators.talib_indicators import (
     # overlap
     overlap_bbands,
@@ -70,7 +77,10 @@ OUTPUT_DIR = "indicator_charts"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 conn = get_db_connection()
-df   = get_candles_from_db(conn, EXCHANGE, SYMBOL, START, END)
+
+downloader = DataDownloader(config={}, exchange_fetcher=BinanceExchange(), conn=conn)
+df = downloader.get_data(exchange=EXCHANGE, symbol=SYMBOL, start_date=START, end_date=END)["resampled"]
+
 conn.close()
 
 if df.empty:
@@ -95,6 +105,40 @@ cci    = momentum_cci(df, period=14)
 stoch  = momentum_stoch(df)
 atr    = volatility_atr(df, period=14)
 obv    = volume_obv(df)
+
+# ---------------------------------------------------------------------------
+# Drop leading NaN rows so every chart starts where all indicators are valid
+# ---------------------------------------------------------------------------
+
+# Find the first index where every indicator has a value.
+# MACD (26 slow + 9 signal) is the slowest so it drives this.
+valid_from = max(
+    rsi.first_valid_index(),
+    macd["macd"].first_valid_index(),
+    bbands["upper"].first_valid_index(),
+    ema20.first_valid_index(),
+    atr.first_valid_index(),
+    adx.first_valid_index(),
+    cci.first_valid_index(),
+    stoch["slowk"].first_valid_index(),
+    obv.first_valid_index(),
+    # sar can start from index 0 depending on implementation; include it anyway
+    sar.first_valid_index(),
+)
+
+df     = df.iloc[valid_from:].reset_index(drop=True)
+bbands = {k: v.iloc[valid_from:].reset_index(drop=True) for k, v in bbands.items()}
+ema20  = ema20.iloc[valid_from:].reset_index(drop=True)
+sar    = sar.iloc[valid_from:].reset_index(drop=True)
+rsi    = rsi.iloc[valid_from:].reset_index(drop=True)
+macd   = {k: v.iloc[valid_from:].reset_index(drop=True) for k, v in macd.items()}
+adx    = adx.iloc[valid_from:].reset_index(drop=True)
+cci    = cci.iloc[valid_from:].reset_index(drop=True)
+stoch  = {k: v.iloc[valid_from:].reset_index(drop=True) for k, v in stoch.items()}
+atr    = atr.iloc[valid_from:].reset_index(drop=True)
+obv    = obv.iloc[valid_from:].reset_index(drop=True)
+
+print(f"After NaN trim: {len(df)} candles  ({df['datetime'].iloc[0]} → {df['datetime'].iloc[-1]})")
 
 # ---------------------------------------------------------------------------
 # Helpers

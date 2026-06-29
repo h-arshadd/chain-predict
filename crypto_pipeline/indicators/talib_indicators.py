@@ -35,16 +35,6 @@ After the C library is installed:
 import pandas as pd
 import talib
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _to_float(df, *cols):
-    """Return numpy arrays for requested columns."""
-    return tuple(df[c].values for c in cols)
-
-
 # ---------------------------------------------------------------------------
 # Overlap Studies
 # ---------------------------------------------------------------------------
