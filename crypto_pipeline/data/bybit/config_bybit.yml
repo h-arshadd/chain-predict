@@ -1,13 +1,13 @@
 # ── Binance Data Fetching Configuration ───────────────────────────────────────
 exchange: "bybit"
 # Trading pairs to fetch
-symbols: ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
+symbols: ["doge", "sol", "btc"]
 
 # Candlestick timeframes to fetch
 time_horizons: ["1m"]
 
 # Date range for historical data
-start_date: "2026-06-24"
+start_date: "2026-06-29"
 end_date: "now"  # "now" or a fixed date like "2026-06-24"
 
 # Missing candle handling

@@ -18,7 +18,7 @@ import numpy as np
 from datetime import datetime, timezone
 
 from crypto_pipeline.utils.db_utils import (
-    insert_candles, create_tables, get_last_timestamp, get_candles
+    insert_candles, create_tables, get_last_timestamp, get_candles_from_db
 )
 
 logger = logging.getLogger(__name__)
@@ -118,7 +118,7 @@ class DataDownloader:
         else:
             live_df = pd.DataFrame()
 
-        db_df = get_candles(self.conn, exchange, symbol, start_date, end_date)
+        db_df = get_candles_from_db(self.conn, exchange, symbol, start_date, end_date)
         one_min_df = pd.concat([db_df, live_df], ignore_index=True)
 
         resampled_df = self.resample(resample_timeframe, df=one_min_df.set_index("datetime"))
