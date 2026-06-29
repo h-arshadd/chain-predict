@@ -41,14 +41,13 @@ import talib
 # ---------------------------------------------------------------------------
 
 def _to_float(df, *cols):
-    """Cast requested columns to float64 and return their numpy arrays."""
-    return tuple(df[c].astype(float).values for c in cols)
+    """Return numpy arrays for requested columns."""
+    return tuple(df[c].values for c in cols)
 
 
 # ---------------------------------------------------------------------------
 # Overlap Studies
 # ---------------------------------------------------------------------------
-
 def overlap_bbands(df, period=20, nbdev_up=2.0, nbdev_dn=2.0, matype=0):
     """
     Bollinger Bands — upper / middle / lower bands around a moving average.
@@ -63,7 +62,7 @@ def overlap_bbands(df, period=20, nbdev_up=2.0, nbdev_dn=2.0, matype=0):
         nbdev_dn:  std dev multiplier for lower band (default 2.0)
         matype:    moving average type (0=SMA, 1=EMA, ...)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     upper, middle, lower = talib.BBANDS(
         close, timeperiod=period, nbdevup=nbdev_up, nbdevdn=nbdev_dn, matype=matype
     )
@@ -73,8 +72,7 @@ def overlap_bbands(df, period=20, nbdev_up=2.0, nbdev_dn=2.0, matype=0):
         "middle": pd.Series(middle, index=idx).shift(1),
         "lower":  pd.Series(lower,  index=idx).shift(1),
     }
-
-
+    
 def overlap_dema(df, period=30):
     """
     Double Exponential Moving Average — reduces EMA lag by doubling the EMA
@@ -83,7 +81,7 @@ def overlap_dema(df, period=30):
     Args:
         period: lookback window (default 30)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.DEMA(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -95,7 +93,7 @@ def overlap_ema(df, period=20):
     Args:
         period: lookback window (default 20)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.EMA(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -106,7 +104,7 @@ def overlap_ht_trendline(df):
     Adaptive cycle-based trendline; no period parameter needed.
     Applied to close.
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.HT_TRENDLINE(close)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -119,7 +117,7 @@ def overlap_kama(df, period=30):
     Args:
         period: lookback window (default 30)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.KAMA(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -135,7 +133,7 @@ def overlap_ma(df, period=30, matype=0):
         period: lookback window (default 30)
         matype: MA type integer (default 0 = SMA)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.MA(close, timeperiod=period, matype=matype)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -151,7 +149,7 @@ def overlap_mama(df, fastlimit=0.5, slowlimit=0.05):
         fastlimit: upper alpha limit (default 0.5)
         slowlimit: lower alpha limit (default 0.05)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     mama, fama = talib.MAMA(close, fastlimit=fastlimit, slowlimit=slowlimit)
     idx = df.index
     return {
@@ -171,7 +169,7 @@ def overlap_mavp(df, periods_col, minperiod=2, maxperiod=30, matype=0):
         maxperiod:   ceiling for period values (default 30)
         matype:      MA type (default 0 = SMA)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     periods = df[periods_col].astype(float).values
     result = talib.MAVP(
         close, periods, minperiod=minperiod, maxperiod=maxperiod, matype=matype
@@ -187,7 +185,7 @@ def overlap_midpoint(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.MIDPOINT(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -200,7 +198,7 @@ def overlap_midprice(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    high, low = _to_float(df, "high", "low")
+    high, low = df["high"].values, df["low"].values
     result = talib.MIDPRICE(high, low, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -214,7 +212,7 @@ def overlap_sar(df, acceleration=0.02, maximum=0.2):
         acceleration: AF starting value (default 0.02)
         maximum:      AF ceiling (default 0.2)
     """
-    high, low = _to_float(df, "high", "low")
+    high, low = df["high"].values, df["low"].values
     result = talib.SAR(high, low, acceleration=acceleration, maximum=maximum)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -236,7 +234,7 @@ def overlap_sarext(
 
     Uses high and low columns.
     """
-    high, low = _to_float(df, "high", "low")
+    high, low = df["high"].values, df["low"].values
     result = talib.SAREXT(
         high,
         low,
@@ -259,7 +257,7 @@ def overlap_sma(df, period=20):
     Args:
         period: lookback window (default 20)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.SMA(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -273,7 +271,7 @@ def overlap_t3(df, period=5, vfactor=0.7):
         period:  lookback window (default 5)
         vfactor: smoothing aggressiveness, 0..1 (default 0.7)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.T3(close, timeperiod=period, vfactor=vfactor)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -286,7 +284,7 @@ def overlap_tema(df, period=30):
     Args:
         period: lookback window (default 30)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.TEMA(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -299,7 +297,7 @@ def overlap_trima(df, period=30):
     Args:
         period: lookback window (default 30)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.TRIMA(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -312,7 +310,7 @@ def overlap_wma(df, period=30):
     Args:
         period: lookback window (default 30)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.WMA(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -330,7 +328,7 @@ def momentum_adx(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    high, low, close = _to_float(df, "high", "low", "close")
+    high, low, close = df["high"].values, df["low"].values, df["close"].values
     result = talib.ADX(high, low, close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -344,7 +342,7 @@ def momentum_adxr(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    high, low, close = _to_float(df, "high", "low", "close")
+    high, low, close = df["high"].values, df["low"].values, df["close"].values
     result = talib.ADXR(high, low, close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -359,7 +357,7 @@ def momentum_apo(df, fastperiod=12, slowperiod=26, matype=0):
         slowperiod: slow MA window (default 26)
         matype:     MA type (default 0 = SMA)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.APO(close, fastperiod=fastperiod, slowperiod=slowperiod, matype=matype)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -375,7 +373,7 @@ def momentum_aroon(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    high, low = _to_float(df, "high", "low")
+    high, low = df["high"].values, df["low"].values
     aroon_down, aroon_up = talib.AROON(high, low, timeperiod=period)
     idx = df.index
     return {
@@ -393,7 +391,7 @@ def momentum_aroonosc(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    high, low = _to_float(df, "high", "low")
+    high, low = df["high"].values, df["low"].values
     result = talib.AROONOSC(high, low, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -404,7 +402,7 @@ def momentum_bop(df):
     Measures buying vs selling pressure. Range roughly [-1, 1].
     Uses open, high, low, close.
     """
-    open_, high, low, close = _to_float(df, "open", "high", "low", "close")
+    open_, high, low, close = df["open"].values, df["high"].values, df["low"].values, df["close"].values
     result = talib.BOP(open_, high, low, close)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -418,7 +416,7 @@ def momentum_cci(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    high, low, close = _to_float(df, "high", "low", "close")
+    high, low, close = df["high"].values, df["low"].values, df["close"].values
     result = talib.CCI(high, low, close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -431,7 +429,7 @@ def momentum_cmo(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.CMO(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -445,7 +443,7 @@ def momentum_dx(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    high, low, close = _to_float(df, "high", "low", "close")
+    high, low, close = df["high"].values, df["low"].values, df["close"].values
     result = talib.DX(high, low, close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -465,7 +463,7 @@ def momentum_macd(df, fastperiod=12, slowperiod=26, signalperiod=9):
         slowperiod:   slow EMA window (default 26)
         signalperiod: signal line EMA window (default 9)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     macd, signal, hist = talib.MACD(
         close, fastperiod=fastperiod, slowperiod=slowperiod, signalperiod=signalperiod
     )
@@ -495,7 +493,7 @@ def momentum_macdext(
         signalperiod/signalmatype: signal MA window and type
         matype values: 0=SMA, 1=EMA, 2=WMA, 3=DEMA, 4=TEMA, ...
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     macd, signal, hist = talib.MACDEXT(
         close,
         fastperiod=fastperiod, fastmatype=fastmatype,
@@ -520,7 +518,7 @@ def momentum_macdfix(df, signalperiod=9):
     Args:
         signalperiod: signal line EMA window (default 9)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     macd, signal, hist = talib.MACDFIX(close, signalperiod=signalperiod)
     idx = df.index
     return {
@@ -539,7 +537,7 @@ def momentum_mfi(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    high, low, close, volume = _to_float(df, "high", "low", "close", "volume")
+    high, low, close, volume = df["high"].values, df["low"].values, df["close"].values, df["volume"].values
     result = talib.MFI(high, low, close, volume, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -553,7 +551,7 @@ def momentum_minus_di(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    high, low, close = _to_float(df, "high", "low", "close")
+    high, low, close = df["high"].values, df["low"].values, df["close"].values
     result = talib.MINUS_DI(high, low, close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -566,7 +564,7 @@ def momentum_minus_dm(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    high, low = _to_float(df, "high", "low")
+    high, low = df["high"].values, df["low"].values
     result = talib.MINUS_DM(high, low, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -579,7 +577,7 @@ def momentum_mom(df, period=10):
     Args:
         period: lookback window (default 10)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.MOM(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -593,7 +591,7 @@ def momentum_plus_di(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    high, low, close = _to_float(df, "high", "low", "close")
+    high, low, close = df["high"].values, df["low"].values, df["close"].values
     result = talib.PLUS_DI(high, low, close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -606,7 +604,7 @@ def momentum_plus_dm(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    high, low = _to_float(df, "high", "low")
+    high, low = df["high"].values, df["low"].values
     result = talib.PLUS_DM(high, low, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -622,7 +620,7 @@ def momentum_ppo(df, fastperiod=12, slowperiod=26, matype=0):
         slowperiod: slow MA window (default 26)
         matype:     MA type (default 0 = SMA)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.PPO(close, fastperiod=fastperiod, slowperiod=slowperiod, matype=matype)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -635,7 +633,7 @@ def momentum_roc(df, period=10):
     Args:
         period: lookback window (default 10)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.ROC(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -648,7 +646,7 @@ def momentum_rocp(df, period=10):
     Args:
         period: lookback window (default 10)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.ROCP(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -661,7 +659,7 @@ def momentum_rocr(df, period=10):
     Args:
         period: lookback window (default 10)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.ROCR(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -674,7 +672,7 @@ def momentum_rocr100(df, period=10):
     Args:
         period: lookback window (default 10)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.ROCR100(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -687,7 +685,7 @@ def momentum_rsi(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.RSI(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -713,7 +711,7 @@ def momentum_stoch(
         slowd_period:  %D smoothing window (default 3)
         slowd_matype:  %D smoothing MA type (default 0 = SMA)
     """
-    high, low, close = _to_float(df, "high", "low", "close")
+    high, low, close = df["high"].values, df["low"].values, df["close"].values
     slowk, slowd = talib.STOCH(
         high, low, close,
         fastk_period=fastk_period,
@@ -740,7 +738,7 @@ def momentum_stochf(df, fastk_period=5, fastd_period=3, fastd_matype=0):
         fastd_period: %D smoothing window (default 3)
         fastd_matype: %D smoothing MA type (default 0 = SMA)
     """
-    high, low, close = _to_float(df, "high", "low", "close")
+    high, low, close = df["high"].values, df["low"].values, df["close"].values
     fastk, fastd = talib.STOCHF(
         high, low, close,
         fastk_period=fastk_period,
@@ -768,7 +766,7 @@ def momentum_stochrsi(df, period=14, fastk_period=5, fastd_period=3, fastd_matyp
         fastd_period: %D smoothing window (default 3)
         fastd_matype: %D smoothing MA type (default 0 = SMA)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     fastk, fastd = talib.STOCHRSI(
         close,
         timeperiod=period,
@@ -791,7 +789,7 @@ def momentum_trix(df, period=30):
     Args:
         period: EMA smoothing window (default 30)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.TRIX(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -808,7 +806,7 @@ def momentum_ultosc(df, period1=7, period2=14, period3=28):
         period2: medium window (default 14)
         period3: long window (default 28)
     """
-    high, low, close = _to_float(df, "high", "low", "close")
+    high, low, close = df["high"].values, df["low"].values, df["close"].values
     result = talib.ULTOSC(high, low, close, timeperiod1=period1, timeperiod2=period2, timeperiod3=period3)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -822,7 +820,7 @@ def momentum_willr(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    high, low, close = _to_float(df, "high", "low", "close")
+    high, low, close = df["high"].values, df["low"].values, df["close"].values
     result = talib.WILLR(high, low, close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -838,7 +836,7 @@ def volume_ad(df):
     Rising A/D with falling price = bullish divergence (and vice versa).
     Uses high, low, close, volume.
     """
-    high, low, close, volume = _to_float(df, "high", "low", "close", "volume")
+    high, low, close, volume = df["high"].values, df["low"].values, df["close"].values, df["volume"].values
     result = talib.AD(high, low, close, volume)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -853,7 +851,7 @@ def volume_adosc(df, fastperiod=3, slowperiod=10):
         fastperiod: fast EMA window applied to A/D Line (default 3)
         slowperiod: slow EMA window applied to A/D Line (default 10)
     """
-    high, low, close, volume = _to_float(df, "high", "low", "close", "volume")
+    high, low, close, volume = df["high"].values, df["low"].values, df["close"].values, df["volume"].values
     result = talib.ADOSC(high, low, close, volume, fastperiod=fastperiod, slowperiod=slowperiod)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -864,7 +862,7 @@ def volume_obv(df):
     subtracts on down days. Tracks whether volume is flowing in or out.
     Uses close and volume.
     """
-    close, volume = _to_float(df, "close", "volume")
+    close, volume = df["close"].values, df["volume"].values
     result = talib.OBV(close, volume)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -879,7 +877,7 @@ def cycle_ht_dcperiod(df):
     Estimates the period (in bars) of the dominant market cycle.
     Applied to close. No period parameter; the HT algorithm is self-adaptive.
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.HT_DCPERIOD(close)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -890,7 +888,7 @@ def cycle_ht_dcphase(df):
     Returns the current phase angle (0–360°) within the dominant cycle.
     Applied to close.
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.HT_DCPHASE(close)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -903,7 +901,7 @@ def cycle_ht_phasor(df):
     Multi-output: returns dict with keys 'inphase' and 'quadrature'.
     Applied to close.
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     inphase, quadrature = talib.HT_PHASOR(close)
     idx = df.index
     return {
@@ -921,7 +919,7 @@ def cycle_ht_sine(df):
     Multi-output: returns dict with keys 'sine' and 'leadsine'.
     Applied to close.
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     sine, leadsine = talib.HT_SINE(close)
     idx = df.index
     return {
@@ -937,7 +935,7 @@ def cycle_ht_trendmode(df):
     Useful for switching between trend-following and mean-reversion strategies.
     Applied to close.
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.HT_TRENDMODE(close)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -952,7 +950,7 @@ def price_avgprice(df):
     Simple four-way average of the candle's OHLC values.
     Uses open, high, low, close.
     """
-    open_, high, low, close = _to_float(df, "open", "high", "low", "close")
+    open_, high, low, close = df["open"].values, df["high"].values, df["low"].values, df["close"].values
     result = talib.AVGPRICE(open_, high, low, close)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -963,7 +961,7 @@ def price_medprice(df):
     Midpoint of the candle's price range; ignores open and close.
     Uses high and low.
     """
-    high, low = _to_float(df, "high", "low")
+    high, low = df["high"].values, df["low"].values
     result = talib.MEDPRICE(high, low)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -974,7 +972,7 @@ def price_typprice(df):
     Standard base input for indicators like CCI and MFI.
     Uses high, low, close.
     """
-    high, low, close = _to_float(df, "high", "low", "close")
+    high, low, close = df["high"].values, df["low"].values, df["close"].values
     result = talib.TYPPRICE(high, low, close)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -985,7 +983,7 @@ def price_wclprice(df):
     Like Typical Price but gives double weight to the close.
     Uses high, low, close.
     """
-    high, low, close = _to_float(df, "high", "low", "close")
+    high, low, close = df["high"].values, df["low"].values, df["close"].values
     result = talib.WCLPRICE(high, low, close)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -1004,7 +1002,7 @@ def volatility_atr(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    high, low, close = _to_float(df, "high", "low", "close")
+    high, low, close = df["high"].values, df["low"].values, df["close"].values
     result = talib.ATR(high, low, close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -1019,7 +1017,7 @@ def volatility_natr(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    high, low, close = _to_float(df, "high", "low", "close")
+    high, low, close = df["high"].values, df["low"].values, df["close"].values
     result = talib.NATR(high, low, close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -1031,7 +1029,7 @@ def volatility_trange(df):
     Raw input to ATR before smoothing.
     Uses high, low, close.
     """
-    high, low, close = _to_float(df, "high", "low", "close")
+    high, low, close = df["high"].values, df["low"].values, df["close"].values
     result = talib.TRANGE(high, low, close)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -1045,8 +1043,8 @@ def volatility_trange(df):
 # ---------------------------------------------------------------------------
 
 def _ohlc(df):
-    """Extract open, high, low, close as float arrays."""
-    return _to_float(df, "open", "high", "low", "close")
+    """Extract open, high, low, close as numpy arrays."""
+    return df["open"].values, df["high"].values, df["low"].values, df["close"].values
 
 
 def pattern_cdl2crows(df):
@@ -1463,7 +1461,7 @@ def stats_beta(df, period=5):
     Args:
         period: lookback window (default 5)
     """
-    high, low, close = _to_float(df, "high", "low", "close")
+    high, low, close = df["high"].values, df["low"].values, df["close"].values
     result = talib.BETA(high, low, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -1477,7 +1475,7 @@ def stats_correl(df, period=30):
     Args:
         period: lookback window (default 30)
     """
-    high, low = _to_float(df, "high", "low")
+    high, low = df["high"].values, df["low"].values
     result = talib.CORREL(high, low, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -1490,7 +1488,7 @@ def stats_linearreg(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.LINEARREG(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -1503,7 +1501,7 @@ def stats_linearreg_angle(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.LINEARREG_ANGLE(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -1516,7 +1514,7 @@ def stats_linearreg_intercept(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.LINEARREG_INTERCEPT(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -1529,7 +1527,7 @@ def stats_linearreg_slope(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.LINEARREG_SLOPE(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -1543,7 +1541,7 @@ def stats_stddev(df, period=5, nbdev=1.0):
         period: lookback window (default 5)
         nbdev:  number of deviations to scale output by (default 1.0)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.STDDEV(close, timeperiod=period, nbdev=nbdev)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -1557,7 +1555,7 @@ def stats_tsf(df, period=14):
     Args:
         period: lookback window (default 14)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.TSF(close, timeperiod=period)
     return pd.Series(result, index=df.index).shift(1)
 
@@ -1571,6 +1569,6 @@ def stats_var(df, period=5, nbdev=1.0):
         period: lookback window (default 5)
         nbdev:  scaling factor (default 1.0)
     """
-    (close,) = _to_float(df, "close")
+    close = df["close"].values
     result = talib.VAR(close, timeperiod=period, nbdev=nbdev)
     return pd.Series(result, index=df.index).shift(1)
