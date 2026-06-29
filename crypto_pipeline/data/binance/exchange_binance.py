@@ -16,6 +16,8 @@ import logging
 from datetime import datetime, timezone
 from binance.client import Client
 
+from crypto_pipeline.data.data_downloader import CANDLE_COLUMNS
+
 logger = logging.getLogger(__name__)
 
 INTERVAL = Client.KLINE_INTERVAL_1MINUTE
@@ -31,14 +33,20 @@ class BinanceExchange:
         """
         Fetch a single batch of up to 1000 raw candles from Binance Futures.
         Uses futures_klines (linear perpetual contracts).
+
+        Binance's kline rows have 12 fields (open time, OHLCV, close time,
+        quote volume, trade count, taker buy volumes, unused field). We only
+        keep as many fields as CANDLE_COLUMNS expects, so this stays correct
+        automatically if that schema changes.
         """
-        return self.client.get_klines(
+        raw_batch = self.client.get_klines(
             symbol=symbol,
             interval=INTERVAL,
             startTime=start_ms,
             endTime=end_ms,
             limit=1000
         )
+        return [row[:len(CANDLE_COLUMNS)] for row in raw_batch]
 
     def fetch_candles(self, symbol, start_date, end_date, config):
         """

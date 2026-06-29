@@ -18,6 +18,8 @@ import logging
 from datetime import datetime, timezone
 from pybit.unified_trading import HTTP
 
+from crypto_pipeline.data.data_downloader import CANDLE_COLUMNS
+
 logger = logging.getLogger(__name__)
 
 INTERVAL = "1"          # Bybit's code for 1-minute candles
@@ -34,6 +36,10 @@ class BybitExchange:
         """
         Fetch a single batch of up to 200 raw candles from Bybit.
         Uses linear category (linear perpetual contracts).
+
+        Bybit's kline rows have one extra field (turnover) that isn't part
+        of our schema, so we only keep as many fields as CANDLE_COLUMNS
+        expects — this stays correct automatically if that schema changes.
         """
         response = self.client.get_kline(
             category="spot",
@@ -47,7 +53,7 @@ class BybitExchange:
         if response["retCode"] != 0:
             raise Exception(f"Bybit API error: {response['retMsg']}")
 
-        return response["result"]["list"]
+        return [row[:len(CANDLE_COLUMNS)] for row in response["result"]["list"]]
 
     def fetch_candles(self, symbol, start_date, end_date, config):
         """
