@@ -85,8 +85,7 @@ class DataDownloader:
 
         Returns a dict: {"one_min": DataFrame, "resampled": DataFrame}
         """
-        resample_timeframe = "5min"  # TODO: not finalized yet, hardcoded for now
-
+        resample_timeframe = "5min"  
         if end_date == "now":
             end_date = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
 
