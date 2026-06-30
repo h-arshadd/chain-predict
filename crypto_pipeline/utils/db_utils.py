@@ -129,15 +129,16 @@ def insert_candles(conn, exchange, symbol, df):
     logger.info(f"Copied {len(df)} rows into {exchange}.{table_name}")
 
 
-def get_candles_from_db(exchange, symbol, start_date, end_date):
+def get_candles_from_db(conn, exchange, symbol, start_date, end_date):
     """
     Return stored 1m candles for a symbol between start_date and end_date (inclusive), as a DataFrame.
     Columns: datetime, open, high, low, close, volume
 
-    Opens and closes its own connection — unlike the other functions in this
-    file, which expect the caller to manage the connection's lifecycle.
+    Uses the caller's existing connection — like every other function in
+    this file, it does NOT open or close its own. The caller (e.g.
+    DataDownloader, which already has self.conn) owns the connection's
+    lifecycle.
     """
-    conn = get_db_connection()
     cursor = conn.cursor()
     table_name = f"{symbol}_{TIMEFRAME}"
 
@@ -150,7 +151,6 @@ def get_candles_from_db(exchange, symbol, start_date, end_date):
     ), (start_date, end_date))
     rows = cursor.fetchall()
     cursor.close()
-    conn.close()
 
     df = pd.DataFrame(rows, columns=["datetime", "open", "high", "low", "close", "volume"])
     df["datetime"] = pd.to_datetime(df["datetime"])

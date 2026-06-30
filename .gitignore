@@ -18,6 +18,10 @@ Thumbs.db
 
 # Logs
 *.log
+logs/
 
 # Package build artifacts
 *.egg-info/
+
+# Generated outputs from plot_indicators.py
+indicator_charts/
