@@ -34,7 +34,7 @@ class BybitExchange:
 
     def fetch_batch(self, symbol, start_sec, end_sec):
         """
-        Fetch a single batch of up to 200 raw candles from Bybit.
+        Fetch a single batch of up to 1000 raw candles from Bybit.
         Uses linear category (linear perpetual contracts).
 
         Bybit's kline rows have one extra field (turnover) that isn't part
@@ -47,7 +47,7 @@ class BybitExchange:
             interval=INTERVAL,
             start=start_sec * 1000,
             end=end_sec * 1000,
-            limit=200
+            limit=1000
         )
 
         if response["retCode"] != 0:
@@ -84,8 +84,8 @@ class BybitExchange:
         start_sec = int(start_dt.timestamp())
         end_sec   = int(end_date.timestamp())
 
-        retries     = config.get("retries", 5)
-        retry_delay = config.get("retry_delay", 10)
+        retries     = config["retries"]
+        retry_delay = config["retry_delay"]
 
         all_candles = []
         current_end_sec = end_sec
@@ -121,7 +121,12 @@ class BybitExchange:
             oldest_candle_sec = int(batch[-1][0]) // 1000
             current_end_sec = oldest_candle_sec - STEP_SECONDS
 
-            logger.info(f"Fetched batch of {len(batch)} candles. Total so far: {len(all_candles)}")
+            batch_start = datetime.fromtimestamp(int(batch[-1][0]) / 1000, tz=timezone.utc)
+            batch_end   = datetime.fromtimestamp(int(batch[0][0]) / 1000, tz=timezone.utc)
+            logger.info(
+                f"{full_symbol} | fetched batch of {len(batch)} candles "
+                f"({batch_start} -> {batch_end}). Total so far: {len(all_candles)}"
+            )
             time.sleep(0.1)
 
         if not all_candles:

@@ -75,8 +75,8 @@ class BinanceExchange:
         start_ms = int(start_dt.timestamp() * 1000)
         end_ms   = int(end_date.timestamp() * 1000)
 
-        retries     = config.get("retries", 5)
-        retry_delay = config.get("retry_delay", 10)
+        retries     = config["retries"]
+        retry_delay = config["retry_delay"]
 
         all_candles = []
         current_start_ms = start_ms
@@ -108,7 +108,12 @@ class BinanceExchange:
             all_candles.extend(batch)
             current_start_ms = batch[-1][0] + 1  # +1ms to avoid re-fetching last candle
 
-            logger.info(f"Fetched batch of {len(batch)} candles. Total so far: {len(all_candles)}")
+            batch_start = datetime.fromtimestamp(int(batch[0][0]) / 1000, tz=timezone.utc)
+            batch_end   = datetime.fromtimestamp(int(batch[-1][0]) / 1000, tz=timezone.utc)
+            logger.info(
+                f"{full_symbol} | fetched batch of {len(batch)} candles "
+                f"({batch_start} -> {batch_end}). Total so far: {len(all_candles)}"
+            )
             time.sleep(0.1)
 
         if not all_candles:

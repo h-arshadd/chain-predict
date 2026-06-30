@@ -2,21 +2,19 @@
 exchange: "binance"
 
 # Trading pairs to fetch
-symbols: ["doge", "sol", "btc"]
+symbols: ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
 
 # Candlestick timeframes to fetch
 time_horizons: ["1m"]
 
 # Date range for historical data
-start_date: "2026-06-29"
+start_date: "2024-01-01"
 end_date: "now"  # "now" or a fixed date like "2026-06-24"
 
 # Missing candle handling
 filling_missing_method: "interpolation"
 
 fill_zero_volume: "ffill"
-
-# Default timeframe to resample 1m data into for live/runtime use
 
 # API retry settings
 retries: 5
