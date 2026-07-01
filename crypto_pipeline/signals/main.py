@@ -218,6 +218,11 @@ if __name__ == "__main__":
 
             output = pd.DataFrame({
                 "datetime": df["datetime"],
+                "open": df["open"],
+                "high": df["high"],
+                "low": df["low"],
+                "close": df["close"],
+                "volume": df["volume"],
                 "signal": signals
-            })
+                })
             print(output.tail(20))
