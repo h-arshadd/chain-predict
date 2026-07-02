@@ -8,15 +8,42 @@ REM newer than that exchange's last stored timestamp, so each run
 REM is fast/cheap once both initial backfills are done.
 REM ============================================================
 
-REM --- EDIT THESE TWO PATHS FOR YOUR MACHINE ---
-SET PROJECT_DIR=C:\Users\PMYLS\chain-predict
-SET PYTHON_EXE=C:\Users\PMYLS\chain-predict\venv\Scripts\python.exe
-REM ----------------------------------------------
+REM --- REQUIRE ENVIRONMENT VARIABLES TO BE SET ---
+if not defined PROJECT_DIR (
+    echo ERROR: PROJECT_DIR environment variable not set
+    exit /b 1
+)
+
+if not defined PYTHON_EXE (
+    echo ERROR: PYTHON_EXE environment variable not set
+    exit /b 1
+)
+
+REM Validate that python executable exists
+if not exist "%PYTHON_EXE%" (
+    echo ERROR: Python executable not found at %PYTHON_EXE%
+    exit /b 1
+)
 
 cd /d "%PROJECT_DIR%"
+if errorlevel 1 (
+    echo ERROR: Could not change to directory %PROJECT_DIR%
+    exit /b 1
+)
 
+echo Running Binance pipeline...
 "%PYTHON_EXE%" -m crypto_pipeline.data.binance.main
-"%PYTHON_EXE%" -m crypto_pipeline.data.bybit.main
+if errorlevel 1 (
+    echo ERROR: Binance pipeline failed
+    exit /b 1
+)
 
-REM Exit cleanly so Task Scheduler doesn't flag it as hung
+echo Running Bybit pipeline...
+"%PYTHON_EXE%" -m crypto_pipeline.data.bybit.main
+if errorlevel 1 (
+    echo ERROR: Bybit pipeline failed
+    exit /b 1
+)
+
+echo Both pipelines completed successfully
 exit /b 0
