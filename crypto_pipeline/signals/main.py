@@ -126,7 +126,7 @@ def calculate_indicators(df: pd.DataFrame, indicator_config: dict):
 # Signal Generation
 # ==========================================================
 
-def generate_signals(df: pd.DataFrame) -> pd.Series:
+def generate_signals(df: pd.DataFrame,) -> pd.Series:
     """
     Generate trading signals.
 
