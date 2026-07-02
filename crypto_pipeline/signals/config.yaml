@@ -2,56 +2,64 @@
 # Indicator Configuration
 # ============================================================================
 
-EMA:
+# EMA:
+#   - inputs:
+#       - close
+#     parameters:
+#       period: 20
+#     aliases:
+#       ema: ind_EMA_20
+#
+#   - inputs:
+#       - close
+#     parameters:
+#       period: 50
+#     aliases:
+#       ema: ind_EMA_50
+#
+#
+# RSI:
+#   - inputs:
+#       - close
+#     parameters:
+#       period: 14
+#     aliases:
+#       rsi: ind_RSI_14
+#
+#
+# MACD:
+#   - inputs:
+#       - close
+#     parameters:
+#       fast: 12
+#       slow: 26
+#       signal: 9
+#     aliases:
+#       macd: ind_MACD_12_26_9
+#       signal: ind_MACD_SIGNAL_12_26_9
+#       histogram: ind_MACD_HIST_12_26_9
+#
+#
+# PATTERNS:
+#   - inputs:
+#       - open
+#       - high
+#       - low
+#       - close
+#
+#     parameters: {}
+#
+#     aliases:
+#       doji: pat_DOJI
+#       bullish_engulfing: pat_BULLISH_ENGULFING
+
+SMA:
   - inputs:
       - close
     parameters:
-      period: 20
+      timeperiod: 20
     aliases:
-      ema: ind_EMA_20
-
-  - inputs:
-      - close
-    parameters:
-      period: 50
-    aliases:
-      ema: ind_EMA_50
-
-
-RSI:
-  - inputs:
-      - close
-    parameters:
-      period: 14
-    aliases:
-      rsi: ind_RSI_14
-
-
-MACD:
-  - inputs:
-      - close
-    parameters:
-      fast: 12
-      slow: 26
-      signal: 9
-    aliases:
-      macd: ind_MACD_12_26_9
-      signal: ind_MACD_SIGNAL_12_26_9
-      histogram: ind_MACD_HIST_12_26_9
-
-
-PATTERNS:
-  - inputs:
-      - open
-      - high
-      - low
-      - close
-
-    parameters: {}
-
-    aliases:
-      doji: pat_DOJI
-      bullish_engulfing: pat_BULLISH_ENGULFING
+      sma: ind_sma_20
 
 
 # ============================================================================
@@ -66,20 +74,10 @@ strategy:
 
     conditions:
 
-      - left: ind_EMA_20
+      - left: ind_sma_20
         operator: cross_above
-        right: ind_EMA_50
-        persist_bars: 5
-
-      - left: ind_RSI_14
-        operator: "<"
-        right: 30
-        persist_bars: 1
-
-      - left: ind_MACD_12_26_9
-        operator: cross_above
-        right: ind_MACD_SIGNAL_12_26_9
-        persist_bars: 5
+        right: close
+        persist_bars: 0
 
 
   short:
@@ -88,17 +86,56 @@ strategy:
 
     conditions:
 
-      - left: ind_EMA_20
+      - left: ind_sma_20
         operator: cross_below
-        right: ind_EMA_50
-        persist_bars: 5
+        right: close
+        persist_bars: 0
 
-      - left: ind_RSI_14
-        operator: ">"
-        right: 70
-        persist_bars: 1
-
-      - left: ind_MACD_12_26_9
-        operator: cross_below
-        right: ind_MACD_SIGNAL_12_26_9
-        persist_bars: 5
+# ============================================================================
+# Previous Strategy (Commented Out)
+# ============================================================================
+#
+# strategy:
+#
+#   long:
+#
+#     rule: AND
+#
+#     conditions:
+#
+#       - left: ind_EMA_20
+#         operator: cross_above
+#         right: ind_EMA_50
+#         persist_bars: 5
+#
+#       - left: ind_RSI_14
+#         operator: "<"
+#         right: 30
+#         persist_bars: 1
+#
+#       - left: ind_MACD_12_26_9
+#         operator: cross_above
+#         right: ind_MACD_SIGNAL_12_26_9
+#         persist_bars: 5
+#
+#
+#   short:
+#
+#     rule: AND
+#
+#     conditions:
+#
+#       - left: ind_EMA_20
+#         operator: cross_below
+#         right: ind_EMA_50
+#         persist_bars: 5
+#
+#       - left: ind_RSI_14
+#         operator: ">"
+#         right: 70
+#         persist_bars: 1
+#
+#       - left: ind_MACD_12_26_9
+#         operator: cross_below
+#         right: ind_MACD_SIGNAL_12_26_9
+#         persist_bars: 5

@@ -1,210 +1,91 @@
 """
 main.py
---------
+-------
 
 Entry point of the Signal Module.
-
-Responsibilities
-----------------
-1. Load config.yaml
-2. Receive OHLCV data
-3. Calculate indicators
-4. Assign aliases
-5. Merge indicator columns
-6. Evaluate strategy conditions
-7. Apply rules
-8. Return final signal array
+Orchestrates config loading, indicator calculation, and signal generation.
 """
 
 from pathlib import Path
-
 import yaml
 import pandas as pd
 
+from crypto_pipeline.signals.signal_helpers import calculate_indicators
 from crypto_pipeline.signals.conditions import evaluate_conditions
 from crypto_pipeline.signals.rules import apply_rules
 
-# ------------------------------------------------------------------
-# TA-Lib indicator functions
-# ------------------------------------------------------------------
 
-from crypto_pipeline.indicators.talib_indicators import (
-    overlap_ema,
-    momentum_rsi,
-    momentum_macd,
-    pattern_cdldoji,
-    pattern_cdlengulfing,
-)
-
-
-# ==========================================================
-# Configuration
-# ==========================================================
-
-CONFIG_PATH = Path(__file__).parent / "config.yaml"
-
-
-def load_config():
-
-    with open(CONFIG_PATH, "r") as f:
+def load_config(config_path=None) -> dict:
+    """Load config from YAML file."""
+    if config_path is None:
+        config_path = Path(__file__).parent / "config.yaml"
+    
+    with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
 
-# ==========================================================
-# Indicator Calculation
-# ==========================================================
+def split_config(config: dict) -> tuple:
+    """Split config into indicator_config and strategy_config."""
+    indicator_config = {k: v for k, v in config.items() if k != "strategy"}
+    strategy_config = config["strategy"]
+    return indicator_config, strategy_config
 
 
-# ==========================================================
-# Indicator Registry
-# ==========================================================
-
-INDICATOR_REGISTRY = {
-    "EMA": {
-        "function": overlap_ema,
-        "param_mapper": lambda p: {"period": p["period"]}
-    },
-    "RSI": {
-        "function": momentum_rsi,
-        "param_mapper": lambda p: {"period": p["period"]}
-    },
-    "MACD": {
-        "function": momentum_macd,
-        "param_mapper": lambda p: {
-            "fastperiod": p["fast"],
-            "slowperiod": p["slow"],
-            "signalperiod": p["signal"]
-        }
-    },
-    "PATTERNS": {"function": None},
-}
-
-
-def calculate_indicators(df: pd.DataFrame, indicator_config: dict):
+def generate_signals(df: pd.DataFrame, indicator_config: dict, strategy_config: dict) -> tuple:
     """
-    Calculate indicators defined in config.yaml using the registry.
-    """
-    data = df.copy()
-
-    for indicator_name, configs in indicator_config.items():
-
-        if indicator_name not in INDICATOR_REGISTRY:
-            continue
-
-        if indicator_name == "PATTERNS":
-            for config in configs:
-                aliases = config["aliases"]
-
-                if "doji" in aliases:
-                    data[aliases["doji"]] = pattern_cdldoji(data)
-
-                if "bullish_engulfing" in aliases:
-                    engulf = pattern_cdlengulfing(data)
-                    data[aliases["bullish_engulfing"]] = engulf > 0
-            continue
-
-        function = INDICATOR_REGISTRY[indicator_name]["function"]
-        param_mapper = INDICATOR_REGISTRY[indicator_name].get("param_mapper")
-
-        for config in configs:
-            params = config.get("parameters", {})
-            aliases = config["aliases"]
-
-            mapped_params = param_mapper(params) if param_mapper else params
-            result = function(data, **mapped_params)
-
-            if isinstance(result, dict):
-                for key, alias in aliases.items():
-                    if key in result:
-                        data[alias] = result[key]
-            else:
-                data[next(iter(aliases.values()))] = result
-
-    return data
-
-# ==========================================================
-# Signal Generation
-# ==========================================================
-
-def generate_signals(df: pd.DataFrame,) -> pd.Series:
-    """
-    Generate trading signals.
+    Generate trading signals from OHLCV data.
 
     Parameters
     ----------
-    df : DataFrame
-        OHLCV dataframe containing:
-            open
-            high
-            low
-            close
-            volume
+    df : pd.DataFrame
+        OHLCV data
+    indicator_config : dict
+        Indicator configuration (load once via load_config + split_config,
+        then pass it in here — this function does no config loading itself).
+    strategy_config : dict
+        Strategy configuration.
 
     Returns
     -------
-    pd.Series
-
-        1  -> Buy
-        0  -> No Signal
-       -1  -> Sell
+    tuple of (indicator_df, condition_df, signals)
+        indicator_df : pd.DataFrame — df with indicator columns appended
+        condition_df : pd.DataFrame — one boolean column per strategy condition
+        signals : pd.Series — final trading signals (1=Buy, 0=Hold, -1=Sell)
     """
-
-    config = load_config()
-
-    indicator_keys = {
-        k: v
-        for k, v in config.items()
-        if k != "strategy"
-    }
-
-    strategy = config["strategy"]
-
-    # --------------------------------------------------
-    # Calculate indicators
-    # --------------------------------------------------
-
-    indicator_df = calculate_indicators(
-        df,
-        indicator_keys
-    )
-
-    # --------------------------------------------------
-    # Evaluate every condition
-    # --------------------------------------------------
-
-    condition_df = evaluate_conditions(
-        indicator_df,
-        strategy
-    )
-
-    # --------------------------------------------------
-    # Apply rule engine
-    # --------------------------------------------------
-
-    signals = apply_rules(
-        condition_df,
-        strategy
-    )
-
-    return signals
+    # Calculate indicators and assign aliases
+    indicator_df = calculate_indicators(df, indicator_config)
+    
+    # Evaluate all strategy conditions
+    condition_df = evaluate_conditions(indicator_df, strategy_config)
+    
+    # Combine conditions into final signals
+    signals = apply_rules(condition_df, strategy_config)
+    
+    return indicator_df, condition_df, signals
 
 
 # ==========================================================
-# Example
+# Entry Point (config loading and orchestration only)
 # ==========================================================
 
 if __name__ == "__main__":
 
     from crypto_pipeline.data.data_downloader import get_data
     from datetime import datetime
+    import os
+
+    config = load_config()
+    indicator_config, strategy_config = split_config(config)
 
     exchanges = ["binance", "bybit"]
     symbols = ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
-    
+
+    # Create output folder
+    output_dir = "signal_outputs"
+    os.makedirs(output_dir, exist_ok=True)
+
     for exchange in exchanges:
         for symbol in symbols:
-            print(f"\n{exchange.upper()} | {symbol.upper()}")
-            print("-" * 50)
 
             result = get_data(
                 exchange=exchange,
@@ -214,8 +95,13 @@ if __name__ == "__main__":
             )
 
             df = result["resampled"]
-            signals = generate_signals(df)
 
+            # Run the full pipeline: indicators -> conditions -> signals
+            indicator_df, condition_df, signals = generate_signals(
+                df, indicator_config, strategy_config
+            )
+
+            # Build comprehensive output
             output = pd.DataFrame({
                 "datetime": df["datetime"],
                 "open": df["open"],
@@ -223,6 +109,20 @@ if __name__ == "__main__":
                 "low": df["low"],
                 "close": df["close"],
                 "volume": df["volume"],
-                "signal": signals
-                })
-            print(output.tail(20))
+                "ind_sma_20": indicator_df["ind_sma_20"],
+            })
+            
+            # Add all conditions
+            for col in condition_df.columns:
+                output[col] = condition_df[col]
+            
+            # Add signal
+            output["signal"] = signals
+
+            # Drop warm-up rows where indicators aren't fully formed yet
+            # (e.g. SMA_20 needs 20 bars before it produces a value)
+            output = output.dropna().reset_index(drop=True)
+
+            # Save to CSV in output folder
+            csv_filename = os.path.join(output_dir, f"{exchange}_{symbol}_signals.csv")
+            output.to_csv(csv_filename, index=False)
