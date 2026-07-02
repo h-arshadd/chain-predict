@@ -107,7 +107,7 @@ def get_data(exchange, symbol, start_date, end_date, config=None, df_1m=False):
     Returns a dict: {"one_min": DataFrame, "resampled": DataFrame}
     """
     config = config or DEFAULT_FETCH_CONFIG
-    resample_timeframe = "5min"
+    resample_timeframe = "1h"
 
     if end_date == "now":
         end_date = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
@@ -150,6 +150,11 @@ def get_data(exchange, symbol, start_date, end_date, config=None, df_1m=False):
     one_min_df = pd.concat([db_df, live_df], ignore_index=True)
 
     resampled_df = resample(resample_timeframe, df=one_min_df.set_index("datetime"))
+    
+    # Drop last resampled candle (still-forming timeframe)
+    if not resampled_df.empty:
+        resampled_df = resampled_df.iloc[:-1]
+    
     logger.info(f"Resampled {exchange} | {symbol} into {resample_timeframe}: {len(resampled_df)} candles")
 
     if df_1m:
@@ -210,7 +215,8 @@ class DataDownloader:
                 # Only replace volume — never touch OHLC values
                 df.loc[zero_volume_mask, "volume"] = np.nan
                 df["volume"] = df["volume"].ffill()
-                logger.info(f"Zero-volume rows ({zero_count}) volume replaced using forward fill.")
+                df["volume"] = df["volume"].bfill()  # Backfill any NaN at start
+                logger.info(f"Zero-volume rows ({zero_count}) volume replaced using forward fill + backfill.")
             else:
                 logger.info("No zero-volume rows found.")
 
