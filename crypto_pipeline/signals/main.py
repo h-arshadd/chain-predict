@@ -31,7 +31,7 @@ def split_config(config: dict) -> tuple:
     return indicator_config, strategy_config
 
 
-def generate_signals(df: pd.DataFrame, indicator_config: dict, strategy_config: dict) -> tuple:
+def generate_signals(df: pd.DataFrame, config_path: str = None) -> tuple:
     """
     Generate trading signals from OHLCV data.
 
@@ -39,11 +39,9 @@ def generate_signals(df: pd.DataFrame, indicator_config: dict, strategy_config: 
     ----------
     df : pd.DataFrame
         OHLCV data
-    indicator_config : dict
-        Indicator configuration (load once via load_config + split_config,
-        then pass it in here — this function does no config loading itself).
-    strategy_config : dict
-        Strategy configuration.
+    config_path : str, optional
+        Path to signals config.yaml. If not provided, loads from 
+        crypto_pipeline/signals/config.yaml
 
     Returns
     -------
@@ -52,6 +50,10 @@ def generate_signals(df: pd.DataFrame, indicator_config: dict, strategy_config: 
         condition_df : pd.DataFrame — one boolean column per strategy condition
         signals : pd.Series — final trading signals (1=Buy, 0=Hold, -1=Sell)
     """
+    # Load config and split it internally
+    config = load_config(config_path)
+    indicator_config, strategy_config = split_config(config)
+    
     # Calculate indicators and assign aliases
     indicator_df = calculate_indicators(df, indicator_config)
     
@@ -74,9 +76,6 @@ if __name__ == "__main__":
     from datetime import datetime
     import os
 
-    config = load_config()
-    indicator_config, strategy_config = split_config(config)
-
     exchanges = ["binance", "bybit"]
     symbols = ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
 
@@ -91,21 +90,19 @@ if __name__ == "__main__":
                 exchange=exchange,
                 symbol=symbol,
                 start_date=datetime(2025, 1, 1, 0, 0, 0),
-                end_date=datetime(2026, 1, 1, 0, 0, 0),
+                end_date="now",
             )
 
             df = result["resampled"]
 
-            # Run the full pipeline: indicators -> conditions -> signals
-            indicator_df, condition_df, signals = generate_signals(
-                df, indicator_config, strategy_config
-            )
+            # Run the full pipeline: generate_signals loads config internally
+            indicator_df, condition_df, signals = generate_signals(df)
 
             # Build output: only datetime + signal as per PDF spec
             # Intermediate columns (indicators, conditions) are kept in memory
             # for development/debugging but not saved to CSV.
             output = pd.DataFrame({
-                "datetime": df["datetime"],
+                "datetime": df["datetime"],               
                 "signal": signals,
             })
 

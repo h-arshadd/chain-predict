@@ -53,18 +53,37 @@
 #       doji: pat_DOJI
 #       bullish_engulfing: pat_BULLISH_ENGULFING
 
+# ============================================================================
+# STRATEGY 1: SMA 20 vs Price (Commented Out)
+# ============================================================================
+#
+# SMA:
+#   - inputs:
+#       - close
+#     parameters:
+#       timeperiod: 20
+#     aliases:
+#       sma: ind_sma_20
+
+# ============================================================================
+# STRATEGY 2: Golden Cross (SMA 50 vs SMA 200) - ACTIVE
+# ============================================================================
+
 SMA:
   - inputs:
       - close
     parameters:
-      timeperiod: 20
+      timeperiod: 50
     aliases:
-      sma: ind_sma_20
+      sma: ind_sma_50
 
+  - inputs:
+      - close
+    parameters:
+      timeperiod: 200
+    aliases:
+      sma: ind_sma_200
 
-# ============================================================================
-# Strategy Configuration
-# ============================================================================
 
 strategy:
 
@@ -74,9 +93,9 @@ strategy:
 
     conditions:
 
-      - left: ind_sma_20
+      - left: ind_sma_50
         operator: cross_above
-        right: close
+        right: ind_sma_200
         persist_bars: 0
 
 
@@ -86,9 +105,9 @@ strategy:
 
     conditions:
 
-      - left: ind_sma_20
+      - left: ind_sma_50
         operator: cross_below
-        right: close
+        right: ind_sma_200
         persist_bars: 0
 
 # ============================================================================
