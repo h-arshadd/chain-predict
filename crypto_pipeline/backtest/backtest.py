@@ -220,10 +220,15 @@ def run_backtest(ohlcv: pd.DataFrame, signals: pd.DataFrame, config: dict = None
         next_free_idx = exit_idx
 
     trade_ledger = pd.DataFrame(trades)
+    
+    # Add cumulative P&L column
+    if len(trade_ledger) > 0:
+        trade_ledger["cumulative_pnl"] = trade_ledger["net_pnl"].cumsum()
 
     # Equity curve on the full 1-minute timeline: balance is flat between
-    # trades and steps at each trade's exit. Built with merge_asof (a step
-    # function via "as of" lookup), not a per-bar loop.
+    # trades and steps at each trade's exit. If no trades occur, balance
+    # stays at initial_balance for the entire period. Built with merge_asof
+    # (a step function via "as of" lookup), not a per-bar loop.
     equity_events = pd.DataFrame({
         "datetime": [ohlcv["datetime"].iloc[0]] + [t["exit_time"] for t in trades],
         "balance": [initial_balance] + [t["balance_after_trade"] for t in trades],
