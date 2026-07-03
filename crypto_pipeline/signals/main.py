@@ -90,8 +90,8 @@ if __name__ == "__main__":
             result = get_data(
                 exchange=exchange,
                 symbol=symbol,
-                start_date=datetime(2026, 6, 20, 0, 0, 0),
-                end_date="now",
+                start_date=datetime(2025, 1, 1, 0, 0, 0),
+                end_date=datetime(2026, 1, 1, 0, 0, 0),
             )
 
             df = result["resampled"]
@@ -101,23 +101,13 @@ if __name__ == "__main__":
                 df, indicator_config, strategy_config
             )
 
-            # Build comprehensive output
+            # Build output: only datetime + signal as per PDF spec
+            # Intermediate columns (indicators, conditions) are kept in memory
+            # for development/debugging but not saved to CSV.
             output = pd.DataFrame({
                 "datetime": df["datetime"],
-                "open": df["open"],
-                "high": df["high"],
-                "low": df["low"],
-                "close": df["close"],
-                "volume": df["volume"],
-                "ind_sma_20": indicator_df["ind_sma_20"],
+                "signal": signals,
             })
-            
-            # Add all conditions
-            for col in condition_df.columns:
-                output[col] = condition_df[col]
-            
-            # Add signal
-            output["signal"] = signals
 
             # Drop warm-up rows where indicators aren't fully formed yet
             # (e.g. SMA_20 needs 20 bars before it produces a value)
@@ -126,3 +116,5 @@ if __name__ == "__main__":
             # Save to CSV in output folder
             csv_filename = os.path.join(output_dir, f"{exchange}_{symbol}_signals.csv")
             output.to_csv(csv_filename, index=False)
+
+            print(f"Saved {exchange} {symbol}: {len(output)} rows")
