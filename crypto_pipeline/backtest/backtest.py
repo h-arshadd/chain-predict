@@ -163,7 +163,7 @@ def run_backtest(ohlcv: pd.DataFrame, signals: pd.DataFrame, config: dict = None
         if direction == -1 and not allow_short:
             continue
 
-        entry_idx = signal_bar_idx + 1  # Step 2: entry price = next candle open
+        entry_idx = signal_bar_idx  # Step 2: entry price = next candle open
         if entry_idx <= next_free_idx or entry_idx >= n_bars:
             # A position is already open through this bar, or there's no
             # next candle left to enter on -- skip this signal.
