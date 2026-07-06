@@ -1,12 +1,21 @@
 """
-conditions.py
+conditions.py (CORRECTED)
 
 Evaluates every strategy condition and returns a DataFrame
 containing one boolean column for each condition.
+
+FIX FOR LOOK-AHEAD BIAS:
+- Indicators are shifted in talib_indicators.py
+- Price columns (close, open, high, low) are NOT shifted
+- When comparing shifted indicators to unshifted prices, we get look-ahead bias
+- Solution: Shift price columns in resolve_operand() so both sides are timely aligned
 """
 
 import pandas as pd
 import numpy as np
+
+# Price columns that need shifting to align with shifted indicators
+PRICE_COLUMNS = {"open", "high", "low", "close"}
 
 
 # ==========================================================
@@ -16,6 +25,10 @@ import numpy as np
 def cross_above(left: pd.Series, right: pd.Series) -> pd.Series:
     """
     True only on the bar where left crosses above right.
+    
+    Assumes left and right are pre-aligned (both shifted or both unshifted).
+    Since indicators are shifted in talib_indicators.py and price columns
+    are shifted in resolve_operand(), both operands here are historical.
     """
     return (left > right) & (left.shift(1) <= right.shift(1))
 
@@ -23,6 +36,8 @@ def cross_above(left: pd.Series, right: pd.Series) -> pd.Series:
 def cross_below(left: pd.Series, right: pd.Series) -> pd.Series:
     """
     True only on the bar where left crosses below right.
+    
+    Assumes left and right are pre-aligned.
     """
     return (left < right) & (left.shift(1) >= right.shift(1))
 
@@ -54,31 +69,37 @@ def apply_persist(condition: pd.Series, bars: int) -> pd.Series:
 
 
 # ==========================================================
-# Value Resolver
+# Value Resolver (FIXED)
 # ==========================================================
 
 def resolve_operand(df: pd.DataFrame, operand):
     """
-    Operand can be
-
-        ind_EMA_20
-        close
-        high
-        30
-        70
-        True
-
-    If operand exists as a dataframe column,
-    return the Series.
-
-    Otherwise return the constant.
+    Resolve operand to either a Series or a constant.
+    
+    Operand can be:
+        ind_EMA_20          → indicator column (already .shift(1) in talib_indicators.py)
+        close, open, etc    → price column (NOT shifted yet, must shift here)
+        30, 70              → numeric constant
+        True                → boolean constant
+    
+    CRITICAL FIX:
+    If operand is a price column, shift it by 1 to align with shifted indicators.
+    This prevents look-ahead bias when comparing indicators to prices.
     """
 
     if isinstance(operand, str):
 
         if operand in df.columns:
-            return df[operand]
+            series = df[operand]
+            
+            # Shift price columns to align with shifted indicators
+            if operand in PRICE_COLUMNS:
+                return series.shift(1)
+            
+            # Indicators are already shifted; return as-is
+            return series
 
+    # Return constant (number, boolean, etc)
     return operand
 
 
@@ -94,6 +115,10 @@ def evaluate_operator(
 ):
     """
     Evaluates one condition.
+    
+    Note: resolve_operand() ensures all operands are timely aligned:
+    - Shifted indicators come as-is (already .shift(1))
+    - Price columns are shifted here (preventing look-ahead)
     """
 
     left_value = resolve_operand(df, left)
@@ -133,6 +158,7 @@ def evaluate_operator(
 
     # -------------------------------
     # Price Operators
+    # (These explicitly reference OHLC, so they're unshifted by intent)
     # -------------------------------
 
     if operator == "close_above":

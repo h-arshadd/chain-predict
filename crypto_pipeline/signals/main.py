@@ -89,8 +89,8 @@ if __name__ == "__main__":
             result = get_data(
                 exchange=exchange,
                 symbol=symbol,
-                start_date=datetime(2025, 1, 1, 0, 0, 0),
-                end_date="now",
+                start_date=datetime(2026, 4, 1, 0, 0, 0),
+                end_date=datetime(2026, 6, 1, 0, 0, 0)
             )
 
             df = result["resampled"]
@@ -98,13 +98,27 @@ if __name__ == "__main__":
             # Run the full pipeline: generate_signals loads config internally
             indicator_df, condition_df, signals = generate_signals(df)
 
-            # Build output: only datetime + signal as per PDF spec
-            # Intermediate columns (indicators, conditions) are kept in memory
-            # for development/debugging but not saved to CSV.
+            # Build output: datetime + ohlcv + indicators + conditions + signal
             output = pd.DataFrame({
-                "datetime": df["datetime"],               
-                "signal": signals,
+                "datetime": df["datetime"],
+                "open": df["open"],
+                "high": df["high"],
+                "low": df["low"],
+                "close": df["close"],
+                "volume": df["volume"],
             })
+            
+            # Add all indicator columns
+            for col in indicator_df.columns:
+                if col != "datetime":
+                    output[col] = indicator_df[col]
+            
+            # Add all condition columns
+            for col in condition_df.columns:
+                output[col] = condition_df[col]
+            
+            # Add final signal
+            output["signal"] = signals
 
             # Drop warm-up rows where indicators aren't fully formed yet
             # (e.g. SMA_20 needs 20 bars before it produces a value)

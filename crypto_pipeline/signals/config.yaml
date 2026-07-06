@@ -54,44 +54,16 @@
 #       bullish_engulfing: pat_BULLISH_ENGULFING
 
 # ============================================================================
-# STRATEGY 1: SMA 20 vs Price (Commented Out)
-# ============================================================================
-#
-# SMA:
-#   - inputs:
-#       - close
-#     parameters:
-#       timeperiod: 20
-#     aliases:
-#       sma: ind_sma_20
-
-# ============================================================================
-# STRATEGY 2: Golden Cross (SMA 50 vs SMA 200) - ACTIVE
+# STRATEGY 1: SMA 20 vs Price - ACTIVE
 # ============================================================================
 
 SMA:
   - inputs:
       - close
     parameters:
-      timeperiod: 50
+      timeperiod: 20
     aliases:
-      sma: ind_sma_50
-
-  - inputs:
-      - close
-    parameters:
-      timeperiod: 200
-    aliases:
-      sma: ind_sma_200
-
-RSI:
-  - inputs:
-      - close
-    parameters:
-      period: 14
-    aliases:
-      rsi: ind_RSI_14
-
+      sma: ind_sma_20
 
 strategy:
 
@@ -101,16 +73,10 @@ strategy:
 
     conditions:
 
-      # Golden Cross: SMA50 crosses above SMA200
-      - left: ind_sma_50
+      # SMA20 crosses above price
+      - left: ind_sma_20
         operator: cross_above
-        right: ind_sma_200
-        persist_bars: 0
-
-      # RSI Filter: Not overbought (< 70 means room to run up)
-      - left: ind_RSI_14
-        operator: "<"
-        right: 70
+        right: close
         persist_bars: 0
 
 
@@ -120,17 +86,78 @@ strategy:
 
     conditions:
 
-      # Golden Cross: SMA50 crosses below SMA200
-      - left: ind_sma_50
+      # SMA20 crosses below price
+      - left: ind_sma_20
         operator: cross_below
-        right: ind_sma_200
+        right: close
         persist_bars: 0
 
-      # RSI Filter: Not oversold (> 30 means room to run down)
-      - left: ind_RSI_14
-        operator: ">"
-        right: 30
-        persist_bars: 0
+# ============================================================================
+# STRATEGY 2: Golden Cross (SMA 50 vs SMA 200) - COMMENTED OUT
+# ============================================================================
+#
+# SMA:
+#   - inputs:
+#       - close
+#     parameters:
+#       timeperiod: 50
+#     aliases:
+#       sma: ind_sma_50
+#
+#   - inputs:
+#       - close
+#     parameters:
+#       timeperiod: 200
+#     aliases:
+#       sma: ind_sma_200
+#
+# RSI:
+#   - inputs:
+#       - close
+#     parameters:
+#       period: 14
+#     aliases:
+#       rsi: ind_RSI_14
+#
+#
+# strategy:
+#
+#   long:
+#
+#     rule: AND
+#
+#     conditions:
+#
+#       # Golden Cross: SMA50 crosses above SMA200
+#       - left: ind_sma_50
+#         operator: cross_above
+#         right: ind_sma_200
+#         persist_bars: 0
+#
+#       # RSI Filter: Not overbought (< 70 means room to run up)
+#       - left: ind_RSI_14
+#         operator: "<"
+#         right: 70
+#         persist_bars: 0
+#
+#
+#   short:
+#
+#     rule: AND
+#
+#     conditions:
+#
+#       # Golden Cross: SMA50 crosses below SMA200
+#       - left: ind_sma_50
+#         operator: cross_below
+#         right: ind_sma_200
+#         persist_bars: 0
+#
+#       # RSI Filter: Not oversold (> 30 means room to run down)
+#       - left: ind_RSI_14
+#         operator: ">"
+#         right: 30
+#         persist_bars: 0
 
 # ============================================================================
 # Previous Strategy (Commented Out)
