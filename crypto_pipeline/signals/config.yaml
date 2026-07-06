@@ -54,16 +54,55 @@
 #       bullish_engulfing: pat_BULLISH_ENGULFING
 
 # ============================================================================
-# STRATEGY 1: SMA 20 vs Price - ACTIVE
+# STRATEGY 1: SMA 20 vs Price - COMMENTED OUT
+# ============================================================================
+#
+# SMA:
+#   - inputs:
+#       - close
+#     parameters:
+#       timeperiod: 20
+#     aliases:
+#       sma: ind_sma_20
+#
+# strategy:
+#
+#   long:
+#
+#     rule: AND
+#
+#     conditions:
+#
+#       # SMA20 crosses above price
+#       - left: ind_sma_20
+#         operator: cross_above
+#         right: close
+#         persist_bars: 0
+#
+#
+#   short:
+#
+#     rule: AND
+#
+#     conditions:
+#
+#       # SMA20 crosses below price
+#       - left: ind_sma_20
+#         operator: cross_below
+#         right: close
+#         persist_bars: 0
+
+# ============================================================================
+# STRATEGY 2: RSI Overbought/Oversold - ACTIVE
 # ============================================================================
 
-SMA:
+RSI:
   - inputs:
       - close
     parameters:
-      timeperiod: 20
+      period: 14
     aliases:
-      sma: ind_sma_20
+      rsi: ind_RSI_14
 
 strategy:
 
@@ -73,10 +112,10 @@ strategy:
 
     conditions:
 
-      # SMA20 crosses above price
-      - left: ind_sma_20
-        operator: cross_above
-        right: close
+      # RSI < 30 (oversold)
+      - left: ind_RSI_14
+        operator: "<"
+        right: 30
         persist_bars: 0
 
 
@@ -86,14 +125,14 @@ strategy:
 
     conditions:
 
-      # SMA20 crosses below price
-      - left: ind_sma_20
-        operator: cross_below
-        right: close
+      # RSI > 70 (overbought)
+      - left: ind_RSI_14
+        operator: ">"
+        right: 70
         persist_bars: 0
 
 # ============================================================================
-# STRATEGY 2: Golden Cross (SMA 50 vs SMA 200) - COMMENTED OUT
+# STRATEGY 3: Golden Cross (SMA 50 vs SMA 200) - COMMENTED OUT
 # ============================================================================
 #
 # SMA:
