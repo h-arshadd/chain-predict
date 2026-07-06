@@ -84,6 +84,14 @@ SMA:
     aliases:
       sma: ind_sma_200
 
+RSI:
+  - inputs:
+      - close
+    parameters:
+      period: 14
+    aliases:
+      rsi: ind_RSI_14
+
 
 strategy:
 
@@ -93,9 +101,16 @@ strategy:
 
     conditions:
 
+      # Golden Cross: SMA50 crosses above SMA200
       - left: ind_sma_50
         operator: cross_above
         right: ind_sma_200
+        persist_bars: 0
+
+      # RSI Filter: Not overbought (< 70 means room to run up)
+      - left: ind_RSI_14
+        operator: "<"
+        right: 70
         persist_bars: 0
 
 
@@ -105,9 +120,16 @@ strategy:
 
     conditions:
 
+      # Golden Cross: SMA50 crosses below SMA200
       - left: ind_sma_50
         operator: cross_below
         right: ind_sma_200
+        persist_bars: 0
+
+      # RSI Filter: Not oversold (> 30 means room to run down)
+      - left: ind_RSI_14
+        operator: ">"
+        right: 30
         persist_bars: 0
 
 # ============================================================================
