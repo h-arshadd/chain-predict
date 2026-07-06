@@ -9,8 +9,8 @@
 # backtest execution. Pin end_date to the exact timestamp your DB
 # already covers (instead of "now") so get_data() reads purely from
 # the DB and never tries to live-fetch a gap from the exchange.
-start_date: "2025-01-01 00:00:00"
-end_date: "2026-07-02 05:00:00"
+start_date: "2026-04-01"
+end_date: "2026-06-01"
 
 # Starting account balance
 initial_balance: 10000
