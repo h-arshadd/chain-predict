@@ -63,7 +63,6 @@ def create_tables(conn, coin):
             confidence        DOUBLE PRECISION,
             topic             TEXT,
             topic_confidence  DOUBLE PRECISION,
-            tickers           TEXT[],
             weight            DOUBLE PRECISION,
             processed_at      TIMESTAMP DEFAULT NOW()
         )
@@ -112,11 +111,10 @@ def get_unprocessed_posts(conn, coin):
     return rows
 
 
-def insert_analysis(conn, coin, post_id, clean_text, sentiment, topic, tickers, weight):
+def insert_analysis(conn, coin, post_id, clean_text, sentiment, topic, weight):
     """
     sentiment: {"label", "score", "confidence"}
     topic: {"topic", "confidence"}
-    tickers: list of strings
     weight: float
     """
     table = f"{coin.lower()}_posts"
@@ -124,13 +122,13 @@ def insert_analysis(conn, coin, post_id, clean_text, sentiment, topic, tickers, 
     cur.execute(sql.SQL("""
         INSERT INTO clean.{table}
             (post_id, clean_text, sentiment_label, sentiment_score, confidence,
-             topic, topic_confidence, tickers, weight)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+             topic, topic_confidence, weight)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (post_id) DO NOTHING
     """).format(table=sql.Identifier(table)), (
         post_id, clean_text,
         sentiment["label"], sentiment["score"], sentiment["confidence"],
-        topic["topic"], topic["confidence"], tickers, weight,
+        topic["topic"], topic["confidence"], weight,
     ))
     conn.commit()
     cur.close()

@@ -22,17 +22,16 @@ from database import get_db_connection
 from psycopg2 import sql
 
 
-def build_output(coin, post_id, clean_text, sentiment, topic, tickers, weight):
+def build_output(coin, post_id, clean_text, sentiment, topic, weight):
     """Assemble the JSON object right after analysis, no DB round-trip needed."""
     return {
         "post_id": post_id,
         "coin": coin,
-        "ticker": tickers[0] if tickers else coin,
+        "ticker": topic["topic"],
         "sentiment": sentiment["label"],
         "confidence": round(sentiment["confidence"], 4),
         "topic": topic["topic"],
         "topic_confidence": round(topic["confidence"], 4),
-        "tickers_mentioned": tickers,
         "weight": round(weight, 4),
         "text": clean_text,
     }
@@ -45,7 +44,7 @@ def get_structured_output(conn, coin, post_id):
     cur = conn.cursor()
     cur.execute(sql.SQL("""
         SELECT post_id, clean_text, sentiment_label, sentiment_score,
-               confidence, topic, topic_confidence, tickers, weight
+               confidence, topic, topic_confidence, weight
         FROM clean.{table}
         WHERE post_id = %s
     """).format(table=sql.Identifier(table)), (post_id,))
@@ -55,16 +54,15 @@ def get_structured_output(conn, coin, post_id):
     if row is None:
         return None
 
-    post_id, clean_text, label, score, confidence, topic, topic_confidence, tickers, weight = row
+    post_id, clean_text, label, score, confidence, topic, topic_confidence, weight = row
     return {
         "post_id": post_id,
         "coin": coin,
-        "ticker": tickers[0] if tickers else coin,
+        "ticker": topic,
         "sentiment": label,
         "confidence": round(confidence, 4),
         "topic": topic,
         "topic_confidence": round(topic_confidence, 4),
-        "tickers_mentioned": tickers,
         "weight": round(weight, 4),
         "text": clean_text,
     }

@@ -15,7 +15,6 @@ from reddit_fetcher import get_reddit_client, fetch_posts
 from text_cleaner import clean_text_for_model
 from sentiment_model import get_sentiment
 from topic_classifier import classify_topic
-from text_features import extract_tickers
 from weighting import compute_weight
 from structured_output import build_output
 
@@ -51,12 +50,11 @@ def run():
 
             sentiment = get_sentiment(clean_text)
             topic = classify_topic(clean_text)
-            tickers = extract_tickers(raw_text)
             weight = compute_weight(score, num_comments)
 
-            insert_analysis(conn, coin, post_id, clean_text, sentiment, topic, tickers, weight)
+            insert_analysis(conn, coin, post_id, clean_text, sentiment, topic, weight)
 
-            output = build_output(coin, post_id, clean_text, sentiment, topic, tickers, weight)
+            output = build_output(coin, post_id, clean_text, sentiment, topic, weight)
             logger.info(output)
 
         plain_mean = get_mean_score(conn, coin)

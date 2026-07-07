@@ -28,17 +28,6 @@ TICKER_RE = re.compile(r"\$(\w+)")                # Normalize tickers ($BTC → 
 MULTI_SPACE_RE = re.compile(r"\s+")               # Clean extra spaces
 
 
-def _base_clean(text: str) -> str:
-    text = text.lower()
-    text = URL_RE.sub("", text)
-    text = HTML_RE.sub("", text)
-    text = emoji.demojize(text, delimiters=(" ", " "))    # emoji -> text
-    text = contractions.fix(text)                          # can't -> cannot
-    text = TICKER_RE.sub(r"\1", text)                      # $TSLA -> TSLA
-    text = MULTI_SPACE_RE.sub(" ", text).strip()
-    return text
-
-
 def clean_text_for_model(text: str) -> str:
     """
     Clean text for transformer models (CryptoBERT, BART).
@@ -57,4 +46,11 @@ def clean_text_for_model(text: str) -> str:
         Input: "I don't like $BTC!!! 🚀 https://example.com"
         Output: "i do not like btc!!!  rocket "
     """
-    return _base_clean(text)
+    text = text.lower()
+    text = URL_RE.sub("", text)
+    text = HTML_RE.sub("", text)
+    text = emoji.demojize(text, delimiters=(" ", " "))    # emoji -> text
+    text = contractions.fix(text)                          # can't -> cannot
+    text = TICKER_RE.sub(r"\1", text)                      # $TSLA -> TSLA
+    text = MULTI_SPACE_RE.sub(" ", text).strip()
+    return text
