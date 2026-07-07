@@ -1,47 +1,52 @@
 """
 text_features.py
 ----------------
-Steps 3-9: tokenization, stopword removal, lemmatization, stemming, POS, NER, ticker extraction.
+Step 9: Extract crypto tickers from text.
+
+NOTE: Steps 3-8 (tokenization, stopword removal, lemmatization, stemming, 
+POS tagging, NER) are NOT used in this pipeline because CryptoBERT and BART 
+(transformers) handle all that internally. These steps would only be useful 
+if we were doing classic NLP analysis, which we're not.
+
+We keep only ticker extraction because it's a simple regex operation 
+that doesn't conflict with transformer models.
 """
 
 import re
 import yaml
-import spacy
-from nltk.stem import PorterStemmer
 
 # Load config
 with open("config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
-_nlp = spacy.load("en_core_web_sm")
-_stemmer = PorterStemmer()
-
 TICKER_RE = re.compile(r"\b[A-Z]{2,5}\b")
 KNOWN_SYMBOLS = set(config["coins"].keys())
 
 
-def analyze(text: str) -> dict:
-    """One pass: tokenization, stopword removal, lemmatization, POS tagging, NER."""
-    doc = _nlp(text)
-    return {
-        "tokens": [t.text for t in doc],
-        "tokens_no_stopwords": [t.text for t in doc if not t.is_stop and not t.is_punct],
-        "lemmas": [t.lemma_ for t in doc if not t.is_stop and not t.is_punct],
-        "pos_tags": [(t.text, t.pos_) for t in doc],
-        "entities": [(ent.text, ent.label_) for ent in doc.ents],
-    }
-
-
-def stem_tokens(tokens: list) -> list:
-    """e.g. ['running', 'studies'] -> ['run', 'studi']"""
-    return [_stemmer.stem(t) for t in tokens]
-
-
 def extract_tickers(raw_text: str, known_symbols=None) -> list:
-    """Extract uppercase 2-5 letter words that match known coins."""
+    """
+    Extract uppercase 2-5 letter words that match known coins.
+    
+    Step 9: Ticker Extraction
+    
+    Args:
+        raw_text: The original text (before cleaning, so tickers like $BTC are still present)
+        known_symbols: Set of coin symbols to match against (defaults to config coins)
+    
+    Returns:
+        Sorted list of detected tickers (e.g., ["BTC", "ETH"])
+    
+    Example:
+        extract_tickers("I bought $BTC and ETH yesterday")
+        → ["BTC", "ETH"]
+    """
     if known_symbols is None:
         known_symbols = KNOWN_SYMBOLS
+    
+    # Find all uppercase 2-5 letter words
     candidates = set(TICKER_RE.findall(raw_text))
+    
+    # Filter to only known coins from config
     if known_symbols:
         return sorted(candidates & set(known_symbols))
     return sorted(candidates)

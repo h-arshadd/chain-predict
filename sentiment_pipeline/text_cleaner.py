@@ -1,36 +1,31 @@
 """
 text_cleaner.py
 ----------------
-Step 2 from the PDF: cleaning.
+Step 2: Clean the Text
 
-Why two functions instead of one:
-  clean_text_for_model()  -> KEEPS punctuation/casing. This is what goes
-                             into the sentiment transformer. Transformers
-                             actually use punctuation and capitalization as
-                             signal, so stripping it would make the
-                             sentiment model slightly dumber, not cleaner.
+Removes noise from raw Reddit posts:
+- URLs (https://..., www....)
+- HTML tags (<br>, <p>, etc.)
+- Emojis (🚀 → "rocket")
+- Contractions (don't → do not)
+- Dollar signs before tickers ($BTC → BTC)
+- Extra whitespace
 
-  clean_text_traditional() -> strips punctuation too. This is what the
-                             classic NLP steps (stopword removal,
-                             lemmatization, stemming, POS tagging, NER)
-                             will run on in the next file, since those
-                             techniques were built around bag-of-words
-                             style text, not full sentences.
+Keeps punctuation because transformers (CryptoBERT, BART) were trained
+on text with punctuation and use it as a signal (e.g., !!! = excitement).
 
-Duplicate posts aren't handled here — they're handled in db.py via the
-post_id primary key + ON CONFLICT DO NOTHING, so the same post never gets
-cleaned/scored twice even if fetched again.
+Duplicate posts aren't handled here — they're handled in database.py via 
+post_id primary key + ON CONFLICT DO NOTHING.
 """
 
 import re
 import emoji
 import contractions
 
-URL_RE = re.compile(r"http\S+|www\.\S+")
-HTML_RE = re.compile(r"<.*?>")
-TICKER_RE = re.compile(r"\$(\w+)")          # $TSLA -> TSLA
-PUNCT_RE = re.compile(r"[^\w\s]")
-MULTI_SPACE_RE = re.compile(r"\s+")
+URL_RE = re.compile(r"http\S+|www\.\S+")          # Remove URLs
+HTML_RE = re.compile(r"<.*?>")                    # Remove HTML tags
+TICKER_RE = re.compile(r"\$(\w+)")                # Normalize tickers ($BTC → BTC)
+MULTI_SPACE_RE = re.compile(r"\s+")               # Clean extra spaces
 
 
 def _base_clean(text: str) -> str:
@@ -45,13 +40,21 @@ def _base_clean(text: str) -> str:
 
 
 def clean_text_for_model(text: str) -> str:
-    """Feed this version to the sentiment model."""
+    """
+    Clean text for transformer models (CryptoBERT, BART).
+    
+    Returns cleaned text with:
+    - Lowercase
+    - URLs removed
+    - HTML removed
+    - Emojis converted to text
+    - Contractions expanded (don't → do not)
+    - Tickers normalized ($BTC → BTC)
+    - Extra spaces cleaned
+    - PUNCTUATION KEPT (transformers need it)
+    
+    Example:
+        Input: "I don't like $BTC!!! 🚀 https://example.com"
+        Output: "i do not like btc!!!  rocket "
+    """
     return _base_clean(text)
-
-
-def clean_text_traditional(text: str) -> str:
-    """Feed this version to tokenization/stopwords/lemmatization/POS/NER."""
-    text = _base_clean(text)
-    text = PUNCT_RE.sub("", text)
-    text = MULTI_SPACE_RE.sub(" ", text).strip()
-    return text
