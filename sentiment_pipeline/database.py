@@ -1,15 +1,11 @@
 """
-db.py
+database.py
 -----
-DB utilities for the sentiment pipeline. Separate module, separate concern
-from the chain-predict OHLCV db_utils.py — only similarity is style/pattern.
+DB utilities for sentiment pipeline.
 
 Two schemas:
-    raw   - raw fetched Reddit posts, one table per coin (e.g. raw.btc_posts)
-    clean - cleaned text + sentiment score, one table per coin (e.g. clean.btc_posts)
-
-A row only exists in `clean` once it's been scored, so "posts in raw with no
-matching row in clean" = the work queue for the sentiment model.
+    raw   - raw fetched Reddit posts, one table per coin
+    clean - cleaned text + sentiment score, one table per coin
 """
 
 import os
@@ -79,8 +75,7 @@ def create_tables(conn, coin):
 
 
 def insert_raw_posts(conn, coin, posts):
-    """posts: list of dicts with post_id, subreddit, title, body, created_utc.
-    Duplicate post_ids (re-fetching the same post) are just ignored."""
+    """posts: list of dicts with post_id, subreddit, title, body, created_utc."""
     if not posts:
         return
     table = f"{coin.lower()}_posts"
@@ -103,8 +98,7 @@ def insert_raw_posts(conn, coin, posts):
 
 
 def get_unprocessed_posts(conn, coin):
-    """Posts sitting in raw that don't have a sentiment row in clean yet.
-    Returns score/num_comments too, since main.py needs them to compute weight."""
+    """Posts in raw that don't have sentiment analysis in clean yet."""
     table = f"{coin.lower()}_posts"
     cur = conn.cursor()
     cur.execute(sql.SQL("""
@@ -115,15 +109,15 @@ def get_unprocessed_posts(conn, coin):
     """).format(table=sql.Identifier(table)))
     rows = cur.fetchall()
     cur.close()
-    return rows  # [(post_id, title, body, score, num_comments), ...]
+    return rows
 
 
 def insert_analysis(conn, coin, post_id, clean_text, sentiment, topic, tickers, weight):
     """
-    sentiment: {"label", "score", "confidence"} from sentiment_model.get_sentiment()
-    topic: {"topic", "confidence"} from topic_classifier.classify_topic()
-    tickers: list of strings from text_features.extract_tickers()
-    weight: float from weighting.compute_weight()
+    sentiment: {"label", "score", "confidence"}
+    topic: {"topic", "confidence"}
+    tickers: list of strings
+    weight: float
     """
     table = f"{coin.lower()}_posts"
     cur = conn.cursor()
@@ -143,11 +137,7 @@ def insert_analysis(conn, coin, post_id, clean_text, sentiment, topic, tickers, 
 
 
 def get_mean_score(conn, coin, days=None):
-    """
-    Plain (unweighted) mean sentiment score for a coin. Pass days=1 / days=3 /
-    days=365 for the 1-day / 3-day / yearly windows your lead mentioned -
-    that's the only change needed when you build those filters later.
-    """
+    """Plain (unweighted) mean sentiment score."""
     table = f"{coin.lower()}_posts"
     cur = conn.cursor()
 
@@ -167,11 +157,7 @@ def get_mean_score(conn, coin, days=None):
 
 
 def get_weighted_mean_score(conn, coin, days=None):
-    """
-    Engagement-weighted mean: posts with higher weight (more upvotes/comments)
-    count for more. Standard weighted-average formula:
-    sum(score * weight) / sum(weight).
-    """
+    """Engagement-weighted mean: sum(score * weight) / sum(weight)."""
     table = f"{coin.lower()}_posts"
     cur = conn.cursor()
 

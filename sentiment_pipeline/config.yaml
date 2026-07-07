@@ -1,0 +1,24 @@
+coins:
+  BTC:
+    subreddits:
+      - Bitcoin
+      - BitcoinMarkets
+      - CryptoCurrency
+    search_query: "BTC OR Bitcoin"
+  
+  ETH:
+    subreddits:
+      - ethereum
+      - ethtrader
+      - CryptoCurrency
+    search_query: "ETH OR Ethereum"
+
+reddit:
+  post_limit: 100
+  user_agent: "sentiment-pipeline/0.1"
+
+model:
+  sentiment_model: "ElKulako/cryptobert"
+  max_tokens: 512
+  topic_model: "facebook/bart-large-mnli"
+  topic_max_tokens: 1000

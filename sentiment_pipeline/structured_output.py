@@ -18,7 +18,7 @@ Since summarization got dropped (whole post gets passed through instead),
 that clear rather than pretending it's a generated summary.
 """
 
-from db import get_db_connection
+from database import get_db_connection
 from psycopg2 import sql
 
 
