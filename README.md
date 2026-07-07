@@ -1,22 +1,40 @@
 # chain-predict
 
-A production-grade data pipeline for fetching, cleaning, and storing historical OHLCV (Open, High, Low, Close, Volume) candlestick data from Binance and Bybit exchanges into a PostgreSQL database. Includes a full TA-Lib indicator library and visualization tooling. Built as the data foundation for training quantitative ML models on crypto markets.
+A production-grade quantitative trading pipeline combining **market data** and **social sentiment analysis**.
+
+## Two Core Modules
+
+### 1. **crypto_pipeline** — OHLCV Data & Technical Indicators
+Fetches, cleans, and stores historical candlestick data from Binance and Bybit exchanges into PostgreSQL. Includes 134 TA-Lib indicators with look-ahead bias prevention. Built as the data foundation for training quantitative ML models on crypto markets.
+
+### 2. **sentiment_pipeline** — Reddit Sentiment Analysis  
+Fetches Reddit posts, analyzes sentiment (Bullish/Bearish/Neutral) using CryptoBERT, classifies which coin they mention, extracts tickers and entities, and aggregates engagement-weighted sentiment scores per coin. Stores raw and cleaned data in separate PostgreSQL schemas for downstream analysis and portfolio signals.
 
 ---
 
 ## Features
 
+### crypto_pipeline
 - Fetches 1-minute OHLCV data for 8 coins: DOGE, SOL, BTC, ETH, ADA, LTC, MINA, SUI
 - Supports both Binance (spot) and Bybit (linear perpetuals)
 - Smart resume — tracks last stored timestamp and fetches only new data on each run
 - Data completeness validation with linear interpolation or forward fill for missing candles
 - Zero-volume candle correction via forward fill
 - On-demand resampling to any pandas-compatible timeframe (e.g. `5min`, `1h`, `1D`)
-- 134 TA-Lib indicators across all categories: Overlap Studies, Momentum, Volume, Cycle, Price Transform, Volatility, Pattern Recognition, and Statistics
-- Look-ahead bias prevention — every indicator output is shifted by 1 bar
+- 134 TA-Lib indicators across all categories with look-ahead bias prevention
 - Interactive Plotly charts with candlestick, overlays, and indicator subplots
 - Configurable via YAML — no hardcoded values
 - Full logging to console and file with configurable retry logic
+
+### sentiment_pipeline
+- Fetches Reddit posts from configurable subreddits per coin
+- NLP processing: text cleaning, tokenization, stopword removal, lemmatization, stemming, POS tagging, NER
+- **CryptoBERT** fine-tuned sentiment model (outputs: Bullish/Bearish/Neutral with confidence scores)
+- Zero-shot coin classification (auto-detects which coin a post is actually about)
+- Ticker extraction and entity recognition
+- Engagement-weighted sentiment aggregation (upvotes/comments influence final mean)
+- Separate PostgreSQL schemas for raw fetched data and cleaned/analyzed data
+- Stores sentiment per post, compute daily/weekly/yearly rolling averages
 
 ---
 
@@ -40,23 +58,43 @@ chain-predict/
 │   └── utils/
 │       ├── db_utils.py                 # PostgreSQL connection, schema, insert, query
 │       └── pipeline_utils.py           # Logging setup, config loading, date parsing
-├── .env                                # DB credentials (not committed)
-├── requirements.txt
-└── setup.py
+│
+├── sentiment_pipeline/
+│   ├── config.py                       # Coin config, model names, token limits
+│   ├── database.py                     # PostgreSQL schemas (raw/clean), insert/fetch logic
+│   ├── reddit_fetcher.py               # PRAW Reddit API wrapper
+│   ├── text_cleaner.py                 # Text normalization (URLs, HTML, contractions)
+│   ├── text_features.py                # spaCy NLP: tokenization, POS, NER, lemmatization, stemming
+│   ├── sentiment_model.py              # CryptoBERT inference with chunking for long posts
+│   ├── topic_classifier.py             # Zero-shot coin classification
+│   ├── weighting.py                    # Log-scaled engagement weighting
+│   ├── structured_output.py            # JSON packaging of results
+│   ├── chunking.py                     # Token-aware text splitting (reusable)
+│   ├── main.py                         # Full orchestration: fetch → clean → analyze → store
+│   ├── .env                            # DB + Reddit API credentials (not committed)
+│   └── requirements.txt
+│
+├── .env                                # Shared DB credentials (not committed)
+└── requirements.txt
 ```
 
 ---
 
 ## Setup
 
-**1. Clone the repo**
+### Prerequisites
+- Python 3.10+
+- PostgreSQL 12+
+- Reddit API credentials (https://www.reddit.com/prefs/apps — create a "script" app)
+
+### 1. Clone the repo
 
 ```bash
 git clone https://github.com/h-arshadd/chain-predict.git
 cd chain-predict
 ```
 
-**2. Create and activate virtual environment**
+### 2. Create and activate virtual environment
 
 ```bash
 python -m venv venv
@@ -64,14 +102,22 @@ venv\Scripts\activate        # Windows
 source venv/bin/activate     # Mac/Linux
 ```
 
-**3. Install dependencies**
+### 3. Install dependencies
 
+For **crypto_pipeline only:**
 ```bash
 pip install -r requirements.txt
-pip install -e .
 ```
 
-**4. Install TA-Lib**
+For **sentiment_pipeline**, go to its directory and install:
+```bash
+cd sentiment_pipeline
+pip install -r requirements.txt
+pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.0/en_core_web_sm-3.7.0-py3-none-any.whl
+cd ..
+```
+
+### 4. Install TA-Lib (crypto_pipeline only)
 
 TA-Lib requires a prebuilt wheel on Windows. Download the `.whl` matching your Python version from [github.com/cgohlke/talib-build/releases](https://github.com/cgohlke/talib-build/releases), then:
 
@@ -88,7 +134,7 @@ cd ta-lib && ./configure --prefix=/usr && make && sudo make install
 pip install ta-lib
 ```
 
-**5. Configure environment variables**
+### 5. Configure environment variables
 
 Create a `.env` file in the root directory:
 
@@ -100,7 +146,21 @@ DB_USER=postgres
 DB_PASSWORD=your_password_here
 ```
 
-**6. Set up PostgreSQL**
+**For sentiment_pipeline**, also create `sentiment_pipeline/.env`:
+
+```env
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=chain_predict
+DB_USER=postgres
+DB_PASSWORD=your_password_here
+
+REDDIT_CLIENT_ID=your_reddit_client_id
+REDDIT_CLIENT_SECRET=your_reddit_client_secret
+REDDIT_USER_AGENT=sentiment-pipeline/0.1
+```
+
+### 6. Set up PostgreSQL
 
 Create the database:
 
@@ -108,32 +168,13 @@ Create the database:
 CREATE DATABASE chain_predict;
 ```
 
-Schemas and tables are created automatically on first run.
-
----
-
-## Configuration
-
-Edit the YAML config files to customize the pipeline:
-
-`crypto_pipeline/data/binance/config_binance.yml`
-`crypto_pipeline/data/bybit/config_bybit.yml`
-
-Key parameters:
-
-```yaml
-symbols: ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
-start_date: "2023-01-01"
-end_date: "now"
-filling_missing_method: "interpolation"
-fill_zero_volume: "ffill"
-retries: 5
-retry_delay: 10
-```
+Schemas and tables are created automatically on first run of each pipeline.
 
 ---
 
 ## Usage
+
+### crypto_pipeline
 
 **Run Binance pipeline:**
 
@@ -194,9 +235,210 @@ python plot_indicators.py
 
 Opens an interactive Plotly chart in the browser with candlestick, Bollinger Bands, SMA, EMA, SAR, RSI, MACD, and volume panels.
 
+### sentiment_pipeline
+
+**Run the full sentiment pipeline:**
+
+```bash
+cd sentiment_pipeline
+python main.py
+```
+
+**What it does in one run:**
+1. Fetches new Reddit posts from configured subreddits (per coin in `config.py`)
+2. Stores raw posts in PostgreSQL `raw.btc_posts` / `raw.eth_posts` / etc.
+3. For each unprocessed post:
+   - Cleans text (lowercase, remove URLs/HTML, normalize tickers, expand contractions)
+   - Runs NLP: tokenization, stopword removal, lemmatization, stemming, POS tagging, NER
+   - Analyzes sentiment with CryptoBERT (outputs: Bullish/Bearish/Neutral + confidence)
+   - Classifies which coin the post is about (zero-shot classification)
+   - Extracts mentioned tickers and entities
+   - Computes engagement weight (log-scaled upvotes + comments)
+4. Stores cleaned analysis in PostgreSQL `clean.btc_posts` / `clean.eth_posts` / etc.
+5. Prints plain and **engagement-weighted mean sentiment** for each coin
+
+**Example output:**
+```
+--- BTC ---
+Fetched & stored 150 raw posts for BTC
+47 posts to analyze for BTC
+BTC mean sentiment: 0.32 | weighted mean: 0.38
+--- ETH ---
+Fetched & stored 120 raw posts for ETH
+33 posts to analyze for ETH
+ETH mean sentiment: 0.18 | weighted mean: 0.21
+```
+
+**Add a new coin:**
+
+Edit `sentiment_pipeline/config.py`:
+
+```python
+COINS = {
+    "BTC": {...},
+    "ETH": {...},
+    "SOL": {                           # New coin
+        "subreddits": ["solana", "CryptoCurrency"],
+        "search_query": "SOL OR Solana",
+    },
+}
+```
+
+The pipeline auto-detects the new coin. No code changes needed.
+
+**Query results from PostgreSQL:**
+
+```python
+from sentiment_pipeline.database import get_db_connection, get_mean_score, get_weighted_mean_score
+
+conn = get_db_connection()
+btc_mean = get_mean_score(conn, "BTC")              # Plain average
+btc_weighted = get_weighted_mean_score(conn, "BTC") # Engagement-weighted
+
+# With time windows:
+btc_1day = get_weighted_mean_score(conn, "BTC", days=1)
+btc_7day = get_weighted_mean_score(conn, "BTC", days=7)
+btc_1year = get_weighted_mean_score(conn, "BTC", days=365)
+```
+
 ---
 
-## Indicators
+## Database Schema
+
+### crypto_pipeline
+
+Each exchange has its own schema. Tables follow the naming convention `{symbol}_{timeframe}`:
+
+| Column   | Type             | Description                 |
+|----------|------------------|-----------------------------|
+| datetime | TIMESTAMP (PK)   | Candle open timestamp (UTC) |
+| open     | DOUBLE PRECISION | Opening price               |
+| high     | DOUBLE PRECISION | Highest price in the candle |
+| low      | DOUBLE PRECISION | Lowest price in the candle  |
+| close    | DOUBLE PRECISION | Closing price               |
+| volume   | DOUBLE PRECISION | Trading volume              |
+
+Example tables: `binance.btc_1m`, `bybit.doge_1m`
+
+### sentiment_pipeline
+
+Two schemas: `raw` (fetched posts) and `clean` (analyzed posts).
+
+**`raw.btc_posts` / `raw.eth_posts` / etc.:**
+
+| Column      | Type      | Description                 |
+|-------------|-----------|----------------------------|
+| post_id     | TEXT (PK) | Unique Reddit post ID       |
+| subreddit   | TEXT      | Source subreddit            |
+| title       | TEXT      | Post title                  |
+| body        | TEXT      | Post body text              |
+| created_utc | TIMESTAMP | Post creation time (UTC)    |
+| score       | INTEGER   | Net upvotes (used for weight) |
+| num_comments| INTEGER   | Comment count (used for weight) |
+| upvote_ratio| FLOAT     | Ratio of upvotes           |
+| fetched_at  | TIMESTAMP | When this post was fetched  |
+
+**`clean.btc_posts` / `clean.eth_posts` / etc.:**
+
+| Column          | Type              | Description                            |
+|-----------------|-------------------|----------------------------------------|
+| post_id         | TEXT (PK/FK)      | Links to raw.btc_posts                |
+| clean_text      | TEXT              | Cleaned text (for storage/analysis)    |
+| sentiment_label | TEXT              | Bullish / Bearish / Neutral            |
+| sentiment_score | FLOAT (-1 to +1)  | Signed score (used for averaging)      |
+| confidence      | FLOAT (0 to 1)    | Model confidence in sentiment           |
+| topic           | TEXT              | Detected coin (BTC, ETH, etc.)         |
+| topic_confidence| FLOAT (0 to 1)    | Confidence in coin detection           |
+| tickers         | TEXT[]            | Array of mentioned tickers             |
+| weight          | FLOAT             | Log-scaled engagement weight           |
+| processed_at    | TIMESTAMP         | When this post was analyzed            |
+
+---
+
+## Models & NLP Pipeline
+
+### sentiment_pipeline NLP Steps
+
+Follows the classical NLP pipeline with modern transformer sentiment analysis:
+
+1. **Text Collection** → PRAW Reddit API
+2. **Text Cleaning** → lowercase, remove URLs/HTML, normalize tickers, expand contractions
+3. **Tokenization** → spaCy word tokenizer
+4. **Stop Word Removal** → spaCy (filters common words)
+5. **Lemmatization** → spaCy (running → run, studies → study)
+6. **Stemming** → NLTK PorterStemmer
+7. **POS Tagging** → spaCy (mark NOUN, VERB, ADJ, etc.)
+8. **Named Entity Recognition (NER)** → spaCy (extract named entities)
+9. **Ticker Extraction** → Regex + config (find $BTC, ETH mentions)
+10. **Sentiment Analysis** → **CryptoBERT** (Bullish/Bearish/Neutral)
+11. **Topic Classification** → Zero-shot BART (which coin is post about?)
+12. **Structured Output** → JSON packaging with all results
+
+### Models
+
+| Step | Model | Training Data | Purpose |
+|------|-------|---------------|---------|
+| Sentiment | ElKulako/cryptobert | Reddit/Twitter/StockTwits crypto posts | Crypto-specific sentiment (Bullish/Bearish/Neutral) |
+| Topic Classification | facebook/bart-large-mnli | MNLI dataset | Zero-shot coin classification |
+| NER/POS/Lemmatization | spacy en_core_web_sm | English web text | Multi-task NLP (tokenization, POS, NER, lemmas) |
+| Stemming | NLTK PorterStemmer | — | Root word reduction |
+
+### Handling Long Posts
+
+BERT-family models max out at **512 tokens**. For longer posts:
+- Text is split into 510-token chunks
+- Each chunk is scored separately
+- Probabilities are averaged to get final sentiment score
+
+This prevents truncation and ensures consistent sentiment across long-form Reddit discussions.
+
+---
+
+## Configuration
+
+### crypto_pipeline
+
+Edit the YAML config files to customize the pipeline:
+
+`crypto_pipeline/data/binance/config_binance.yml`
+`crypto_pipeline/data/bybit/config_bybit.yml`
+
+Key parameters:
+
+```yaml
+symbols: ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
+start_date: "2023-01-01"
+end_date: "now"
+filling_missing_method: "interpolation"
+fill_zero_volume: "ffill"
+retries: 5
+retry_delay: 10
+```
+
+### sentiment_pipeline
+
+Edit `sentiment_pipeline/config.py`:
+
+```python
+COINS = {
+    "BTC": {
+        "subreddits": ["Bitcoin", "BitcoinMarkets", "CryptoCurrency"],
+        "search_query": "BTC OR Bitcoin",
+    },
+    "ETH": {
+        "subreddits": ["ethereum", "ethtrader", "CryptoCurrency"],
+        "search_query": "ETH OR Ethereum",
+    },
+}
+
+REDDIT_POST_LIMIT = 100  # Posts per subreddit per run
+SENTIMENT_MODEL_NAME = "ElKulako/cryptobert"
+MAX_TOKENS = 512  # BERT token limit
+```
+
+---
+
+## Indicators (crypto_pipeline)
 
 All 134 indicators from TA-Lib are implemented in `crypto_pipeline/indicators/talib_indicators.py`, organized by category:
 
@@ -215,25 +457,9 @@ Multi-output indicators (BBANDS, MAMA, MACD, AROON, STOCH, etc.) return a `dict`
 
 ---
 
-## Database Schema
-
-Each exchange has its own PostgreSQL schema. Tables follow the naming convention `{symbol}_{timeframe}`:
-
-| Column   | Type             | Description                 |
-|----------|------------------|-----------------------------|
-| datetime | TIMESTAMP (PK)   | Candle open timestamp (UTC) |
-| open     | DOUBLE PRECISION | Opening price               |
-| high     | DOUBLE PRECISION | Highest price in the candle |
-| low      | DOUBLE PRECISION | Lowest price in the candle  |
-| close    | DOUBLE PRECISION | Closing price               |
-| volume   | DOUBLE PRECISION | Trading volume              |
-
-Example tables: `binance.btc_1m`, `bybit.doge_1m`
-
----
-
 ## Tech Stack
 
+### crypto_pipeline
 - **Python 3.10**
 - **PostgreSQL** — data storage
 - **TA-Lib 0.6.4** — technical indicators
@@ -244,3 +470,27 @@ Example tables: `binance.btc_1m`, `bybit.doge_1m`
 - **pandas / numpy** — data processing and resampling
 - **pyyaml** — config management
 - **python-dotenv** — environment variable management
+
+### sentiment_pipeline
+- **Python 3.10**
+- **PostgreSQL** — raw and cleaned data storage
+- **PRAW 7.7.0** — Reddit API client
+- **transformers 4.37.2** — HuggingFace models (CryptoBERT, BART)
+- **torch 2.2.1** — deep learning framework
+- **spacy 3.7.2** — NLP toolkit (tokenization, POS, NER, lemmatization)
+- **nltk 3.8.1** — stemming (PorterStemmer)
+- **psycopg2-binary** — PostgreSQL connector
+- **emoji, contractions** — text cleaning
+- **python-dotenv** — environment variable management
+
+---
+
+## Roadmap
+
+- [ ] Combine crypto_pipeline OHLCV signals with sentiment_pipeline sentiment for ML feature engineering
+- [ ] Daily/weekly/yearly rolling sentiment averages in sentiment_pipeline
+- [ ] Real-time streaming sentiment updates (WebSocket)
+- [ ] Backtesting module combining price action + sentiment signals
+- [ ] REST API to query mean sentiment scores per coin
+- [ ] Multi-asset support (stocks, forex, commodities) for sentiment_pipeline
+- [ ] Fine-tune sentiment model on Neurog.ai internal trading forum data
