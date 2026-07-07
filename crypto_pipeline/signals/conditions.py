@@ -4,18 +4,26 @@ conditions.py (CORRECTED)
 Evaluates every strategy condition and returns a DataFrame
 containing one boolean column for each condition.
 
-FIX FOR LOOK-AHEAD BIAS:
-- Indicators are shifted in talib_indicators.py
-- Price columns (close, open, high, low) are NOT shifted
-- When comparing shifted indicators to unshifted prices, we get look-ahead bias
-- Solution: Shift price columns in resolve_operand() so both sides are timely aligned
+LOOK-AHEAD BIAS — SINGLE CENTRALIZED SHIFT:
+- talib_indicators.py now returns RAW, unshifted indicator values.
+  ind_X[N] is computed using data through candle N (inclusive) — same
+  convention as talib itself, and same convention as the raw OHLCV columns.
+- Because everything (prices AND indicators) is unshifted and on the same
+  clock, conditions are evaluated here exactly as if you were live at the
+  close of each candle — no per-operand shifting needed in resolve_operand().
+- The ONE shift that prevents look-ahead is applied once, at the very end
+  of evaluate_conditions(), to the whole condition_df at once. This moves
+  every condition (and therefore every signal built from it) forward by
+  one bar, so a condition that becomes true using candle N's data is only
+  actionable starting at candle N+1 — exactly the anti-look-ahead
+  guarantee, but from a single place instead of scattered across two files.
+- Do NOT re-add per-column shifting in resolve_operand(), and do NOT add
+  .shift(1) back into talib_indicators.py — either one would double-shift
+  on top of the shift already applied here.
 """
 
 import pandas as pd
 import numpy as np
-
-# Price columns that need shifting to align with shifted indicators
-PRICE_COLUMNS = {"open", "high", "low", "close"}
 
 
 # ==========================================================
@@ -25,10 +33,9 @@ PRICE_COLUMNS = {"open", "high", "low", "close"}
 def cross_above(left: pd.Series, right: pd.Series) -> pd.Series:
     """
     True only on the bar where left crosses above right.
-    
-    Assumes left and right are pre-aligned (both shifted or both unshifted).
-    Since indicators are shifted in talib_indicators.py and price columns
-    are shifted in resolve_operand(), both operands here are historical.
+
+    Operates on raw, unshifted series — the anti-look-ahead shift is
+    applied once, centrally, in evaluate_conditions().
     """
     return (left > right) & (left.shift(1) <= right.shift(1))
 
@@ -75,29 +82,23 @@ def apply_persist(condition: pd.Series, bars: int) -> pd.Series:
 def resolve_operand(df: pd.DataFrame, operand):
     """
     Resolve operand to either a Series or a constant.
-    
+
     Operand can be:
-        ind_EMA_20          → indicator column (already .shift(1) in talib_indicators.py)
-        close, open, etc    → price column (NOT shifted yet, must shift here)
+        ind_EMA_20          → indicator column (raw, unshifted)
+        close, open, etc    → price column (raw, unshifted)
         30, 70              → numeric constant
         True                → boolean constant
-    
-    CRITICAL FIX:
-    If operand is a price column, shift it by 1 to align with shifted indicators.
-    This prevents look-ahead bias when comparing indicators to prices.
+
+    No shifting happens here. Both indicators and prices are on the same,
+    unshifted clock, so they're already timely aligned with each other.
+    The single anti-look-ahead shift is applied once, to the finished
+    condition_df, at the end of evaluate_conditions().
     """
 
     if isinstance(operand, str):
 
         if operand in df.columns:
-            series = df[operand]
-            
-            # Shift price columns to align with shifted indicators
-            if operand in PRICE_COLUMNS:
-                return series.shift(1)
-            
-            # Indicators are already shifted; return as-is
-            return series
+            return df[operand]
 
     # Return constant (number, boolean, etc)
     return operand
@@ -114,11 +115,9 @@ def evaluate_operator(
     right,
 ):
     """
-    Evaluates one condition.
-    
-    Note: resolve_operand() ensures all operands are timely aligned:
-    - Shifted indicators come as-is (already .shift(1))
-    - Price columns are shifted here (preventing look-ahead)
+    Evaluates one condition, using each operand's raw (unshifted) values.
+    The anti-look-ahead shift is applied once, centrally, at the end of
+    evaluate_conditions() — not here.
     """
 
     left_value = resolve_operand(df, left)
@@ -158,7 +157,7 @@ def evaluate_operator(
 
     # -------------------------------
     # Price Operators
-    # (These explicitly reference OHLC, so they're unshifted by intent)
+    # (Same raw, unshifted convention as everything else here)
     # -------------------------------
 
     if operator == "close_above":
@@ -306,5 +305,21 @@ def evaluate_conditions(
                 .fillna(False)
                 .astype(bool)
             )
+
+    # =====================================================
+    # SINGLE, CENTRALIZED ANTI-LOOK-AHEAD SHIFT
+    # =====================================================
+    # Every condition above was evaluated using each row's OWN, unshifted
+    # data (raw indicators, raw prices) — i.e. "as if live at the close of
+    # that candle". Shifting the whole result forward by one bar here means
+    # a condition that became true using candle N's data is only reflected
+    # as True starting at candle N+1, which is the one and only shift this
+    # pipeline applies. Do not shift anywhere else (talib_indicators.py,
+    # resolve_operand, or main.py's OHLCV) or you will double-shift.
+    #
+    # shift(1) introduces NaN into these boolean columns, which upcasts them
+    # to object dtype; infer_objects(copy=False) lets fillna+astype cleanly
+    # downcast back to bool without pandas' FutureWarning.
+    result = result.shift(1).fillna(False).infer_objects(copy=False).astype(bool)
 
     return result

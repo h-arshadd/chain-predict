@@ -99,13 +99,25 @@ if __name__ == "__main__":
             indicator_df, condition_df, signals = generate_signals(df)
 
             # Build output: datetime + ohlcv + indicators + conditions + signal
+            #
+            # FIX: indicators (and therefore condition_df / signals) are all
+            # pre-shifted by 1 bar in talib_indicators.py to avoid lookahead
+            # -- i.e. the value in row N was computed from the candle at
+            # row N-1. The OHLCV columns below were NOT shifted, so they
+            # showed the CURRENT bar's own price sitting in the same row as
+            # an indicator/signal value that actually belongs to the
+            # PREVIOUS bar. That's what caused signals to appear to line up
+            # one row "too early" against the price data.
+            #
+            # Shifting open/high/low/close/volume by 1 here makes every
+            # column in a row refer to the same underlying candle.
             output = pd.DataFrame({
                 "datetime": df["datetime"],
-                "open": df["open"],
-                "high": df["high"],
-                "low": df["low"],
-                "close": df["close"],
-                "volume": df["volume"],
+                "open": df["open"].shift(1),
+                "high": df["high"].shift(1),
+                "low": df["low"].shift(1),
+                "close": df["close"].shift(1),
+                "volume": df["volume"].shift(1),
             })
             
             # Add all indicator columns
