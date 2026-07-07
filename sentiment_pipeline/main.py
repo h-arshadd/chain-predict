@@ -18,7 +18,7 @@ from here, in order.
 import logging
 
 from config import COINS, REDDIT_POST_LIMIT
-from db import (
+from database import (
     get_db_connection, create_tables, insert_raw_posts,
     get_unprocessed_posts, insert_analysis, get_mean_score, get_weighted_mean_score,
 )
