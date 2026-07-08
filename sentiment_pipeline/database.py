@@ -49,10 +49,10 @@ def create_tables(conn, coin):
             subreddit     TEXT,
             title         TEXT,
             body          TEXT,
+            comments      JSONB,
             created_utc   TIMESTAMP,
             score         INTEGER,
-            upvote_ratio  DOUBLE PRECISION,
-            comments      JSONB
+            upvote_ratio  DOUBLE PRECISION
         )
     """).format(table=sql.Identifier(table)))
 
@@ -96,24 +96,32 @@ def insert_raw_posts(conn, coin, posts):
     cur.close()
 
 
-def insert_post_comments(conn, coin, post_id, comments):
-    """comments: list of dicts with comment_id, body, score, created_utc (top 10 per post).
-    Stored as JSONB in the post's own row (sentiment_raw.<coin>_posts.comments)."""
+def insert_post_comments(conn, coin, post_comments):
+    """post_comments: dict of {post_id: [ {comment_id, body, score, created_utc}, ... ]}.
+    Stored as {"comment_1": "text", "comment_2": "text", ...} — just the comment text,
+    ordered by Reddit's own top-comment ranking (score was only used to pick/sort them).
+    Batches all updates into a single round trip instead of one UPDATE per post."""
+    if not post_comments:
+        return
     table = f"{coin.lower()}_posts"
     cur = conn.cursor()
 
-    payload = [{
-        "comment_id": c["comment_id"],
-        "body": c["body"],
-        "score": c["score"],
-        "created_utc": c["created_utc"].isoformat(),
-    } for c in comments]
+    rows = []
+    for post_id, comments in post_comments.items():
+        payload = {
+            f"comment_{i}": c["body"]
+            for i, c in enumerate(comments, start=1)
+        }
+        rows.append((post_id, Json(payload)))
 
-    cur.execute(sql.SQL("""
-        UPDATE sentiment_raw.{table}
-        SET comments = %s
-        WHERE post_id = %s
-    """).format(table=sql.Identifier(table)), (Json(payload), post_id))
+    query = sql.SQL("""
+        UPDATE sentiment_raw.{table} AS t
+        SET comments = v.comments
+        FROM (VALUES %s) AS v(post_id, comments)
+        WHERE t.post_id = v.post_id
+    """).format(table=sql.Identifier(table)).as_string(conn)
+
+    execute_values(cur, query, rows, template="(%s, %s::jsonb)")
 
     conn.commit()
     cur.close()

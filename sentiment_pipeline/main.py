@@ -38,9 +38,10 @@ def run():
         insert_raw_posts(conn, coin, posts)
         logger.info(f"Fetched & stored {len(posts)} raw posts for {coin}")
 
+        post_comments = {}
         for post in posts:
-            top_comments = fetch_top_comments(reddit, post["post_id"], limit=10)
-            insert_post_comments(conn, coin, post["post_id"], top_comments)
+            post_comments[post["post_id"]] = fetch_top_comments(reddit, post["post_id"], limit=10)
+        insert_post_comments(conn, coin, post_comments)
         logger.info(f"Fetched & stored top comments for {len(posts)} posts for {coin}")
 
         unprocessed = get_unprocessed_posts(conn, coin)
@@ -50,10 +51,10 @@ def run():
             clean_title = clean_text_for_model(title)
             clean_body = clean_text_for_model(body)
 
-            comments = comments or []  # comments is None if fetch step stored nothing
+            comments = comments or {}  # comments is None if fetch step stored nothing
             clean_comment_list = [
-                cleaned for c in comments
-                if (cleaned := clean_text_for_model(c["body"]))
+                cleaned for text in comments.values()
+                if (cleaned := clean_text_for_model(text))
             ]
             clean_comments = " | ".join(clean_comment_list)
 
