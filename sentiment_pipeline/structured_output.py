@@ -5,9 +5,9 @@ Step 14 from the PDF: structured JSON output.
 
 No new model here - by this point every piece (sentiment, topic, tickers,
 weight) has already been computed by the earlier steps and is sitting in
-clean.<coin>_posts. This file's only job is to package it into the clean
-JSON shape the PDF asked for, either fresh (right after analysis, in
-main.py) or later by pulling a row back out of the DB.
+sentiment_clean.<coin>_posts. This file's only job is to package it into
+the clean JSON shape the PDF asked for, either fresh (right after
+analysis, in main.py) or later by pulling a row back out of the DB.
 
 PDF's example shape was:
     {"ticker": "TSLA", "sentiment": "Bullish", "confidence": 0.94,
@@ -45,7 +45,7 @@ def get_structured_output(conn, coin, post_id):
     cur.execute(sql.SQL("""
         SELECT post_id, clean_text, sentiment_label, sentiment_score,
                confidence, topic, topic_confidence, weight
-        FROM clean.{table}
+        FROM sentiment_clean.{table}
         WHERE post_id = %s
     """).format(table=sql.Identifier(table)), (post_id,))
     row = cur.fetchone()

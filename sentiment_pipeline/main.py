@@ -8,10 +8,10 @@ import yaml
 import logging
 
 from database import (
-    get_db_connection, create_tables, insert_raw_posts,
+    get_db_connection, create_tables, insert_raw_posts, insert_top_comments,
     get_unprocessed_posts, insert_analysis, get_mean_score, get_weighted_mean_score,
 )
-from reddit_fetcher import get_reddit_client, fetch_posts
+from reddit_fetcher import get_reddit_client, fetch_posts, fetch_top_comments
 from text_cleaner import clean_text_for_model
 from sentiment_model import get_sentiment
 from topic_classifier import classify_topic
@@ -38,6 +38,11 @@ def run():
                           limit=config["reddit"]["post_limit"])
         insert_raw_posts(conn, coin, posts)
         logger.info(f"Fetched & stored {len(posts)} raw posts for {coin}")
+
+        for post in posts:
+            top_comments = fetch_top_comments(reddit, post["post_id"], limit=10)
+            insert_top_comments(conn, coin, post["post_id"], top_comments)
+        logger.info(f"Fetched & stored top comments for {len(posts)} posts for {coin}")
 
         unprocessed = get_unprocessed_posts(conn, coin)
         logger.info(f"{len(unprocessed)} posts to analyze for {coin}")
