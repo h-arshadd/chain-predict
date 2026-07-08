@@ -8,8 +8,8 @@ import yaml
 import logging
 
 from database import (
-    get_db_connection, create_tables, insert_raw_posts, insert_top_comments,
-    get_unprocessed_posts, get_raw_comments, insert_analysis, insert_clean_comments,
+    get_db_connection, create_tables, insert_raw_posts, insert_post_comments,
+    get_unprocessed_posts, insert_analysis,
     get_mean_score,
 )
 from reddit_fetcher import get_reddit_client, fetch_posts, fetch_top_comments
@@ -40,15 +40,23 @@ def run():
 
         for post in posts:
             top_comments = fetch_top_comments(reddit, post["post_id"], limit=10)
-            insert_top_comments(conn, coin, post["post_id"], top_comments)
+            insert_post_comments(conn, coin, post["post_id"], top_comments)
         logger.info(f"Fetched & stored top comments for {len(posts)} posts for {coin}")
 
         unprocessed = get_unprocessed_posts(conn, coin)
         logger.info(f"{len(unprocessed)} posts to analyze for {coin}")
 
-        for post_id, title, body in unprocessed:
+        for post_id, title, body, comments in unprocessed:
             clean_title = clean_text_for_model(title)
             clean_body = clean_text_for_model(body)
+
+            comments = comments or []  # comments is None if fetch step stored nothing
+            clean_comment_list = [
+                cleaned for c in comments
+                if (cleaned := clean_text_for_model(c["body"]))
+            ]
+            clean_comments = " | ".join(clean_comment_list)
+
             if not clean_title and not clean_body:
                 continue
 
@@ -56,17 +64,9 @@ def run():
             combined_text = f"{clean_title} {clean_body}".strip()
             sentiment = get_sentiment(combined_text)
 
-            insert_analysis(conn, coin, post_id, clean_title, clean_body, sentiment)
+            insert_analysis(conn, coin, post_id, clean_title, clean_body, clean_comments, sentiment)
 
-            raw_comments = get_raw_comments(conn, coin, post_id)
-            clean_comments = []
-            for comment_id, comment_body in raw_comments:
-                cleaned = clean_text_for_model(comment_body)
-                if cleaned:
-                    clean_comments.append({"comment_id": comment_id, "body": cleaned})
-            insert_clean_comments(conn, coin, post_id, clean_comments)
-
-            output = build_output(coin, post_id, clean_title, clean_body, sentiment)
+            output = build_output(coin, post_id, clean_title, clean_body, clean_comments, sentiment)
             logger.info(output)
 
         plain_mean = get_mean_score(conn, coin)

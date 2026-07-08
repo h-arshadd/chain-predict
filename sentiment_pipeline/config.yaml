@@ -14,7 +14,7 @@ coins:
     search_query: "ETH OR Ethereum"
 
 reddit:
-  post_limit: 100
+  post_limit: 10
   user_agent: "sentiment-pipeline/0.1"
 
 model:

@@ -27,7 +27,7 @@ def get_reddit_client():
     )
 
 
-def fetch_posts(reddit, subreddits, search_query, limit=100):
+def fetch_posts(reddit, subreddits, search_query, limit=10):
     """Search each subreddit for the coin's query."""
     posts = []
     for sub_name in subreddits:

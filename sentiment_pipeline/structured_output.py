@@ -17,7 +17,7 @@ from database import get_db_connection
 from psycopg2 import sql
 
 
-def build_output(coin, post_id, clean_title, clean_body, sentiment):
+def build_output(coin, post_id, clean_title, clean_body, clean_comments, sentiment):
     """Assemble the JSON object right after analysis, no DB round-trip needed."""
     return {
         "post_id": post_id,
@@ -26,6 +26,7 @@ def build_output(coin, post_id, clean_title, clean_body, sentiment):
         "confidence": round(sentiment["confidence"], 4),
         "title": clean_title,
         "body": clean_body,
+        "comments": clean_comments,
     }
 
 
@@ -35,7 +36,7 @@ def get_structured_output(conn, coin, post_id):
     table = f"{coin.lower()}_posts"
     cur = conn.cursor()
     cur.execute(sql.SQL("""
-        SELECT post_id, title, body, sentiment_label, sentiment_score, confidence
+        SELECT post_id, title, body, comments, sentiment_label, sentiment_score, confidence
         FROM sentiment_clean.{table}
         WHERE post_id = %s
     """).format(table=sql.Identifier(table)), (post_id,))
@@ -45,7 +46,7 @@ def get_structured_output(conn, coin, post_id):
     if row is None:
         return None
 
-    post_id, title, body, label, score, confidence = row
+    post_id, title, body, comments, label, score, confidence = row
     return {
         "post_id": post_id,
         "coin": coin,
@@ -53,4 +54,5 @@ def get_structured_output(conn, coin, post_id):
         "confidence": round(confidence, 4),
         "title": title,
         "body": body,
+        "comments": comments,
     }
