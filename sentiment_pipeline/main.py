@@ -10,7 +10,6 @@ import logging
 from database import (
     get_db_connection, create_tables, insert_raw_post,
     get_unprocessed_posts, insert_analysis,
-    get_mean_score,
 )
 from reddit_fetcher import get_reddit_client, fetch_posts, fetch_top_comments
 from text_cleaner import clean_text_for_model
@@ -66,9 +65,6 @@ def run():
                 f"{coin} {post_id}: {sentiment['label']} "
                 f"(score={sentiment['score']:.3f}, confidence={sentiment['confidence']:.3f})"
             )
-
-        plain_mean = get_mean_score(conn, coin)
-        logger.info(f"{coin} mean sentiment: {plain_mean}")
 
     conn.close()
 

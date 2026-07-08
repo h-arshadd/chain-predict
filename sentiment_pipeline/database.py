@@ -134,15 +134,3 @@ def insert_analysis(conn, coin, post_id, clean_title, clean_body, clean_comments
     ))
     conn.commit()
     cur.close()
-
-
-def get_mean_score(conn, coin):
-    """Plain (unweighted) mean sentiment score."""
-    table = f"{coin.lower()}_posts"
-    cur = conn.cursor()
-    cur.execute(sql.SQL("SELECT AVG(sentiment_score) FROM sentiment_clean.{table}").format(
-        table=sql.Identifier(table)
-    ))
-    result = cur.fetchone()[0]
-    cur.close()
-    return result
