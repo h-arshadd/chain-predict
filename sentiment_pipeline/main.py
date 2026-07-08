@@ -34,29 +34,27 @@ def run():
 
         for post in posts:
             top_comments = fetch_top_comments(reddit, post["post_id"], limit=10)
+            post["comments"] = top_comments  # Add comments to post dict
             
-            # Clean text
-            clean_title = clean_text_for_model(post["title"])
-            clean_body = clean_text_for_model(post["body"])
+            # Combine all text into single string
+            all_text = f"{post['title']} {post['body']}"
+            for comment in post["comments"]:
+                all_text += f" {comment['body']}"
             
-            clean_comment_list = [
-                cleaned for text in top_comments
-                if (cleaned := clean_text_for_model(text["body"]))
-            ]
-            clean_comments = " | ".join(clean_comment_list)
+            # Clean combined text
+            clean_text = clean_text_for_model(all_text)
             
-            if not clean_title and not clean_body:
+            if not clean_text:
                 continue
             
-            # Analyze sentiment
-            combined_text = f"{clean_title} {clean_body}".strip()
-            sentiment = get_sentiment(combined_text)
+            # Analyze sentiment on combined text
+            sentiment = get_sentiment(clean_text)
             
-            # Insert cleaned + sentiment + metadata in one go
+            # Insert into DB
             insert_raw_post(
                 conn, coin, 
                 post["post_id"], post["subreddit"],
-                clean_title, clean_body, clean_comments, 
+                post["title"], post["body"], " | ".join([c["body"] for c in post["comments"]]),
                 sentiment,
                 post["created_utc"], post["score"], post["upvote_ratio"]
             )
