@@ -2,6 +2,8 @@
 topic_classifier.py
 --------------------
 Step 11: Zero-shot coin classification.
+
+Routes each post to the correct coin table based on its content.
 """
 
 import yaml
@@ -16,8 +18,16 @@ _classifier = pipeline("zero-shot-classification", model=config["model"]["topic_
 
 
 def classify_topic(text: str) -> dict:
-    """Returns: {"topic": "BTC", "confidence": 0.87}"""
-    candidate_labels = list(config["coins"].keys())
+    """
+    Classify which coin a post is about.
+    
+    Args:
+        text: The post title + body (or any text).
+    
+    Returns:
+        {"topic": "BTC", "confidence": 0.87}
+    """
+    candidate_labels = config["coins"]
     chunks = split_into_token_chunks(_classifier.tokenizer, text, config["model"]["topic_max_tokens"])
 
     totals = {label: 0.0 for label in candidate_labels}

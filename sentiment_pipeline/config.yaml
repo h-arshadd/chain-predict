@@ -1,19 +1,16 @@
 coins:
-  BTC:
-    subreddits:
-      - Bitcoin
-      - BitcoinMarkets
-      - CryptoCurrency
-    search_query: "BTC OR Bitcoin"
-  
-  ETH:
-    subreddits:
-      - ethereum
-      - ethtrader
-      - CryptoCurrency
-    search_query: "ETH OR Ethereum"
+  - BTC
+  - ETH
+  - SOL
+  - ADA
+  - DOGE
 
 reddit:
+  subreddits:
+    - CryptoCurrency
+    - cryptocurrency
+    - Bitcoin
+    - ethereum
   post_limit: 10
   user_agent: "sentiment-pipeline/0.1"
 
