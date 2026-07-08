@@ -15,7 +15,6 @@ from database import (
 from reddit_fetcher import get_reddit_client, fetch_posts, fetch_top_comments
 from text_cleaner import clean_text_for_model
 from sentiment_model import get_sentiment
-from structured_output import build_output
 
 # Load config
 with open("config.yaml", "r") as f:
@@ -63,7 +62,6 @@ def run():
 
             insert_analysis(conn, coin, post_id, clean_title, clean_body, clean_comments, sentiment)
 
-            output = build_output(coin, post_id, clean_title, clean_body, clean_comments, sentiment)
             logger.info(
                 f"{coin} {post_id}: {sentiment['label']} "
                 f"(score={sentiment['score']:.3f}, confidence={sentiment['confidence']:.3f})"
