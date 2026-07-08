@@ -33,8 +33,7 @@ def run():
         logger.info(f"--- {coin} ---")
         create_tables(conn, coin)
 
-        posts = fetch_posts(reddit, cfg["subreddits"], cfg["search_query"], 
-                          limit=config["reddit"]["post_limit"])
+        posts = fetch_posts(reddit, cfg["subreddits"], cfg["search_query"])
 
         for post in posts:
             top_comments = fetch_top_comments(reddit, post["post_id"], limit=10)

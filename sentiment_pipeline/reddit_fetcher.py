@@ -27,12 +27,12 @@ def get_reddit_client():
     )
 
 
-def fetch_posts(reddit, subreddits, search_query, limit=10):
+def fetch_posts(reddit, subreddits, search_query):
     """Search each subreddit for the coin's query."""
     posts = []
     for sub_name in subreddits:
         subreddit = reddit.subreddit(sub_name)
-        for post in subreddit.search(search_query, limit=limit, sort="new"):
+        for post in subreddit.search(search_query, limit=config["reddit"]["post_limit"], sort="new"):
             posts.append({
                 "post_id": post.id,
                 "subreddit": sub_name,
