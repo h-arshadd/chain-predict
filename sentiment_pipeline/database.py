@@ -55,9 +55,13 @@ def create_tables(conn, coin):
     logger.info(f"Table ensured: sentiment_clean.{table}")
 
 
-def insert_raw_post(conn, coin, post_id, subreddit, clean_title, clean_body, clean_comments, sentiment, created_utc, score, upvote_ratio):
+def insert_analysis(conn, coin, post_id, post, subreddit, sentiment, created_utc, score, upvote_ratio):
     """
-    Insert cleaned data + sentiment analysis directly.
+    Insert one row: the post itself + its metadata/analysis.
+
+    post: dict with just the actual post content -> {"title", "body", "comments"}
+    Everything else (subreddit, created_utc, score, upvote_ratio, sentiment)
+    is passed straight through as-is.
     sentiment: {"label", "score", "confidence"}
     """
     table = f"{coin.lower()}_posts"
@@ -68,7 +72,7 @@ def insert_raw_post(conn, coin, post_id, subreddit, clean_title, clean_body, cle
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (post_id) DO NOTHING
     """).format(table=sql.Identifier(table)), (
-        post_id, created_utc, subreddit, clean_title, clean_body, clean_comments,
+        post_id, created_utc, subreddit, post["title"], post["body"], post["comments"],
         sentiment["label"], sentiment["score"], sentiment["confidence"],
         score, upvote_ratio,
     ))

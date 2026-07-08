@@ -22,8 +22,12 @@ import re
 import emoji
 import contractions
 
-URL_RE = re.compile(r"http\S+|www\.\S+")          # Remove URLs
+URL_RE = re.compile(r"http\S+|www\.\S+")          # Remove bare URLs
+MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")  # [text](url) -> text
+MENTION_RE = re.compile(r"\b[ur]/[\w-]+")          # Remove u/username, r/subreddit mentions (names can have hyphens)
 HTML_RE = re.compile(r"<.*?>")                    # Remove HTML tags
+MD_RE = re.compile(r"\*+")                        # Remove markdown bold/italic (** ** or * *)
+HASHTAG_RE = re.compile(r"#(\w+)")                # Normalize hashtags (#Bitcoin → Bitcoin)
 TICKER_RE = re.compile(r"\$(\w+)")                # Normalize tickers ($BTC → BTC)
 MULTI_SPACE_RE = re.compile(r"\s+")               # Clean extra spaces
 
@@ -47,10 +51,14 @@ def clean_text_for_model(text: str) -> str:
         Output: "i do not like btc!!!  rocket "
     """
     text = text.lower()
-    text = URL_RE.sub("", text)
+    text = MD_LINK_RE.sub(r"\1", text)                     # [text](url) -> text
+    text = URL_RE.sub("", text)                            # any remaining bare urls
     text = HTML_RE.sub("", text)
+    text = MD_RE.sub("", text)                             # ** ** / * * -> gone
+    text = MENTION_RE.sub("", text)                        # u/name, r/name -> gone (no sentiment signal)
     text = emoji.demojize(text, delimiters=(" ", " "))    # emoji -> text
     text = contractions.fix(text)                          # can't -> cannot
     text = TICKER_RE.sub(r"\1", text)                      # $TSLA -> TSLA
+    text = HASHTAG_RE.sub(r"\1", text)                     # #Bitcoin -> Bitcoin
     text = MULTI_SPACE_RE.sub(" ", text).strip()
     return text

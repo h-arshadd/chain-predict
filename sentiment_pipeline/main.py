@@ -8,7 +8,7 @@ import yaml
 import logging
 
 from database import (
-    get_db_connection, create_tables, insert_raw_post,
+    get_db_connection, create_tables, insert_analysis,
 )
 from reddit_fetcher import get_reddit_client, fetch_posts, fetch_top_comments
 from text_cleaner import clean_text_for_model
@@ -36,27 +36,34 @@ def run():
             top_comments = fetch_top_comments(reddit, post["post_id"], limit=10)
             post["comments"] = top_comments  # Add comments to post dict
             
-            # Combine all text into single string
-            all_text = f"{post['title']} {post['body']}"
-            for comment in post["comments"]:
-                all_text += f" {comment['body']}"
-            
-            # Clean combined text
-            clean_text = clean_text_for_model(all_text)
-            
-            if not clean_text:
+            # Clean each piece of text individually
+            clean_title = clean_text_for_model(post["title"])
+            clean_body = clean_text_for_model(post["body"])
+            clean_comment_bodies = [clean_text_for_model(c["body"]) for c in post["comments"]]
+
+            # Combine cleaned text for the model
+            all_text = f"{clean_title} {clean_body} " + " ".join(clean_comment_bodies)
+            all_text = all_text.strip()
+
+            if not all_text:
                 continue
-            
-            # Analyze sentiment on combined text
-            sentiment = get_sentiment(clean_text)
-            
+
+            # Analyze sentiment on cleaned combined text
+            sentiment = get_sentiment(all_text)
+
+            # The post itself: just title, body, comments -- all cleaned
+            post_data = {
+                "title": clean_title,
+                "body": clean_body,
+                "comments": " | ".join(clean_comment_bodies),
+            }
+
             # Insert into DB
-            insert_raw_post(
-                conn, coin, 
-                post["post_id"], post["subreddit"],
-                post["title"], post["body"], " | ".join([c["body"] for c in post["comments"]]),
-                sentiment,
-                post["created_utc"], post["score"], post["upvote_ratio"]
+            insert_analysis(
+                conn, coin,
+                post["post_id"], post_data,
+                post["subreddit"], sentiment,
+                post["created_utc"], post["score"], post["upvote_ratio"],
             )
             
             logger.info(
