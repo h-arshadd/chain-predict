@@ -1,21 +1,22 @@
 coins:
-  - BTC
-  - ETH
-  - SOL
-  - ADA
-  - DOGE
+  BTC:
+    subreddits:
+      - Bitcoin
+      - BitcoinMarkets
+      - CryptoCurrency
+    search_query: "BTC OR Bitcoin"
+  
+  ETH:
+    subreddits:
+      - ethereum
+      - ethtrader
+      - CryptoCurrency
+    search_query: "ETH OR Ethereum"
 
 reddit:
-  subreddits:
-    - CryptoCurrency
-    - cryptocurrency
-    - Bitcoin
-    - ethereum
   post_limit: 10
   user_agent: "sentiment-pipeline/0.1"
 
 model:
   sentiment_model: "ElKulako/cryptobert"
   max_tokens: 512
-  topic_model: "facebook/bart-large-mnli"
-  topic_max_tokens: 1000

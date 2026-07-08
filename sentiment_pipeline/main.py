@@ -15,7 +15,6 @@ from database import (
 from reddit_fetcher import get_reddit_client, fetch_posts, fetch_top_comments
 from text_cleaner import clean_text_for_model
 from sentiment_model import get_sentiment
-from topic_classifier import classify_topic
 from structured_output import build_output
 
 # Load config
@@ -29,41 +28,19 @@ logger = logging.getLogger(__name__)
 def run():
     conn = get_db_connection()
     reddit = get_reddit_client()
-    
-    coins = config["coins"]
-    subreddits = config["reddit"]["subreddits"]
-    post_limit = config["reddit"]["post_limit"]
-    
-    # Create tables for all coins upfront
-    for coin in coins:
+
+    for coin, cfg in config["coins"].items():
+        logger.info(f"--- {coin} ---")
         create_tables(conn, coin)
-        logger.info(f"Tables ready for {coin}")
 
-    # Fetch posts once from all subreddits (no coin filtering)
-    logger.info(f"Fetching from {len(subreddits)} subreddits...")
-    posts = fetch_posts(reddit, subreddits, limit=post_limit)
-    logger.info(f"Fetched {len(posts)} total posts")
+        posts = fetch_posts(reddit, cfg["subreddits"], cfg["search_query"], 
+                          limit=config["reddit"]["post_limit"])
 
-    # Process each post: classify coin, fetch comments, store in raw
-    for post in posts:
-        top_comments = fetch_top_comments(reddit, post["post_id"], limit=10)
-        
-        # Classify which coin this post is about
-        combined_text = f"{post['title']} {post['body']}".strip()
-        topic_result = classify_topic(combined_text)
-        coin = topic_result["topic"]
-        topic_confidence = topic_result["confidence"]
-        
-        # Only store if confidence is reasonable (e.g., > 0.1)
-        if topic_confidence > 0.1:
+        for post in posts:
+            top_comments = fetch_top_comments(reddit, post["post_id"], limit=10)
             insert_raw_post(conn, coin, post, top_comments)
-            logger.info(f"Stored {post['post_id']} → {coin} (confidence: {topic_confidence:.3f})")
-        else:
-            logger.info(f"Skipped {post['post_id']} (low confidence: {topic_confidence:.3f})")
+        logger.info(f"Fetched & stored {len(posts)} raw posts (with comments) for {coin}")
 
-    # Now analyze sentiment per coin
-    for coin in coins:
-        logger.info(f"\n--- Analyzing {coin} ---")
         unprocessed = get_unprocessed_posts(conn, coin)
         logger.info(f"{len(unprocessed)} posts to analyze for {coin}")
 
@@ -71,7 +48,7 @@ def run():
             clean_title = clean_text_for_model(title)
             clean_body = clean_text_for_model(body)
 
-            comments = comments or {}
+            comments = comments or {}  # comments is None if fetch step stored nothing
             clean_comment_list = [
                 cleaned for text in comments.values()
                 if (cleaned := clean_text_for_model(text))
@@ -81,7 +58,7 @@ def run():
             if not clean_title and not clean_body:
                 continue
 
-            # Sentiment for the whole post
+            # Sentiment is one combined score for the whole post (title + body together)
             combined_text = f"{clean_title} {clean_body}".strip()
             sentiment = get_sentiment(combined_text)
 
