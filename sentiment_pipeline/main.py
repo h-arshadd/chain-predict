@@ -9,13 +9,11 @@ import logging
 
 from database import (
     get_db_connection, create_tables, insert_raw_posts, insert_top_comments,
-    get_unprocessed_posts, insert_analysis, get_mean_score, get_weighted_mean_score,
+    get_unprocessed_posts, insert_analysis, get_mean_score,
 )
 from reddit_fetcher import get_reddit_client, fetch_posts, fetch_top_comments
 from text_cleaner import clean_text_for_model
 from sentiment_model import get_sentiment
-from topic_classifier import classify_topic
-from weighting import compute_weight
 from structured_output import build_output
 
 # Load config
@@ -47,24 +45,21 @@ def run():
         unprocessed = get_unprocessed_posts(conn, coin)
         logger.info(f"{len(unprocessed)} posts to analyze for {coin}")
 
-        for post_id, title, body, score, num_comments in unprocessed:
+        for post_id, title, body in unprocessed:
             raw_text = f"{title} {body}"
             clean_text = clean_text_for_model(raw_text)
             if not clean_text:
                 continue
 
             sentiment = get_sentiment(clean_text)
-            topic = classify_topic(clean_text)
-            weight = compute_weight(score, num_comments)
 
-            insert_analysis(conn, coin, post_id, clean_text, sentiment, topic, weight)
+            insert_analysis(conn, coin, post_id, clean_text, sentiment)
 
-            output = build_output(coin, post_id, clean_text, sentiment, topic, weight)
+            output = build_output(coin, post_id, clean_text, sentiment)
             logger.info(output)
 
         plain_mean = get_mean_score(conn, coin)
-        weighted_mean = get_weighted_mean_score(conn, coin)
-        logger.info(f"{coin} mean sentiment: {plain_mean} | weighted mean: {weighted_mean}")
+        logger.info(f"{coin} mean sentiment: {plain_mean}")
 
     conn.close()
 

@@ -69,11 +69,7 @@ def create_tables(conn, coin):
             clean_text        TEXT,
             sentiment_label   TEXT,
             sentiment_score   DOUBLE PRECISION,
-            confidence        DOUBLE PRECISION,
-            topic             TEXT,
-            topic_confidence  DOUBLE PRECISION,
-            weight            DOUBLE PRECISION,
-            processed_at      TIMESTAMP DEFAULT NOW()
+            confidence        DOUBLE PRECISION
         )
     """).format(table=sql.Identifier(table)))
 
@@ -128,85 +124,46 @@ def insert_top_comments(conn, coin, post_id, comments):
 
 
 def get_unprocessed_posts(conn, coin):
-    """Posts in sentiment_raw that don't have sentiment analysis in sentiment_clean yet.
-    num_comments is derived from the fetched top-comments table (count of stored comments,
-    capped at 10 since only the top 10 per post are fetched/stored)."""
+    """Posts in sentiment_raw that don't have sentiment analysis in sentiment_clean yet."""
     table = f"{coin.lower()}_posts"
-    comments_table = f"{coin.lower()}_comments"
     cur = conn.cursor()
     cur.execute(sql.SQL("""
-        SELECT r.post_id, r.title, r.body, r.score,
-               COUNT(cm.comment_id) AS num_comments
+        SELECT r.post_id, r.title, r.body
         FROM sentiment_raw.{table} r
         LEFT JOIN sentiment_clean.{table} c ON r.post_id = c.post_id
-        LEFT JOIN sentiment_raw.{comments_table} cm ON r.post_id = cm.post_id
         WHERE c.post_id IS NULL
-        GROUP BY r.post_id, r.title, r.body, r.score
-    """).format(table=sql.Identifier(table), comments_table=sql.Identifier(comments_table)))
+    """).format(table=sql.Identifier(table)))
     rows = cur.fetchall()
     cur.close()
     return rows
 
 
-def insert_analysis(conn, coin, post_id, clean_text, sentiment, topic, weight):
+def insert_analysis(conn, coin, post_id, clean_text, sentiment):
     """
     sentiment: {"label", "score", "confidence"}
-    topic: {"topic", "confidence"}
-    weight: float
     """
     table = f"{coin.lower()}_posts"
     cur = conn.cursor()
     cur.execute(sql.SQL("""
         INSERT INTO sentiment_clean.{table}
-            (post_id, clean_text, sentiment_label, sentiment_score, confidence,
-             topic, topic_confidence, weight)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            (post_id, clean_text, sentiment_label, sentiment_score, confidence)
+        VALUES (%s, %s, %s, %s, %s)
         ON CONFLICT (post_id) DO NOTHING
     """).format(table=sql.Identifier(table)), (
         post_id, clean_text,
         sentiment["label"], sentiment["score"], sentiment["confidence"],
-        topic["topic"], topic["confidence"], weight,
     ))
     conn.commit()
     cur.close()
 
 
-def get_mean_score(conn, coin, days=None):
+def get_mean_score(conn, coin):
     """Plain (unweighted) mean sentiment score."""
     table = f"{coin.lower()}_posts"
     cur = conn.cursor()
-
-    if days is None:
-        cur.execute(sql.SQL("SELECT AVG(sentiment_score) FROM sentiment_clean.{table}").format(
-            table=sql.Identifier(table)
-        ))
-    else:
-        cur.execute(sql.SQL("""
-            SELECT AVG(sentiment_score) FROM sentiment_clean.{table}
-            WHERE processed_at > NOW() - INTERVAL %s
-        """).format(table=sql.Identifier(table)), (f"{days} days",))
-
-    result = cur.fetchone()[0]
-    cur.close()
-    return result
-
-
-def get_weighted_mean_score(conn, coin, days=None):
-    """Engagement-weighted mean: sum(score * weight) / sum(weight)."""
-    table = f"{coin.lower()}_posts"
-    cur = conn.cursor()
-
-    base_query = """
-        SELECT SUM(sentiment_score * weight) / NULLIF(SUM(weight), 0)
-        FROM sentiment_clean.{table}
-    """
-    if days is None:
-        cur.execute(sql.SQL(base_query).format(table=sql.Identifier(table)))
-    else:
-        cur.execute(sql.SQL(base_query + " WHERE processed_at > NOW() - INTERVAL %s").format(
-            table=sql.Identifier(table)
-        ), (f"{days} days",))
-
+    cur.execute(sql.SQL("SELECT AVG(sentiment_score) FROM sentiment_clean.{table}").format(
+        table=sql.Identifier(table)
+    ))
     result = cur.fetchone()[0]
     cur.close()
     return result
