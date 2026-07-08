@@ -5,8 +5,9 @@ DB utilities for sentiment pipeline.
 
 Two schemas:
     sentiment_raw   - raw fetched Reddit posts, one table per coin.
-                       Top comments stored as JSONB in the `comments` column
-                       (list of {comment_id, body, score, created_utc}).
+                       Each row (post + its comments) is inserted together in one
+                       write, so a row never sits with NULL comments waiting on a
+                       second pass. Comments stored as JSONB: {"comment_1": "...", ...}.
     sentiment_clean - cleaned title/body/comments (comments joined into one
                        text column) + sentiment score, one table per coin.
 """
@@ -73,55 +74,28 @@ def create_tables(conn, coin):
     logger.info(f"Tables ensured: sentiment_raw.{table}, sentiment_clean.{table}")
 
 
-def insert_raw_posts(conn, coin, posts):
-    """posts: list of dicts with post_id, subreddit, title, body, created_utc."""
-    if not posts:
-        return
+def insert_raw_post(conn, coin, post, comments):
+    """Insert a single post row, fully populated including its comments, in one write.
+    post: dict with post_id, subreddit, title, body, created_utc, score, upvote_ratio.
+    comments: list of dicts with comment_id, body, score, created_utc (top N for this post).
+    Stored as {"comment_1": "text", "comment_2": "text", ...} — just the comment text."""
     table = f"{coin.lower()}_posts"
     cur = conn.cursor()
 
-    query = sql.SQL("""
-        INSERT INTO sentiment_raw.{table} (post_id, subreddit, title, body, created_utc, score, upvote_ratio)
-        VALUES %s
+    payload = {
+        f"comment_{i}": c["body"]
+        for i, c in enumerate(comments, start=1)
+    }
+
+    cur.execute(sql.SQL("""
+        INSERT INTO sentiment_raw.{table}
+            (post_id, subreddit, title, body, comments, created_utc, score, upvote_ratio)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (post_id) DO NOTHING
-    """).format(table=sql.Identifier(table)).as_string(conn)
-
-    rows = [(
-        p["post_id"], p["subreddit"], p["title"], p["body"], p["created_utc"],
-        p["score"], p["upvote_ratio"],
-    ) for p in posts]
-    execute_values(cur, query, rows)
-
-    conn.commit()
-    cur.close()
-
-
-def insert_post_comments(conn, coin, post_comments):
-    """post_comments: dict of {post_id: [ {comment_id, body, score, created_utc}, ... ]}.
-    Stored as {"comment_1": "text", "comment_2": "text", ...} — just the comment text,
-    ordered by Reddit's own top-comment ranking (score was only used to pick/sort them).
-    Batches all updates into a single round trip instead of one UPDATE per post."""
-    if not post_comments:
-        return
-    table = f"{coin.lower()}_posts"
-    cur = conn.cursor()
-
-    rows = []
-    for post_id, comments in post_comments.items():
-        payload = {
-            f"comment_{i}": c["body"]
-            for i, c in enumerate(comments, start=1)
-        }
-        rows.append((post_id, Json(payload)))
-
-    query = sql.SQL("""
-        UPDATE sentiment_raw.{table} AS t
-        SET comments = v.comments
-        FROM (VALUES %s) AS v(post_id, comments)
-        WHERE t.post_id = v.post_id
-    """).format(table=sql.Identifier(table)).as_string(conn)
-
-    execute_values(cur, query, rows, template="(%s, %s::jsonb)")
+    """).format(table=sql.Identifier(table)), (
+        post["post_id"], post["subreddit"], post["title"], post["body"], Json(payload),
+        post["created_utc"], post["score"], post["upvote_ratio"],
+    ))
 
     conn.commit()
     cur.close()

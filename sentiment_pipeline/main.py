@@ -8,7 +8,7 @@ import yaml
 import logging
 
 from database import (
-    get_db_connection, create_tables, insert_raw_posts, insert_post_comments,
+    get_db_connection, create_tables, insert_raw_post,
     get_unprocessed_posts, insert_analysis,
     get_mean_score,
 )
@@ -35,14 +35,11 @@ def run():
 
         posts = fetch_posts(reddit, cfg["subreddits"], cfg["search_query"], 
                           limit=config["reddit"]["post_limit"])
-        insert_raw_posts(conn, coin, posts)
-        logger.info(f"Fetched & stored {len(posts)} raw posts for {coin}")
 
-        post_comments = {}
         for post in posts:
-            post_comments[post["post_id"]] = fetch_top_comments(reddit, post["post_id"], limit=10)
-        insert_post_comments(conn, coin, post_comments)
-        logger.info(f"Fetched & stored top comments for {len(posts)} posts for {coin}")
+            top_comments = fetch_top_comments(reddit, post["post_id"], limit=10)
+            insert_raw_post(conn, coin, post, top_comments)
+        logger.info(f"Fetched & stored {len(posts)} raw posts (with comments) for {coin}")
 
         unprocessed = get_unprocessed_posts(conn, coin)
         logger.info(f"{len(unprocessed)} posts to analyze for {coin}")
@@ -68,7 +65,10 @@ def run():
             insert_analysis(conn, coin, post_id, clean_title, clean_body, clean_comments, sentiment)
 
             output = build_output(coin, post_id, clean_title, clean_body, clean_comments, sentiment)
-            logger.info(output)
+            logger.info(
+                f"{coin} {post_id}: {sentiment['label']} "
+                f"(score={sentiment['score']:.3f}, confidence={sentiment['confidence']:.3f})"
+            )
 
         plain_mean = get_mean_score(conn, coin)
         logger.info(f"{coin} mean sentiment: {plain_mean}")
