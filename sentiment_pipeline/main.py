@@ -9,7 +9,6 @@ import logging
 
 from database import (
     get_db_connection, create_tables, insert_raw_post,
-    get_unprocessed_posts, insert_analysis,
 )
 from reddit_fetcher import get_reddit_client, fetch_posts, fetch_top_comments
 from text_cleaner import clean_text_for_model
@@ -35,36 +34,39 @@ def run():
 
         for post in posts:
             top_comments = fetch_top_comments(reddit, post["post_id"], limit=10)
-            insert_raw_post(conn, coin, post, top_comments)
-        logger.info(f"Fetched & stored {len(posts)} raw posts (with comments) for {coin}")
-
-        unprocessed = get_unprocessed_posts(conn, coin)
-        logger.info(f"{len(unprocessed)} posts to analyze for {coin}")
-
-        for post_id, title, body, comments in unprocessed:
-            clean_title = clean_text_for_model(title)
-            clean_body = clean_text_for_model(body)
-
-            comments = comments or {}  # comments is None if fetch step stored nothing
+            
+            # Clean text
+            clean_title = clean_text_for_model(post["title"])
+            clean_body = clean_text_for_model(post["body"])
+            
             clean_comment_list = [
-                cleaned for text in comments.values()
-                if (cleaned := clean_text_for_model(text))
+                cleaned for text in top_comments
+                if (cleaned := clean_text_for_model(text["body"]))
             ]
             clean_comments = " | ".join(clean_comment_list)
-
+            
             if not clean_title and not clean_body:
                 continue
-
-            # Sentiment is one combined score for the whole post (title + body together)
+            
+            # Analyze sentiment
             combined_text = f"{clean_title} {clean_body}".strip()
             sentiment = get_sentiment(combined_text)
-
-            insert_analysis(conn, coin, post_id, clean_title, clean_body, clean_comments, sentiment)
-
+            
+            # Insert cleaned + sentiment + metadata in one go
+            insert_raw_post(
+                conn, coin, 
+                post["post_id"], post["subreddit"],
+                clean_title, clean_body, clean_comments, 
+                sentiment,
+                post["created_utc"], post["score"], post["upvote_ratio"]
+            )
+            
             logger.info(
-                f"{coin} {post_id}: {sentiment['label']} "
+                f"{coin} {post['post_id']}: {sentiment['label']} "
                 f"(score={sentiment['score']:.3f}, confidence={sentiment['confidence']:.3f})"
             )
+        
+        logger.info(f"Processed {len(posts)} posts for {coin}")
 
     conn.close()
 
