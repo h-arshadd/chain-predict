@@ -73,71 +73,72 @@ def generate_signals(df: pd.DataFrame, config_path: str = None) -> tuple:
 if __name__ == "__main__":
 
     from crypto_pipeline.data.data_downloader import get_data
+    from crypto_pipeline.utils.db_utils import get_db_connection, insert_signals
     from datetime import datetime
-    import os
 
     exchanges = ["binance", "bybit"]
     symbols = ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
 
-    # Create output folder
-    output_dir = "signal_outputs"
-    os.makedirs(output_dir, exist_ok=True)
+    conn = get_db_connection()
 
-    for exchange in exchanges:
-        for symbol in symbols:
+    try:
+        for exchange in exchanges:
+            for symbol in symbols:
 
-            result = get_data(
-                exchange=exchange,
-                symbol=symbol,
-                start_date=datetime(2026, 4, 1, 0, 0, 0),
-                end_date=datetime(2026, 6, 1, 0, 0, 0)
-            )
+                result = get_data(
+                    exchange=exchange,
+                    symbol=symbol,
+                    start_date=datetime(2026, 4, 1, 0, 0, 0),
+                    end_date=datetime(2026, 6, 1, 0, 0, 0)
+                )
 
-            df = result["resampled"]
+                df = result["resampled"]
 
-            # Run the full pipeline: generate_signals loads config internally
-            indicator_df, condition_df, signals = generate_signals(df)
+                # Run the full pipeline: generate_signals loads config internally
+                indicator_df, condition_df, signals = generate_signals(df)
 
-            # Build output: datetime + ohlcv + indicators + conditions + signal
-            #
-            # FIX: indicators (and therefore condition_df / signals) are all
-            # pre-shifted by 1 bar in talib_indicators.py to avoid lookahead
-            # -- i.e. the value in row N was computed from the candle at
-            # row N-1. The OHLCV columns below were NOT shifted, so they
-            # showed the CURRENT bar's own price sitting in the same row as
-            # an indicator/signal value that actually belongs to the
-            # PREVIOUS bar. That's what caused signals to appear to line up
-            # one row "too early" against the price data.
-            #
-            # Shifting open/high/low/close/volume by 1 here makes every
-            # column in a row refer to the same underlying candle.
-            output = pd.DataFrame({
-                "datetime": df["datetime"],
-                "open": df["open"].shift(1),
-                "high": df["high"].shift(1),
-                "low": df["low"].shift(1),
-                "close": df["close"].shift(1),
-                "volume": df["volume"].shift(1),
-            })
-            
-            # Add all indicator columns
-            for col in indicator_df.columns:
-                if col != "datetime":
-                    output[col] = indicator_df[col]
-            
-            # Add all condition columns
-            for col in condition_df.columns:
-                output[col] = condition_df[col]
-            
-            # Add final signal
-            output["signal"] = signals
+                # Build output: datetime + ohlcv + indicators + conditions + signal
+                #
+                # FIX: indicators (and therefore condition_df / signals) are all
+                # pre-shifted by 1 bar in talib_indicators.py to avoid lookahead
+                # -- i.e. the value in row N was computed from the candle at
+                # row N-1. The OHLCV columns below were NOT shifted, so they
+                # showed the CURRENT bar's own price sitting in the same row as
+                # an indicator/signal value that actually belongs to the
+                # PREVIOUS bar. That's what caused signals to appear to line up
+                # one row "too early" against the price data.
+                #
+                # Shifting open/high/low/close/volume by 1 here makes every
+                # column in a row refer to the same underlying candle.
+                output = pd.DataFrame({
+                    "datetime": df["datetime"],
+                    "open": df["open"].shift(1),
+                    "high": df["high"].shift(1),
+                    "low": df["low"].shift(1),
+                    "close": df["close"].shift(1),
+                    "volume": df["volume"].shift(1),
+                })
 
-            # Drop warm-up rows where indicators aren't fully formed yet
-            # (e.g. SMA_20 needs 20 bars before it produces a value)
-            output = output.dropna().reset_index(drop=True)
+                # Add all indicator columns
+                for col in indicator_df.columns:
+                    if col != "datetime":
+                        output[col] = indicator_df[col]
 
-            # Save to CSV in output folder
-            csv_filename = os.path.join(output_dir, f"{exchange}_{symbol}_signals.csv")
-            output.to_csv(csv_filename, index=False)
+                # Add all condition columns
+                for col in condition_df.columns:
+                    output[col] = condition_df[col]
 
-            print(f"Saved {exchange} {symbol}: {len(output)} rows")
+                # Add final signal
+                output["signal"] = signals
+
+                # Drop warm-up rows where indicators aren't fully formed yet
+                # (e.g. SMA_20 needs 20 bars before it produces a value)
+                output = output.dropna().reset_index(drop=True)
+
+                # Store in DB: signals.{exchange}_{symbol}, full rebuild each run
+                insert_signals(conn, exchange, symbol, output)
+
+                print(f"Saved {exchange} {symbol}: {len(output)} rows")
+
+    finally:
+        conn.close()

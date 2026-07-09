@@ -4,7 +4,7 @@ exchange: "bybit"
 symbols: ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
 
 # Candlestick timeframes to fetch
-time_horizons: ["1m"]
+#time_horizons: ["1m"]
 
 # Date range for historical data
 start_date: "2024-01-01"

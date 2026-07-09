@@ -7,9 +7,15 @@ Handles:
     - Schema and table creation for Binance and Bybit
     - Inserting OHLCV candle data
     - Checking last stored timestamp for incremental loading
+    - Storing signal-pipeline output (insert_signals) and backtest trade
+      ledgers (insert_trades), both as full rebuild-on-every-run tables
+      (see their docstrings below for why)
 
 All candles are 1-minute timeframe, so tables are named like:
     binance.doge_1m, bybit.sol_1m
+
+Signals/backtest tables are named like:
+    signals.binance_doge, backtest.bybit_sol
 """
 
 import os
@@ -25,6 +31,54 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 TIMEFRAME = "1m"
+
+# Maps pandas dtypes to Postgres column types for the dynamic signals/trades
+# tables (see insert_signals/insert_trades). Order matters: bool must be
+# checked before int, since pandas bool dtype would otherwise also satisfy
+# an int check.
+_PG_TYPE_MAP = [
+    (pd.api.types.is_bool_dtype, "BOOLEAN"),
+    (pd.api.types.is_integer_dtype, "INTEGER"),
+    (pd.api.types.is_float_dtype, "DOUBLE PRECISION"),
+    (pd.api.types.is_datetime64_any_dtype, "TIMESTAMP"),
+]
+
+
+def _pg_type_for(series):
+    """Best-effort pandas dtype -> Postgres column type mapping."""
+    for check, pg_type in _PG_TYPE_MAP:
+        if check(series.dtype):
+            return pg_type
+    return "TEXT"  # fallback for anything unexpected (e.g. object dtype)
+
+
+def _copy_dataframe(conn, df, schema, table):
+    """
+    Shared COPY helper used by insert_signals/insert_trades: bulk-load every
+    row of df into schema.table via COPY (same fast-path insert_candles()
+    already uses). Caller is responsible for creating/rebuilding the table
+    first with matching columns.
+    """
+    cursor = conn.cursor()
+
+    buffer = io.StringIO()
+    df.to_csv(buffer, index=False, header=False)
+    buffer.seek(0)
+
+    columns = sql.SQL(", ").join(sql.Identifier(col) for col in df.columns)
+    copy_query = sql.SQL(
+        "COPY {schema}.{table} ({columns}) FROM STDIN WITH (FORMAT csv)"
+    ).format(
+        schema=sql.Identifier(schema),
+        table=sql.Identifier(table),
+        columns=columns,
+    )
+
+    cursor.copy_expert(copy_query, buffer)
+
+    conn.commit()
+    cursor.close()
+    logger.info(f"Copied {len(df)} rows into {schema}.{table}")
 
 
 def get_db_connection():
@@ -155,3 +209,111 @@ def get_candles_from_db(conn, exchange, symbol, start_date, end_date):
     df = pd.DataFrame(rows, columns=["datetime", "open", "high", "low", "close", "volume"])
     df["datetime"] = pd.to_datetime(df["datetime"])
     return df
+
+
+def insert_signals(conn, exchange, symbol, df):
+    """
+    Store the signals/main.py output DataFrame for one exchange+symbol,
+    replacing whatever was there before.
+
+    Schema: signals.{exchange}_{symbol}, e.g. signals.binance_doge
+
+    df's column set changes whenever signals/config.yaml's active strategy
+    changes (different indicators -> different ind_* columns, different
+    condition counts -> different long_cond_N/short_cond_N columns). Rather
+    than trying to migrate an existing table's columns to match, this always
+    drops and recreates the table from df's current columns/dtypes, then
+    COPYs the full DataFrame in. So every run of the signal pipeline fully
+    replaces this symbol's table -- there is no append/incremental mode and
+    no history of past strategy runs kept here. If you need to compare
+    strategies over time, save those runs elsewhere before rerunning.
+
+    df must include a "datetime" column; every other column is taken as-is
+    (indicators, condition booleans, the final "signal" column, etc.).
+    """
+    cursor = conn.cursor()
+    table_name = f"{exchange}_{symbol}"
+
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS signals"))
+
+    # Full rebuild: drop first so a strategy change (different/renamed
+    # columns) can never collide with the previous run's table shape.
+    cursor.execute(sql.SQL("DROP TABLE IF EXISTS {schema}.{table}").format(
+        schema=sql.Identifier("signals"),
+        table=sql.Identifier(table_name)
+    ))
+
+    column_defs = sql.SQL(", ").join(
+        sql.SQL("{col} {pg_type}").format(
+            col=sql.Identifier(col),
+            pg_type=sql.SQL("TIMESTAMP" if col == "datetime" else _pg_type_for(df[col]))
+        )
+        for col in df.columns
+    )
+
+    cursor.execute(sql.SQL("CREATE TABLE {schema}.{table} ({column_defs})").format(
+        schema=sql.Identifier("signals"),
+        table=sql.Identifier(table_name),
+        column_defs=column_defs
+    ))
+
+    conn.commit()
+    cursor.close()
+    logger.info(f"Table rebuilt: signals.{table_name} ({len(df.columns)} columns)")
+
+    _copy_dataframe(conn, df, "signals", table_name)
+
+
+def insert_trades(conn, exchange, symbol, trade_ledger):
+    """
+    Store the backtest trade ledger for one exchange+symbol, replacing
+    whatever was there before.
+
+    Schema: backtest.{exchange}_{symbol}, e.g. backtest.bybit_sol
+
+    trade_ledger's columns are fixed by backtest.py's trades.append(...) --
+    entry_time, exit_time, direction, entry_price, exit_price, quantity,
+    gross_pnl, commission, slippage, net_pnl, balance_after_trade, plus
+    cumulative_pnl if run_backtest added it. Still rebuilt from the
+    DataFrame's own columns/dtypes rather than hardcoded here, so this keeps
+    working even if backtest.py's ledger columns change later -- same
+    rebuild-on-every-run behavior as insert_signals, for the same reason (a
+    strategy/backtest config change shouldn't have to migrate an old table).
+
+    If trade_ledger is empty (no trades), the table is still created (with
+    the right columns, in case something downstream queries it) but no rows
+    are copied in.
+    """
+    cursor = conn.cursor()
+    table_name = f"{exchange}_{symbol}"
+
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS backtest"))
+
+    cursor.execute(sql.SQL("DROP TABLE IF EXISTS {schema}.{table}").format(
+        schema=sql.Identifier("backtest"),
+        table=sql.Identifier(table_name)
+    ))
+
+    column_defs = sql.SQL(", ").join(
+        sql.SQL("{col} {pg_type}").format(
+            col=sql.Identifier(col),
+            pg_type=sql.SQL(_pg_type_for(trade_ledger[col]))
+        )
+        for col in trade_ledger.columns
+    )
+
+    cursor.execute(sql.SQL("CREATE TABLE {schema}.{table} ({column_defs})").format(
+        schema=sql.Identifier("backtest"),
+        table=sql.Identifier(table_name),
+        column_defs=column_defs
+    ))
+
+    conn.commit()
+    cursor.close()
+    logger.info(f"Table rebuilt: backtest.{table_name} ({len(trade_ledger.columns)} columns)")
+
+    if trade_ledger.empty:
+        logger.info(f"No trades for {exchange} | {symbol}. Table created empty.")
+        return
+
+    _copy_dataframe(conn, trade_ledger, "backtest", table_name)

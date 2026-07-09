@@ -6,8 +6,9 @@ Entry point of the Backtest Module.
 
 Pulls OHLCV data via get_data() the same way the Signal Module does, runs
 the signal pipeline live (generate_signals), then feeds those signals plus
-1-minute OHLCV into the vectorized backtest engine and saves the resulting
-trade ledger per symbol.
+1-minute OHLCV into the vectorized backtest engine and stores the resulting
+trade ledger per symbol in Postgres (backtest.{exchange}_{symbol} -- see
+insert_trades() in utils/db_utils.py).
 
 The date range (start_date/end_date) lives in backtest/config.yaml and is
 the single source of truth used for both the signal-generation data pull
@@ -15,7 +16,6 @@ and the execution data pull, so both sides of the backtest always cover
 the exact same window.
 """
 
-import os
 from datetime import datetime
 
 import pandas as pd
@@ -23,9 +23,7 @@ import pandas as pd
 from crypto_pipeline.backtest.backtest import load_config, run_backtest
 from crypto_pipeline.signals.main import generate_signals
 from crypto_pipeline.data.data_downloader import get_data
-from crypto_pipeline.utils.db_utils import get_db_connection, get_candles_from_db
-
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "backtest_outputs")
+from crypto_pipeline.utils.db_utils import get_db_connection, get_candles_from_db, insert_trades
 
 
 def parse_backtest_dates(config: dict) -> dict:
@@ -100,51 +98,55 @@ if __name__ == "__main__":
     exchanges = ["binance", "bybit"]
     symbols = ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    conn = get_db_connection()
 
-    for exchange in exchanges:
-        for symbol in symbols:
+    try:
+        for exchange in exchanges:
+            for symbol in symbols:
 
-            # 1h data, just for signal generation -- same call pattern
-            # signals/main.py itself uses (df_1m left False, so only
-            # "resampled" comes back).
-            hourly_result = get_data(
-                exchange=exchange,
-                symbol=symbol,
-                start_date=backtest_config["start_date"],
-                end_date=backtest_config["end_date"],
-            )
-            ohlcv_1h = hourly_result["resampled"]
+                # 1h data, just for signal generation -- same call pattern
+                # signals/main.py itself uses (df_1m left False, so only
+                # "resampled" comes back).
+                hourly_result = get_data(
+                    exchange=exchange,
+                    symbol=symbol,
+                    start_date=backtest_config["start_date"],
+                    end_date=backtest_config["end_date"],
+                )
+                ohlcv_1h = hourly_result["resampled"]
 
-            if ohlcv_1h.empty:
-                print(f"Skipping {exchange} {symbol}: no hourly data returned.")
-                continue
+                if ohlcv_1h.empty:
+                    print(f"Skipping {exchange} {symbol}: no hourly data returned.")
+                    continue
 
-            signals = build_signals(ohlcv_1h)
+                signals = build_signals(ohlcv_1h)
 
-            # 1-minute data, for backtest execution. Same start/end date as
-            # above so both pulls cover the same window. This reads straight
-            # from the DB (no resample, no exchange fallback) since we
-            # already know the DB covers this exact window.
-            ohlcv_1m = get_1m_data(
-                exchange=exchange,
-                symbol=symbol,
-                start_date=backtest_config["start_date"],
-                end_date=backtest_config["end_date"],
-            )
+                # 1-minute data, for backtest execution. Same start/end date as
+                # above so both pulls cover the same window. This reads straight
+                # from the DB (no resample, no exchange fallback) since we
+                # already know the DB covers this exact window.
+                ohlcv_1m = get_1m_data(
+                    exchange=exchange,
+                    symbol=symbol,
+                    start_date=backtest_config["start_date"],
+                    end_date=backtest_config["end_date"],
+                )
 
-            if ohlcv_1m.empty:
-                print(f"Skipping {exchange} {symbol}: no 1-minute data returned.")
-                continue
+                if ohlcv_1m.empty:
+                    print(f"Skipping {exchange} {symbol}: no 1-minute data returned.")
+                    continue
 
-            backtest_result = run_backtest(ohlcv_1m, signals, backtest_config)
+                backtest_result = run_backtest(ohlcv_1m, signals, backtest_config)
 
-            print(
-                f"{exchange} {symbol}: "
-                f"{backtest_result['total_trades']} trades, "
-                f"final balance {backtest_result['final_balance']:.2f}, "
-                f"net profit {backtest_result['total_net_profit']:.2f}"
-            )
+                print(
+                    f"{exchange} {symbol}: "
+                    f"{backtest_result['total_trades']} trades, "
+                    f"final balance {backtest_result['final_balance']:.2f}, "
+                    f"net profit {backtest_result['total_net_profit']:.2f}"
+                )
 
-            ledger_path = os.path.join(OUTPUT_DIR, f"{exchange}_{symbol}_trades.csv")
-            backtest_result["trade_ledger"].to_csv(ledger_path, index=False)
+                # Store in DB: backtest.{exchange}_{symbol}, full rebuild each run
+                insert_trades(conn, exchange, symbol, backtest_result["trade_ledger"])
+
+    finally:
+        conn.close()
