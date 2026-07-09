@@ -6,7 +6,6 @@ Uses the pybit library.
 
 Key details:
     - Bybit timestamps are in MILLISECONDS
-    - Uses linear perpetual contracts (linear category)
     - Fetches 200 candles per API call (Bybit max)
     - Retries on failure with configurable delay
     - Bybit returns candles NEWEST FIRST, so unlike Binance we paginate
@@ -35,7 +34,6 @@ class BybitExchange:
     def fetch_batch(self, symbol, start_sec, end_sec):
         """
         Fetch a single batch of up to 1000 raw candles from Bybit.
-        Uses linear category (linear perpetual contracts).
 
         Bybit's kline rows have one extra field (turnover) that isn't part
         of our schema, so we only keep as many fields as CANDLE_COLUMNS

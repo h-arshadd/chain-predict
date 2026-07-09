@@ -60,10 +60,15 @@ def _tp_sl_prices(entry_price, direction, config):
 def _find_exit(high, low, open_, entry_idx, direction, take_profit, stop_loss):
     """
     Vectorized search for the first bar after entry_idx where price touches
-    take_profit or stop_loss. Returns (exit_idx, exit_price).
+    take_profit or stop_loss. Returns (exit_idx, exit_price, exit_reason).
 
-    If neither level is ever touched before the data runs out, the position
-    is closed on the last available bar's open.
+    exit_reason is one of:
+        "take_profit"  -- take-profit level was touched first
+        "stop_loss"    -- stop-loss level was touched first (or both were
+                          touched in the same bar -- see note below)
+        "end_of_data"  -- neither level was ever touched before the data
+                          ran out; position closed on the last available
+                          bar's open instead
     """
     future_high = high[entry_idx + 1:]
     future_low = low[entry_idx + 1:]
@@ -78,7 +83,7 @@ def _find_exit(high, low, open_, entry_idx, direction, take_profit, stop_loss):
     hit = tp_hit | sl_hit
     if not hit.any():
         last_idx = len(high) - 1
-        return last_idx, open_[last_idx]
+        return last_idx, open_[last_idx], "end_of_data"
 
     first_hit_offset = np.argmax(hit)
     exit_idx = entry_idx + 1 + first_hit_offset
@@ -87,10 +92,12 @@ def _find_exit(high, low, open_, entry_idx, direction, take_profit, stop_loss):
     # OHLC alone which came first. Assume the worse outcome (stop-loss).
     if sl_hit[first_hit_offset]:
         exit_price = stop_loss
+        exit_reason = "stop_loss"
     else:
         exit_price = take_profit
+        exit_reason = "take_profit"
 
-    return exit_idx, exit_price
+    return exit_idx, exit_price, exit_reason
 
 
 def run_backtest(ohlcv: pd.DataFrame, signals: pd.DataFrame, config: dict = None) -> dict:
@@ -177,7 +184,7 @@ def run_backtest(ohlcv: pd.DataFrame, signals: pd.DataFrame, config: dict = None
 
         # Step 4: exit at whichever of take_profit/stop_loss is touched first
         # (or the last available open if neither is ever touched).
-        exit_idx, exit_price = _find_exit(high, low, open_, entry_idx, direction, take_profit, stop_loss)
+        exit_idx, exit_price, exit_reason = _find_exit(high, low, open_, entry_idx, direction, take_profit, stop_loss)
 
         # Step 5: commission and slippage are each charged on entry and exit,
         # then deducted from gross PnL (Step 6) -- kept as separate ledger
@@ -209,6 +216,7 @@ def run_backtest(ohlcv: pd.DataFrame, signals: pd.DataFrame, config: dict = None
             "direction": "long" if direction == 1 else "short",
             "entry_price": entry_price,
             "exit_price": exit_price,
+            "exit_reason": exit_reason,
             "quantity": quantity,
             "gross_pnl": gross_pnl,
             "commission": total_commission,

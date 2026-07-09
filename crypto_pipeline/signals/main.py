@@ -112,11 +112,11 @@ if __name__ == "__main__":
                 # column in a row refer to the same underlying candle.
                 output = pd.DataFrame({
                     "datetime": df["datetime"],
-                    "open": df["open"].shift(1),
-                    "high": df["high"].shift(1),
-                    "low": df["low"].shift(1),
-                    "close": df["close"].shift(1),
-                    "volume": df["volume"].shift(1),
+                    "open": df["open"],
+                    "high": df["high"],
+                    "low": df["low"],
+                    "close": df["close"],
+                    "volume": df["volume"],
                 })
 
                 # Add all indicator columns

@@ -1,25 +1,8 @@
 """
-conditions.py (CORRECTED)
+conditions.py
 
 Evaluates every strategy condition and returns a DataFrame
 containing one boolean column for each condition.
-
-LOOK-AHEAD BIAS — SINGLE CENTRALIZED SHIFT:
-- talib_indicators.py now returns RAW, unshifted indicator values.
-  ind_X[N] is computed using data through candle N (inclusive) — same
-  convention as talib itself, and same convention as the raw OHLCV columns.
-- Because everything (prices AND indicators) is unshifted and on the same
-  clock, conditions are evaluated here exactly as if you were live at the
-  close of each candle — no per-operand shifting needed in resolve_operand().
-- The ONE shift that prevents look-ahead is applied once, at the very end
-  of evaluate_conditions(), to the whole condition_df at once. This moves
-  every condition (and therefore every signal built from it) forward by
-  one bar, so a condition that becomes true using candle N's data is only
-  actionable starting at candle N+1 — exactly the anti-look-ahead
-  guarantee, but from a single place instead of scattered across two files.
-- Do NOT re-add per-column shifting in resolve_operand(), and do NOT add
-  .shift(1) back into talib_indicators.py — either one would double-shift
-  on top of the shift already applied here.
 """
 
 import pandas as pd
@@ -33,9 +16,6 @@ import numpy as np
 def cross_above(left: pd.Series, right: pd.Series) -> pd.Series:
     """
     True only on the bar where left crosses above right.
-
-    Operates on raw, unshifted series — the anti-look-ahead shift is
-    applied once, centrally, in evaluate_conditions().
     """
     return (left > right) & (left.shift(1) <= right.shift(1))
 
@@ -76,7 +56,7 @@ def apply_persist(condition: pd.Series, bars: int) -> pd.Series:
 
 
 # ==========================================================
-# Value Resolver (FIXED)
+# Value Resolver
 # ==========================================================
 
 def resolve_operand(df: pd.DataFrame, operand):
@@ -84,15 +64,10 @@ def resolve_operand(df: pd.DataFrame, operand):
     Resolve operand to either a Series or a constant.
 
     Operand can be:
-        ind_EMA_20          → indicator column (raw, unshifted)
-        close, open, etc    → price column (raw, unshifted)
+        ind_EMA_20          → indicator column
+        close, open, etc    → price column
         30, 70              → numeric constant
         True                → boolean constant
-
-    No shifting happens here. Both indicators and prices are on the same,
-    unshifted clock, so they're already timely aligned with each other.
-    The single anti-look-ahead shift is applied once, to the finished
-    condition_df, at the end of evaluate_conditions().
     """
 
     if isinstance(operand, str):
@@ -115,9 +90,7 @@ def evaluate_operator(
     right,
 ):
     """
-    Evaluates one condition, using each operand's raw (unshifted) values.
-    The anti-look-ahead shift is applied once, centrally, at the end of
-    evaluate_conditions() — not here.
+    Evaluates one condition.
     """
 
     left_value = resolve_operand(df, left)
@@ -157,7 +130,6 @@ def evaluate_operator(
 
     # -------------------------------
     # Price Operators
-    # (Same raw, unshifted convention as everything else here)
     # -------------------------------
 
     if operator == "close_above":
@@ -307,19 +279,8 @@ def evaluate_conditions(
             )
 
     # =====================================================
-    # SINGLE, CENTRALIZED ANTI-LOOK-AHEAD SHIFT
+    # CENTRALIZED ANTI-LOOK-AHEAD SHIFT
     # =====================================================
-    # Every condition above was evaluated using each row's OWN, unshifted
-    # data (raw indicators, raw prices) — i.e. "as if live at the close of
-    # that candle". Shifting the whole result forward by one bar here means
-    # a condition that became true using candle N's data is only reflected
-    # as True starting at candle N+1, which is the one and only shift this
-    # pipeline applies. Do not shift anywhere else (talib_indicators.py,
-    # resolve_operand, or main.py's OHLCV) or you will double-shift.
-    #
-    # shift(1) introduces NaN into these boolean columns, which upcasts them
-    # to object dtype; infer_objects(copy=False) lets fillna+astype cleanly
-    # downcast back to bool without pandas' FutureWarning.
     result = result.shift(1).fillna(False).infer_objects(copy=False).astype(bool)
 
     return result

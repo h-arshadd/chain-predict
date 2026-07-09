@@ -6,7 +6,6 @@ Uses the python-binance library.
 
 Key details:
     - Binance timestamps are in MILLISECONDS
-    - Uses futures klines (linear perpetual contracts)
     - Fetches 1000 candles per API call (Binance max)
     - Retries on failure with configurable delay
 """
@@ -31,8 +30,7 @@ class BinanceExchange:
 
     def fetch_batch(self, symbol, start_ms, end_ms):
         """
-        Fetch a single batch of up to 1000 raw candles from Binance Futures.
-        Uses futures_klines (linear perpetual contracts).
+        Fetch a single batch of up to 1000 raw candles from Binance.
 
         Binance's kline rows have 12 fields (open time, OHLCV, close time,
         quote volume, trade count, taker buy volumes, unused field). We only
