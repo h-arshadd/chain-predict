@@ -148,8 +148,11 @@ def run_backtest(ohlcv: pd.DataFrame, signals: pd.DataFrame, config: dict = None
 
     allow_long = config.get("allow_long", True)
     allow_short = config.get("allow_short", True)
-    commission_rate = config["commission"]
-    slippage_rate = config["slippage"]
+    # commission/slippage are stored as whole percentages in config.yaml
+    # (e.g. 0.05 means 0.05%), same convention as position_size/take_profit/
+    # stop_loss below -- divide by 100 to get the fraction used in the math.
+    commission_rate = config["commission"] / 100
+    slippage_rate = config["slippage"] / 100
     initial_balance = config["initial_balance"]
 
     balance = initial_balance
