@@ -26,7 +26,7 @@ def load_config(config_path=None) -> dict:
 
 def split_config(config: dict) -> tuple:
     """Split config into indicator_config and strategy_config."""
-    indicator_config = {k: v for k, v in config.items() if k != "strategy"}
+    indicator_config = {k: v for k, v in config.items() if k not in ("strategy", "strategy_name")}
     strategy_config = config["strategy"]
     return indicator_config, strategy_config
 
@@ -74,10 +74,32 @@ if __name__ == "__main__":
 
     from crypto_pipeline.data.data_downloader import get_data
     from crypto_pipeline.utils.db_utils import get_db_connection, insert_signals
+    from crypto_pipeline.utils.metadata_utils import (
+        get_db_connection as get_metadata_connection,
+        get_current_strategy,
+    )
     from datetime import datetime
 
     exchanges = ["binance", "bybit"]
     symbols = ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
+
+    # The active strategy's id/name (from metadata.strategy -- the newest
+    # row, see create_metadata.py) is stamped onto every signal row below,
+    # so each row can be traced back to exactly which strategy produced it.
+    metadata_conn = get_metadata_connection()
+    try:
+        current_strategy = get_current_strategy(metadata_conn)
+    finally:
+        metadata_conn.close()
+
+    if current_strategy is None:
+        raise RuntimeError(
+            "No strategy found in metadata.strategy -- run create_metadata.py first."
+        )
+
+    strategy_id = current_strategy["strategy_id"]  # not used in table naming; logged only
+    strategy_name = current_strategy["strategy_name"]
+    print(f"Using strategy_id={strategy_id}, strategy_name={strategy_name!r}")
 
     conn = get_db_connection()
 
@@ -97,48 +119,25 @@ if __name__ == "__main__":
                 # Run the full pipeline: generate_signals loads config internally
                 indicator_df, condition_df, signals = generate_signals(df)
 
-                # Build output: datetime + ohlcv + indicators + conditions + signal
-                #
-                # FIX: indicators (and therefore condition_df / signals) are all
-                # pre-shifted by 1 bar in talib_indicators.py to avoid lookahead
-                # -- i.e. the value in row N was computed from the candle at
-                # row N-1. The OHLCV columns below were NOT shifted, so they
-                # showed the CURRENT bar's own price sitting in the same row as
-                # an indicator/signal value that actually belongs to the
-                # PREVIOUS bar. That's what caused signals to appear to line up
-                # one row "too early" against the price data.
-                #
-                # Shifting open/high/low/close/volume by 1 here makes every
-                # column in a row refer to the same underlying candle.
+                # Output: just datetime + final signal. OHLCV/indicators/
+                # conditions are intermediate values only -- not persisted.
+                # strategy_name is NOT a column here -- it's baked into the
+                # table name by insert_signals() instead.
                 output = pd.DataFrame({
                     "datetime": df["datetime"],
-                    "open": df["open"],
-                    "high": df["high"],
-                    "low": df["low"],
-                    "close": df["close"],
-                    "volume": df["volume"],
+                    "signal": signals,
                 })
 
-                # Add all indicator columns
-                for col in indicator_df.columns:
-                    if col != "datetime":
-                        output[col] = indicator_df[col]
-
-                # Add all condition columns
-                for col in condition_df.columns:
-                    output[col] = condition_df[col]
-
-                # Add final signal
-                output["signal"] = signals
-
                 # Drop warm-up rows where indicators aren't fully formed yet
-                # (e.g. SMA_20 needs 20 bars before it produces a value)
-                output = output.dropna().reset_index(drop=True)
+                # (e.g. SMA_20 needs 20 bars before it produces a value) --
+                # signal will be NaN for those rows since it's derived from
+                # conditions on those same not-yet-formed indicators.
+                output = output.dropna(subset=["signal"]).reset_index(drop=True)
 
-                # Store in DB: signals.{exchange}_{symbol}, full rebuild each run
-                insert_signals(conn, exchange, symbol, output)
+                # Store in DB: signals.{exchange}_{symbol}_{strategy_name}
+                insert_signals(conn, exchange, symbol, strategy_name, output)
 
-                print(f"Saved {exchange} {symbol}: {len(output)} rows")
+                print(f"Saved {exchange} {symbol} (strategy {strategy_name!r}): {len(output)} rows")
 
     finally:
         conn.close()

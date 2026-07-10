@@ -20,6 +20,7 @@ Signals/backtest tables are named like:
 
 import os
 import io
+import re
 import logging
 import pandas as pd
 import psycopg2
@@ -211,28 +212,42 @@ def get_candles_from_db(conn, exchange, symbol, start_date, end_date):
     return df
 
 
-def insert_signals(conn, exchange, symbol, df):
+def insert_signals(conn, exchange, symbol, strategy_name, df):
     """
-    Store the signals/main.py output DataFrame for one exchange+symbol,
-    replacing whatever was there before.
+    Store the signals/main.py output DataFrame for one exchange+symbol+
+    strategy run, replacing whatever was there before.
 
-    Schema: signals.{exchange}_{symbol}, e.g. signals.binance_doge
+    Schema: signals.{exchange}_{symbol}_{strategy_name}
+    e.g. signals.binance_doge_RSI_14_reversal
+
+    strategy_name is baked into the TABLE NAME (not stored as a column in
+    df) -- so which strategy produced a table is identifiable from its
+    name alone, and different strategies for the same pair land in
+    different tables instead of overwriting each other. strategy_name is
+    sanitized (non-alphanumeric -> "_") since it flows into a raw
+    identifier.
+
+    NOTE: if you insert a new strategy row in metadata.strategy but keep
+    the same strategy_name (e.g. just tweaking indicator params), this
+    table gets overwritten on the next signals run -- the table is keyed
+    by name only, not strategy_id, so re-using a name means re-using the
+    table.
 
     df's column set changes whenever signals/config.yaml's active strategy
     changes (different indicators -> different ind_* columns, different
     condition counts -> different long_cond_N/short_cond_N columns). Rather
     than trying to migrate an existing table's columns to match, this always
     drops and recreates the table from df's current columns/dtypes, then
-    COPYs the full DataFrame in. So every run of the signal pipeline fully
-    replaces this symbol's table -- there is no append/incremental mode and
-    no history of past strategy runs kept here. If you need to compare
-    strategies over time, save those runs elsewhere before rerunning.
+    COPYs the full DataFrame in. So every run of the signal pipeline for the
+    same (exchange, symbol, strategy_name) fully replaces that table -- there
+    is no append/incremental mode within a single strategy's table.
 
     df must include a "datetime" column; every other column is taken as-is
     (indicators, condition booleans, the final "signal" column, etc.).
     """
     cursor = conn.cursor()
-    table_name = f"{exchange}_{symbol}"
+    safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
+    table_name = f"{exchange}_{symbol}_{safe_strategy_name}"
 
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS signals"))
 

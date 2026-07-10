@@ -3,8 +3,8 @@ exchange: "bybit"
 # Trading pairs to fetch
 symbols: ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
 
-# Candlestick timeframes to fetch
-#time_horizons: ["1m"]
+# Candlestick timeframe to fetch and store
+time_horizon: "1m"
 
 # Date range for historical data
 start_date: "2024-01-01"

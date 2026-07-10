@@ -249,6 +249,7 @@ class DataDownloader:
         config_start_date  = config["start_date"]
         filling_method     = config["filling_missing_method"]
         zero_volume_method = config["fill_zero_volume"]
+        time_horizon       = config.get("time_horizon", "1m")
 
         end_date = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
         logger.info(f"Data fetch end_date resolved to: {end_date}")
@@ -298,8 +299,19 @@ class DataDownloader:
 
                 df = self.clean_candles(df, actual_start, end_date, filling_method, zero_volume_method)
 
-                insert_candles(self.conn, exchange, symbol, df)
-                logger.info(f"Completed: {exchange} | {symbol}")
+                # Store candles at configured timeframe
+                if time_horizon == "1m":
+                    insert_candles(self.conn, exchange, symbol, df)
+                    logger.info(f"Stored 1m candles for {exchange} | {symbol}")
+                else:
+                    # Resample to configured timeframe and store
+                    resampled = resample(time_horizon, df.set_index("datetime"))
+                    if resampled.empty:
+                        logger.warning(f"Resampled DataFrame is empty for {exchange} | {symbol} | {time_horizon}")
+                        continue
+                    
+                    insert_candles(self.conn, exchange, symbol, resampled)
+                    logger.info(f"Stored {time_horizon} candles for {exchange} | {symbol} ({len(resampled)} candles)")
 
             except Exception as e:
                 logger.error(f"Failed for {exchange} | {symbol}: {e}")

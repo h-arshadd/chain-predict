@@ -96,6 +96,8 @@
 # STRATEGY 2: RSI Overbought/Oversold - ACTIVE
 # ============================================================================
 
+strategy_name: "RSI_14_reversal"
+
 RSI:
   - inputs:
       - close
