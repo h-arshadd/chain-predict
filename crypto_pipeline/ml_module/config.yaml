@@ -1,17 +1,18 @@
 # crypto_pipeline/ml_module/config.yaml
 
-model_type: regression
+model_type: regression  # regression | classification | timeseries
 
 data:
   enabled: true
+  calculate_ohlcv: true  # Set to false to skip OHLCV calculation (use features only)
   symbol: btc
   exchange: binance
-  timeframe: 15m
+  timeframe: 1h
   start_date: "2025-01-01"
   end_date: "2026-01-01"
 
 features:
-  enabled: true
+  enabled: true  # If true, add indicators + patterns. If false, use raw OHLCV only.
   indicators:
     EMA:
       - parameters:
@@ -45,14 +46,15 @@ features:
         pattern: pat_ENGULFING
 
 sentiment:
-  enabled: true
+  enabled: true  # Set to false to skip sentiment collection
   source:
     - reddit
-  encoding: numerical
+  encoding: numerical  # numerical (-1/0/1) | onehot
 
 target:
-  type: return
+  type: return  # regression: return | log_return
+                # classification: binary | threshold
   horizon: 1
   filter_noise: true
-  noise_method: threshold
+  noise_method: threshold  # threshold | zscore | quantile
   noise_threshold: 0.001

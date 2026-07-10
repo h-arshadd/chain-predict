@@ -26,7 +26,7 @@ def run_ml_pipeline(config_path: str) -> pd.DataFrame:
     Execute the complete ML data preparation pipeline.
     
     Steps:
-    1. Collect market data (if enabled)
+    1. Collect market data (if enabled and calculate_ohlcv is true)
     2. Engineer features (if enabled)
     3. Collect sentiment data (if enabled)
     4. Generate prediction target
@@ -41,15 +41,27 @@ def run_ml_pipeline(config_path: str) -> pd.DataFrame:
     config = load_config_yaml(config_path)
     logger.info(f"Loaded config from {config_path}")
     
+    # Validate that at least one data source is enabled
+    calculate_ohlcv = config.get("data", {}).get("calculate_ohlcv", True)
+    features_enabled = config.get("features", {}).get("enabled", False)
+    
+    if not calculate_ohlcv and not features_enabled:
+        raise ValueError("At least one data source must be enabled: either calculate_ohlcv or features")
+    
     # Step 1: Market data collection
     df = None
     if config.get("data", {}).get("enabled", False):
         logger.info("Collecting market data...")
         df = collect_market_data(config)
-        logger.info(f"Market data collected: {len(df)} rows")
+        
+        if df is None:
+            logger.info("OHLCV calculation disabled, will use features only")
+            df = pd.DataFrame()
+        else:
+            logger.info(f"Market data collected: {len(df)} rows")
     else:
         logger.warning("Market data collection disabled in config")
-        raise ValueError("Market data must be enabled for ML pipeline")
+        df = pd.DataFrame()
     
     # Step 2: Feature engineering
     if config.get("features", {}).get("enabled", False):
@@ -58,6 +70,9 @@ def run_ml_pipeline(config_path: str) -> pd.DataFrame:
         logger.info(f"Features engineered: {df.shape[1]} columns")
     else:
         logger.info("Features disabled. Using OHLCV data only.")
+    
+    if df.empty:
+        raise ValueError("No data collected after data and feature steps")
     
     # Step 3: Sentiment collection
     if config.get("sentiment", {}).get("enabled", False):

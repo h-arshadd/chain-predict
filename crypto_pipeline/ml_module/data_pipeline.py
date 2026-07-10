@@ -54,13 +54,19 @@ def collect_market_data(config: dict) -> pd.DataFrame:
         pd.DataFrame: OHLCV data at the specified timeframe
         
     Raises:
-        ValueError: If required config fields are missing
+        ValueError: If required config fields are missing or data collection disabled
     """
     
     data_config = config.get("data", {})
     
     if not data_config.get("enabled"):
-        raise ValueError("Data collection is disabled")
+        raise ValueError("Data collection is disabled in config")
+    
+    # NEW: Check if OHLCV calculation is disabled
+    calculate_ohlcv = data_config.get("calculate_ohlcv", True)
+    if not calculate_ohlcv:
+        logger.info("OHLCV calculation disabled in config")
+        return None
     
     required = ["symbol", "exchange", "timeframe", "start_date", "end_date"]
     for field in required:

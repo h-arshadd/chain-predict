@@ -108,9 +108,10 @@ def _fetch_sentiment_from_source(source: str, df: pd.DataFrame, symbol: str = No
 def _encode_sentiment(df: pd.DataFrame, encoding: str) -> pd.DataFrame:
     """
     Encode sentiment columns.
+    REMOVED: df.copy() to prevent data leakage
     """
     
-    df_encoded = df.copy()
+    df_encoded = df  # CHANGED: Direct assignment instead of copy
     
     if encoding == "numerical":
         for col in df_encoded.columns:
@@ -129,8 +130,7 @@ def _encode_sentiment(df: pd.DataFrame, encoding: str) -> pd.DataFrame:
                 prefix=col,
                 prefix_sep="_"
             )
-            df_encoded = df_encoded.drop(columns=[col])
-            df_encoded = pd.concat([df_encoded, dummies], axis=1)
+            df_encoded = pd.concat([df_encoded.drop(columns=[col]), dummies], axis=1)
         
         logger.info("Sentiment encoded as one-hot")
     
