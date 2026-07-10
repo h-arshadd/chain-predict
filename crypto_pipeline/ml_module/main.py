@@ -1,3 +1,5 @@
+# crypto_pipeline/ml_module/main.py
+
 """
 main.py
 -------
@@ -7,7 +9,6 @@ for regression and classification tasks.
 """
 
 import logging
-import yaml
 import pandas as pd
 
 from crypto_pipeline.utils.ml_utils import load_config_yaml
@@ -76,11 +77,9 @@ def run_ml_pipeline(config_path: str) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    # Example usage
     config_path = "ml_module/config.yaml"
     df = run_ml_pipeline(config_path)
     
-    # Save to CSV for inspection (temporary)
     output_path = "ml_output.csv"
     df.to_csv(output_path, index=False)
     print(f"Output saved to {output_path}")

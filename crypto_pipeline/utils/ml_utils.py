@@ -1,3 +1,5 @@
+# crypto_pipeline/utils/ml_utils.py
+
 """
 ml_utils.py
 -----------
@@ -6,7 +8,6 @@ Utility functions for ML module.
 
 import logging
 import yaml
-from pathlib import Path
 
 
 def setup_logging(name: str = "ml_module"):

@@ -1,3 +1,5 @@
+# crypto_pipeline/ml_module/feature_pipeline.py
+
 """
 feature_pipeline.py
 -------------------
@@ -32,13 +34,11 @@ def engineer_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     
     df_with_features = df.copy()
     
-    # Calculate indicators
     indicators_config = features_config.get("indicators", {})
     if indicators_config:
         logger.info(f"Calculating {len(indicators_config)} indicator types...")
         df_with_features = _calculate_indicators(df_with_features, indicators_config)
     
-    # Calculate patterns
     patterns_config = features_config.get("patterns", {})
     if patterns_config:
         logger.info(f"Calculating {len(patterns_config)} pattern types...")
@@ -51,17 +51,6 @@ def engineer_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
 def _calculate_indicators(df: pd.DataFrame, indicators_config: dict) -> pd.DataFrame:
     """
     Calculate all configured technical indicators.
-    
-    Config format:
-        EMA:
-          - parameters:
-              period: 20
-            aliases:
-              ema: ind_EMA_20
-          - parameters:
-              period: 50
-            aliases:
-              ema: ind_EMA_50
     """
     
     df_ind = df.copy()
@@ -74,7 +63,6 @@ def _calculate_indicators(df: pd.DataFrame, indicators_config: dict) -> pd.DataF
             logger.warning(f"Indicator {indicator_name} not found, skipping")
             continue
         
-        # Each indicator can have multiple parameter sets
         for config_item in configs:
             params = config_item.get("parameters", {})
             aliases = config_item.get("aliases", {})
@@ -82,7 +70,6 @@ def _calculate_indicators(df: pd.DataFrame, indicators_config: dict) -> pd.DataF
             try:
                 result = indicator_func(df_ind, **params)
                 
-                # Handle multi-output indicators (dict) vs single-output (Series)
                 if isinstance(result, dict):
                     for output_key, series in result.items():
                         alias_key = f"{output_key}"
@@ -90,7 +77,6 @@ def _calculate_indicators(df: pd.DataFrame, indicators_config: dict) -> pd.DataF
                         df_ind[alias_name] = series
                         indicator_count += 1
                 else:
-                    # Single output
                     alias_name = aliases.get("value", f"ind_{indicator_name}")
                     df_ind[alias_name] = result
                     indicator_count += 1
@@ -108,16 +94,6 @@ def _calculate_indicators(df: pd.DataFrame, indicators_config: dict) -> pd.DataF
 def _calculate_patterns(df: pd.DataFrame, patterns_config: dict) -> pd.DataFrame:
     """
     Calculate candlestick patterns based on config.
-    
-    Config format:
-        DOJI:
-          aliases:
-            pattern: pat_DOJI
-        BULLISH_ENGULFING:
-          aliases:
-            pattern: pat_BULLISH_ENGULFING
-    
-    Returns binary (0/1) columns indicating pattern presence.
     """
     
     df_pat = df.copy()

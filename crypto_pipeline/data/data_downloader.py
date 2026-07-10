@@ -1,3 +1,5 @@
+# crypto_pipeline/data/data_downloader.py
+
 """
 data_downloader.py
 ------------------
@@ -28,8 +30,6 @@ CANDLE_COLUMNS = ["datetime", "open", "high", "low", "close", "volume"]
 
 DEFAULT_FETCH_CONFIG = {"retries": 5, "retry_delay": 10}
 
-# Populated lazily inside _resolve_exchange_fetcher() to avoid importing
-# every exchange module unconditionally at load time.
 _EXCHANGE_FETCHERS = {}
 
 
@@ -81,7 +81,7 @@ def resample(timeframe, df):
     return resampled_df
 
 
-def get_data(exchange, symbol, start_date, end_date, config=None, df_1m=False):
+def get_data(exchange, symbol, start_date, end_date, timeframe="1h", config=None, df_1m=False):
     """
     Get 1-minute and resampled data for a symbol between start_date and end_date.
 
@@ -101,13 +101,18 @@ def get_data(exchange, symbol, start_date, end_date, config=None, df_1m=False):
 
     Args:
         exchange:   "binance" or "bybit"
+        symbol:     trading pair
+        start_date: start datetime
+        end_date:   end datetime or "now"
+        timeframe:  target timeframe for resampling (default "1h")
         config:     dict with at least "retries"/"retry_delay" for the live-gap
                     fetch fallback. Defaults to DEFAULT_FETCH_CONFIG if omitted.
+        df_1m:      whether to return 1m data too
 
-    Returns a dict: {"one_min": DataFrame, "resampled": DataFrame}
+    Returns a dict: {"one_min": DataFrame, "resampled": DataFrame} or {"resampled": DataFrame}
     """
     config = config or DEFAULT_FETCH_CONFIG
-    resample_timeframe = "1h"
+    resample_timeframe = timeframe
 
     if end_date == "now":
         end_date = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
@@ -135,7 +140,7 @@ def get_data(exchange, symbol, start_date, end_date, config=None, df_1m=False):
                 live_df = parse_candles(raw_candles)
 
                 if not live_df.empty:
-                    live_df = live_df.iloc[:-1]  # drop the still-forming current-minute candle
+                    live_df = live_df.iloc[:-1]
 
             except Exception as e:
                 logger.error(f"Live fetch failed for {exchange} | {symbol}: {e}. Using DB data only.")
@@ -151,7 +156,6 @@ def get_data(exchange, symbol, start_date, end_date, config=None, df_1m=False):
 
     resampled_df = resample(resample_timeframe, df=one_min_df.set_index("datetime"))
     
-    # Drop last resampled candle (still-forming timeframe)
     if not resampled_df.empty:
         resampled_df = resampled_df.iloc[:-1]
     
@@ -178,8 +182,6 @@ class DataDownloader:
         if isinstance(value, (datetime, pd.Timestamp)) and value.tzinfo is not None:
             return value.replace(tzinfo=None)
         return value
-
-    # ----- used by download() -----
 
     def fill_missing_candles(self, df, expected_index, method):
         if df.index.duplicated().any():
@@ -212,10 +214,9 @@ class DataDownloader:
             zero_count = int(zero_volume_mask.sum())
 
             if zero_count:
-                # Only replace volume — never touch OHLC values
                 df.loc[zero_volume_mask, "volume"] = np.nan
                 df["volume"] = df["volume"].ffill()
-                df["volume"] = df["volume"].bfill()  # Backfill any NaN at start
+                df["volume"] = df["volume"].bfill()
                 logger.info(f"Zero-volume rows ({zero_count}) volume replaced using forward fill + backfill.")
             else:
                 logger.info("No zero-volume rows found.")
@@ -237,8 +238,6 @@ class DataDownloader:
         expected_index = pd.date_range(start=actual_start, end=end_date - TIMEFRAME_DELTA, freq="1min", name="datetime")
         df = self.fill_missing_candles(df, expected_index, filling_method)
         df = self.fill_zero_volume(df, zero_volume_method)
-
-        # Rounding removed — store full precision from exchange
 
         return df.reset_index()
 
@@ -299,12 +298,10 @@ class DataDownloader:
 
                 df = self.clean_candles(df, actual_start, end_date, filling_method, zero_volume_method)
 
-                # Store candles at configured timeframe
                 if time_horizon == "1m":
                     insert_candles(self.conn, exchange, symbol, df)
                     logger.info(f"Stored 1m candles for {exchange} | {symbol}")
                 else:
-                    # Resample to configured timeframe and store
                     resampled = resample(time_horizon, df.set_index("datetime"))
                     if resampled.empty:
                         logger.warning(f"Resampled DataFrame is empty for {exchange} | {symbol} | {time_horizon}")

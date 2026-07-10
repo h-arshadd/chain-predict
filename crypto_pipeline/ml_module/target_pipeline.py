@@ -1,3 +1,5 @@
+# crypto_pipeline/ml_module/target_pipeline.py
+
 """
 target_pipeline.py
 ------------------
@@ -47,7 +49,6 @@ def generate_target(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
     
-    # Handle NaN targets (from missing data or short horizon)
     initial_count = len(df_with_target)
     df_with_target = df_with_target.dropna(subset=["target"])
     final_count = len(df_with_target)
@@ -62,38 +63,30 @@ def generate_target(df: pd.DataFrame, config: dict) -> pd.DataFrame:
 def _generate_regression_target(df: pd.DataFrame, target_config: dict) -> pd.DataFrame:
     """
     Generate regression targets (continuous values).
-    
-    Supports:
-    - return: (price_t+h - price_t) / price_t
-    - log_return: ln(price_t+h / price_t)
     """
     
     df_reg = df.copy()
     
-    target_type = target_config.get("type", "return")  # "return" or "log_return"
+    target_type = target_config.get("type", "return")
     horizon = target_config.get("horizon", 1)
     
     if "close" not in df_reg.columns:
         raise ValueError("close price column required for target generation")
     
-    # Shift close price forward by horizon
     future_close = df_reg["close"].shift(-horizon)
     current_close = df_reg["close"]
     
     if target_type == "return":
-        # Simple return: (P_future - P_current) / P_current
         df_reg["target"] = (future_close - current_close) / current_close
         logger.info(f"Regression target: simple return (horizon={horizon})")
         
     elif target_type == "log_return":
-        # Log return: ln(P_future / P_current)
         df_reg["target"] = np.log(future_close / current_close)
         logger.info(f"Regression target: log return (horizon={horizon})")
         
     else:
         raise ValueError(f"Unknown regression target type: {target_type}")
     
-    # Apply noise filtering if configured
     if target_config.get("filter_noise", False):
         noise_method = target_config.get("noise_method", "threshold")
         df_reg = _filter_noise(df_reg, noise_method, target_config)
@@ -104,34 +97,26 @@ def _generate_regression_target(df: pd.DataFrame, target_config: dict) -> pd.Dat
 def _generate_classification_target(df: pd.DataFrame, target_config: dict) -> pd.DataFrame:
     """
     Generate classification targets (binary labels).
-    
-    Supports:
-    - 0/1: price goes down / up
-    - -1/1: price goes down / up (alternative)
-    - threshold-based: multi-class with threshold
     """
     
     df_clf = df.copy()
     
-    target_type = target_config.get("type", "binary")  # "binary", "threshold"
+    target_type = target_config.get("type", "binary")
     horizon = target_config.get("horizon", 1)
-    threshold = target_config.get("threshold", 0.0)  # For threshold-based classification
+    threshold = target_config.get("threshold", 0.0)
     
     if "close" not in df_clf.columns:
         raise ValueError("close price column required for target generation")
     
-    # Calculate return for classification
     future_close = df_clf["close"].shift(-horizon)
     current_close = df_clf["close"]
     returns = (future_close - current_close) / current_close
     
     if target_type == "binary":
-        # 0 = down, 1 = up
         df_clf["target"] = (returns > threshold).astype(int)
         logger.info(f"Classification target: binary (0/1, threshold={threshold}, horizon={horizon})")
         
     elif target_type == "threshold":
-        # Multi-class based on threshold range
         df_clf["target"] = np.where(
             returns > threshold, 1,
             np.where(returns < -threshold, -1, 0)
@@ -141,7 +126,6 @@ def _generate_classification_target(df: pd.DataFrame, target_config: dict) -> pd
     else:
         raise ValueError(f"Unknown classification target type: {target_type}")
     
-    # Apply noise filtering if configured
     if target_config.get("filter_noise", False):
         noise_method = target_config.get("noise_method", "threshold")
         df_clf = _filter_noise(df_clf, noise_method, target_config)
@@ -152,11 +136,6 @@ def _generate_classification_target(df: pd.DataFrame, target_config: dict) -> pd
 def _filter_noise(df: pd.DataFrame, method: str, config: dict) -> pd.DataFrame:
     """
     Filter noisy signals from target.
-    
-    Methods:
-    - threshold: remove targets with |value| < noise_threshold
-    - zscore: remove targets outside z-score range
-    - quantile: remove bottom/top quantile outliers
     """
     
     df_filtered = df.copy()

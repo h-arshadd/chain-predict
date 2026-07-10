@@ -1,13 +1,12 @@
-# ML Module Configuration
-# This config drives the entire data preparation pipeline
+# crypto_pipeline/ml_module/config.yaml
 
-model_type: regression  # regression | classification | timeseries
+model_type: regression
 
 data:
   enabled: true
   symbol: BTCUSDT
   exchange: BINANCE
-  timeframe: 1h
+  timeframe: 15m
   start_date: "2020-01-01"
   end_date: "2024-12-31"
 
@@ -23,13 +22,11 @@ features:
           period: 50
         aliases:
           ema: ind_EMA_50
-    
     RSI:
       - parameters:
           period: 14
         aliases:
           value: ind_RSI_14
-    
     MACD:
       - parameters:
           fast: 12
@@ -39,17 +36,6 @@ features:
           macd: ind_MACD_12_26_9
           signal: ind_MACD_SIGNAL_12_26_9
           histogram: ind_MACD_HIST_12_26_9
-    
-    BBANDS:
-      - parameters:
-          period: 20
-          nbdev_up: 2.0
-          nbdev_dn: 2.0
-        aliases:
-          upper: ind_BBANDS_UPPER_20
-          middle: ind_BBANDS_MIDDLE_20
-          lower: ind_BBANDS_LOWER_20
-  
   patterns:
     DOJI:
       aliases:
@@ -63,22 +49,11 @@ sentiment:
   source:
     - twitter
     - news
-  encoding: numerical  # numerical (-1/0/1) | onehot
-  aliases:
-    sentiment: sen_MARKET
+  encoding: numerical
 
 target:
-  # For regression
-  type: return  # return | log_return
+  type: return
   horizon: 1
   filter_noise: true
-  noise_method: threshold  # threshold | zscore | quantile
+  noise_method: threshold
   noise_threshold: 0.001
-  
-  # For classification
-  # type: binary  # binary | threshold
-  # horizon: 1
-  # threshold: 0.001
-  # filter_noise: true
-  # noise_method: threshold
-  # noise_threshold: 0.001
