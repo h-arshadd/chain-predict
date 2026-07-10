@@ -34,30 +34,28 @@ def generate_target(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     
     logger.info(f"Generating target for {model_type} model")
     
-    df_with_target = df.copy()
-    
     if model_type == "regression":
-        df_with_target = _generate_regression_target(df_with_target, target_config)
+        df = _generate_regression_target(df, target_config)
     
     elif model_type == "classification":
-        df_with_target = _generate_classification_target(df_with_target, target_config)
+        df = _generate_classification_target(df, target_config)
     
     elif model_type == "timeseries":
         logger.warning("Timeseries target generation not yet implemented")
-        df_with_target = _generate_regression_target(df_with_target, target_config)
+        df = _generate_regression_target(df, target_config)
     
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
     
-    initial_count = len(df_with_target)
-    df_with_target = df_with_target.dropna(subset=["target"])
-    final_count = len(df_with_target)
+    initial_count = len(df)
+    df = df.dropna(subset=["target"])
+    final_count = len(df)
     
     if initial_count > final_count:
         logger.info(f"Dropped {initial_count - final_count} rows with NaN targets")
     
     logger.info(f"Target generated: {final_count} valid rows")
-    return df_with_target
+    return df
 
 
 def _generate_regression_target(df: pd.DataFrame, target_config: dict) -> pd.DataFrame:
@@ -65,23 +63,21 @@ def _generate_regression_target(df: pd.DataFrame, target_config: dict) -> pd.Dat
     Generate regression targets (continuous values).
     """
     
-    df_reg = df.copy()
-    
     target_type = target_config.get("type", "return")
     horizon = target_config.get("horizon", 1)
     
-    if "close" not in df_reg.columns:
+    if "close" not in df.columns:
         raise ValueError("close price column required for target generation")
     
-    future_close = df_reg["close"].shift(-horizon)
-    current_close = df_reg["close"]
+    future_close = df["close"].shift(-horizon)
+    current_close = df["close"]
     
     if target_type == "return":
-        df_reg["target"] = (future_close - current_close) / current_close
+        df["target"] = (future_close - current_close) / current_close
         logger.info(f"Regression target: simple return (horizon={horizon})")
         
     elif target_type == "log_return":
-        df_reg["target"] = np.log(future_close / current_close)
+        df["target"] = np.log(future_close / current_close)
         logger.info(f"Regression target: log return (horizon={horizon})")
         
     else:
@@ -89,9 +85,9 @@ def _generate_regression_target(df: pd.DataFrame, target_config: dict) -> pd.Dat
     
     if target_config.get("filter_noise", False):
         noise_method = target_config.get("noise_method", "threshold")
-        df_reg = _filter_noise(df_reg, noise_method, target_config)
+        df = _filter_noise(df, noise_method, target_config)
     
-    return df_reg
+    return df
 
 
 def _generate_classification_target(df: pd.DataFrame, target_config: dict) -> pd.DataFrame:
@@ -99,25 +95,23 @@ def _generate_classification_target(df: pd.DataFrame, target_config: dict) -> pd
     Generate classification targets (binary labels).
     """
     
-    df_clf = df.copy()
-    
     target_type = target_config.get("type", "binary")
     horizon = target_config.get("horizon", 1)
     threshold = target_config.get("threshold", 0.0)
     
-    if "close" not in df_clf.columns:
+    if "close" not in df.columns:
         raise ValueError("close price column required for target generation")
     
-    future_close = df_clf["close"].shift(-horizon)
-    current_close = df_clf["close"]
+    future_close = df["close"].shift(-horizon)
+    current_close = df["close"]
     returns = (future_close - current_close) / current_close
     
     if target_type == "binary":
-        df_clf["target"] = (returns > threshold).astype(int)
+        df["target"] = (returns > threshold).astype(int)
         logger.info(f"Classification target: binary (0/1, threshold={threshold}, horizon={horizon})")
         
     elif target_type == "threshold":
-        df_clf["target"] = np.where(
+        df["target"] = np.where(
             returns > threshold, 1,
             np.where(returns < -threshold, -1, 0)
         )
@@ -128,9 +122,9 @@ def _generate_classification_target(df: pd.DataFrame, target_config: dict) -> pd
     
     if target_config.get("filter_noise", False):
         noise_method = target_config.get("noise_method", "threshold")
-        df_clf = _filter_noise(df_clf, noise_method, target_config)
+        df = _filter_noise(df, noise_method, target_config)
     
-    return df_clf
+    return df
 
 
 def _filter_noise(df: pd.DataFrame, method: str, config: dict) -> pd.DataFrame:
@@ -138,41 +132,40 @@ def _filter_noise(df: pd.DataFrame, method: str, config: dict) -> pd.DataFrame:
     Filter noisy signals from target.
     """
     
-    df_filtered = df.copy()
-    initial_count = len(df_filtered)
+    initial_count = len(df)
     
-    if "target" not in df_filtered.columns:
+    if "target" not in df.columns:
         logger.warning("Target column not found, skipping noise filtering")
-        return df_filtered
+        return df
     
     if method == "threshold":
         noise_threshold = config.get("noise_threshold", 0.001)
-        mask = df_filtered["target"].abs() >= noise_threshold
-        df_filtered = df_filtered[mask]
-        removed = initial_count - len(df_filtered)
+        mask = df["target"].abs() >= noise_threshold
+        df = df[mask]
+        removed = initial_count - len(df)
         logger.info(f"Noise filtering (threshold={noise_threshold}): removed {removed} rows")
         
     elif method == "zscore":
         zscore_threshold = config.get("zscore_threshold", 3.0)
-        targets = df_filtered["target"]
+        targets = df["target"]
         z_scores = np.abs((targets - targets.mean()) / targets.std())
         mask = z_scores <= zscore_threshold
-        df_filtered = df_filtered[mask]
-        removed = initial_count - len(df_filtered)
+        df = df[mask]
+        removed = initial_count - len(df)
         logger.info(f"Noise filtering (z-score={zscore_threshold}): removed {removed} rows")
         
     elif method == "quantile":
         lower_q = config.get("lower_quantile", 0.05)
         upper_q = config.get("upper_quantile", 0.95)
-        targets = df_filtered["target"]
+        targets = df["target"]
         lower_bound = targets.quantile(lower_q)
         upper_bound = targets.quantile(upper_q)
         mask = (targets >= lower_bound) & (targets <= upper_bound)
-        df_filtered = df_filtered[mask]
-        removed = initial_count - len(df_filtered)
+        df = df[mask]
+        removed = initial_count - len(df)
         logger.info(f"Noise filtering (quantile {lower_q}-{upper_q}): removed {removed} rows")
         
     else:
         logger.warning(f"Unknown noise filter method: {method}")
     
-    return df_filtered
+    return df

@@ -12,10 +12,10 @@ import logging
 import pandas as pd
 
 from crypto_pipeline.utils.ml_utils import load_config_yaml
-from ml_module.data_pipeline import collect_market_data
-from ml_module.feature_pipeline import engineer_features
-from ml_module.sentiment_pipeline import collect_sentiment_data
-from ml_module.target_pipeline import generate_target
+from crypto_pipeline.ml_module.data_pipeline import collect_market_data
+from crypto_pipeline.ml_module.feature_pipeline import engineer_features
+from crypto_pipeline.ml_module.sentiment_pipeline import collect_sentiment_data
+from crypto_pipeline.ml_module.target_pipeline import generate_target
 
 
 logger = logging.getLogger(__name__)
@@ -77,9 +77,16 @@ def run_ml_pipeline(config_path: str) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    config_path = "ml_module/config.yaml"
+    import os
+    config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     df = run_ml_pipeline(config_path)
     
-    output_path = "ml_output.csv"
+    # Remove NaN rows before saving
+    df = df.dropna()
+    
+    output_dir = os.path.join(os.path.dirname(__file__), "outputs")
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, "dataset.csv")
     df.to_csv(output_path, index=False)
     print(f"Output saved to {output_path}")
+    print(f"Final dataset shape: {df.shape} (rows, cols)")

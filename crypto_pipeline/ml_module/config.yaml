@@ -4,11 +4,11 @@ model_type: regression
 
 data:
   enabled: true
-  symbol: BTCUSDT
-  exchange: BINANCE
+  symbol: btc
+  exchange: binance
   timeframe: 15m
-  start_date: "2020-01-01"
-  end_date: "2024-12-31"
+  start_date: "2025-01-01"
+  end_date: "2026-01-01"
 
 features:
   enabled: true
@@ -29,9 +29,9 @@ features:
           value: ind_RSI_14
     MACD:
       - parameters:
-          fast: 12
-          slow: 26
-          signal: 9
+          fastperiod: 12
+          slowperiod: 26
+          signalperiod: 9
         aliases:
           macd: ind_MACD_12_26_9
           signal: ind_MACD_SIGNAL_12_26_9
@@ -40,15 +40,14 @@ features:
     DOJI:
       aliases:
         pattern: pat_DOJI
-    BULLISH_ENGULFING:
+    ENGULFING:
       aliases:
-        pattern: pat_BULLISH_ENGULFING
+        pattern: pat_ENGULFING
 
 sentiment:
-  enabled: false
+  enabled: true
   source:
-    - twitter
-    - news
+    - reddit
   encoding: numerical
 
 target:

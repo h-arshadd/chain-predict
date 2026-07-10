@@ -25,11 +25,20 @@ def _normalize_timeframe(timeframe: str) -> str:
         "4h" -> "4h"
         "1d" -> "1D"
         "1D" -> "1D"
+        "15m" -> "15min"
+        "15min" -> "15min"
     """
-    timeframe = timeframe.lower()
+    timeframe = timeframe.lower().strip()
     
     if timeframe.endswith('d'):
         return timeframe.upper()
+    
+    if timeframe.endswith('h'):
+        return timeframe
+    
+    if timeframe.endswith('m'):
+        # Convert "15m" to "15min" for pandas compatibility
+        return timeframe.replace('m', 'min')
     
     return timeframe
 

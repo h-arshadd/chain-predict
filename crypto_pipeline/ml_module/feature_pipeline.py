@@ -32,20 +32,18 @@ def engineer_features(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         logger.info("Features disabled, returning market data unchanged")
         return df
     
-    df_with_features = df.copy()
-    
     indicators_config = features_config.get("indicators", {})
     if indicators_config:
         logger.info(f"Calculating {len(indicators_config)} indicator types...")
-        df_with_features = _calculate_indicators(df_with_features, indicators_config)
+        df = _calculate_indicators(df, indicators_config)
     
     patterns_config = features_config.get("patterns", {})
     if patterns_config:
         logger.info(f"Calculating {len(patterns_config)} pattern types...")
-        df_with_features = _calculate_patterns(df_with_features, patterns_config)
+        df = _calculate_patterns(df, patterns_config)
     
-    logger.info(f"Features engineered: {df_with_features.shape[1]} total columns")
-    return df_with_features
+    logger.info(f"Features engineered: {df.shape[1]} total columns")
+    return df
 
 
 def _calculate_indicators(df: pd.DataFrame, indicators_config: dict) -> pd.DataFrame:
@@ -53,7 +51,6 @@ def _calculate_indicators(df: pd.DataFrame, indicators_config: dict) -> pd.DataF
     Calculate all configured technical indicators.
     """
     
-    df_ind = df.copy()
     indicator_count = 0
     
     for indicator_name, configs in indicators_config.items():
@@ -68,17 +65,17 @@ def _calculate_indicators(df: pd.DataFrame, indicators_config: dict) -> pd.DataF
             aliases = config_item.get("aliases", {})
             
             try:
-                result = indicator_func(df_ind, **params)
+                result = indicator_func(df, **params)
                 
                 if isinstance(result, dict):
                     for output_key, series in result.items():
                         alias_key = f"{output_key}"
                         alias_name = aliases.get(alias_key, f"ind_{indicator_name}_{output_key}")
-                        df_ind[alias_name] = series
+                        df[alias_name] = series
                         indicator_count += 1
                 else:
                     alias_name = aliases.get("value", f"ind_{indicator_name}")
-                    df_ind[alias_name] = result
+                    df[alias_name] = result
                     indicator_count += 1
                 
                 logger.info(f"  {indicator_name} ({params}) -> {alias_name}")
@@ -88,7 +85,7 @@ def _calculate_indicators(df: pd.DataFrame, indicators_config: dict) -> pd.DataF
                 continue
     
     logger.info(f"Calculated {indicator_count} indicator features")
-    return df_ind
+    return df
 
 
 def _calculate_patterns(df: pd.DataFrame, patterns_config: dict) -> pd.DataFrame:
@@ -96,7 +93,6 @@ def _calculate_patterns(df: pd.DataFrame, patterns_config: dict) -> pd.DataFrame
     Calculate candlestick patterns based on config.
     """
     
-    df_pat = df.copy()
     pattern_count = 0
     
     for pattern_name, config_item in patterns_config.items():
@@ -109,9 +105,9 @@ def _calculate_patterns(df: pd.DataFrame, patterns_config: dict) -> pd.DataFrame
         aliases = config_item.get("aliases", {})
         
         try:
-            result = pattern_func(df_pat)
+            result = pattern_func(df)
             alias_name = aliases.get("pattern", f"pat_{pattern_name}")
-            df_pat[alias_name] = result
+            df[alias_name] = result
             pattern_count += 1
             logger.info(f"  {pattern_name} -> {alias_name}")
             
@@ -120,7 +116,7 @@ def _calculate_patterns(df: pd.DataFrame, patterns_config: dict) -> pd.DataFrame
             continue
     
     logger.info(f"Calculated {pattern_count} pattern features")
-    return df_pat
+    return df
 
 
 def _get_indicator_function(name: str):
@@ -136,16 +132,15 @@ def _get_indicator_function(name: str):
         "BBANDS": overlap_bbands,
         "ATR": volatility_atr,
         "NATR": volatility_natr,
-        "ADX": trend_adx,
+        "ADX": momentum_adx,
         "CCI": momentum_cci,
         "CMO": momentum_cmo,
         "MOM": momentum_mom,
         "ROC": momentum_roc,
         "STOCH": momentum_stoch,
         "STOCHF": momentum_stochf,
-        "TRIX": trend_trix,
-        "WEMA": overlap_wma,
-        "TRADERANGE": volatility_traderange,
+        "TRIX": momentum_trix,
+        "WMA": overlap_wma,
         "HT_TRENDLINE": overlap_ht_trendline,
     }
     
@@ -156,15 +151,21 @@ def _get_pattern_function(name: str):
     """Map pattern name to talib pattern function."""
     
     pattern_map = {
-        "DOJI": pattern_doji,
-        "BULLISH_ENGULFING": pattern_bullish_engulfing,
-        "BEARISH_ENGULFING": pattern_bearish_engulfing,
-        "HAMMER": pattern_hammer,
-        "HANGING_MAN": pattern_hanging_man,
-        "MORNING_STAR": pattern_morning_star,
-        "EVENING_STAR": pattern_evening_star,
-        "BULLISH_HARAMI": pattern_bullish_harami,
-        "BEARISH_HARAMI": pattern_bearish_harami,
+        "DOJI": pattern_cdldoji,
+        "ENGULFING": pattern_cdlengulfing,
+        "HAMMER": pattern_cdlhammer,
+        "HANGING_MAN": pattern_cdlhangingman,
+        "MORNING_STAR": pattern_cdlmorningstar,
+        "EVENING_STAR": pattern_cdleveningstar,
+        "HARAMI": pattern_cdlharami,
+        "HARAMI_CROSS": pattern_cdlharamicross,
+        "SHOOTING_STAR": pattern_cdlshootingstar,
+        "INVERTING_HAMMER": pattern_cdlinvertedhammer,
+        "SPINNINGTOP": pattern_cdlspinningtop,
+        "PIERCING": pattern_cdlpiercing,
+        "DARK_CLOUD_COVER": pattern_cdldarkcloudcover,
+        "KICKING": pattern_cdlkicking,
+        "BREAKAWAY": pattern_cdlbreakaway,
     }
     
     return pattern_map.get(name)

@@ -8,6 +8,13 @@ Utility functions for ML module.
 
 import logging
 import yaml
+import pandas as pd
+from datetime import datetime
+import os
+import psycopg2
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def setup_logging(name: str = "ml_module"):
@@ -63,3 +70,85 @@ def validate_data_config(data_config: dict) -> bool:
         raise ValueError(f"Invalid exchange: {data_config['exchange']}")
     
     return True
+
+
+def get_sentiment_for_period(source: str, start_date: datetime, end_date: datetime, symbol: str = None) -> pd.DataFrame:
+    """
+    Fetch aggregated sentiment data from sentiment_clean PostgreSQL schema.
+    
+    Args:
+        source: "reddit", "twitter", "news" - maps to sentiment source
+        start_date: Start datetime for query
+        end_date: End datetime for query
+        symbol: Optional - symbol like "btc", "eth" to filter specific coin
+        
+    Returns:
+        pd.DataFrame with columns [datetime, sen_{SOURCE}] or None if no data found
+    """
+    
+    logger = logging.getLogger(__name__)
+    
+    # Map symbol to coin table name
+    coin_map = {
+        "btc": "btc",
+        "eth": "eth",
+        "doge": "doge",
+        "ada": "ada",
+        "sol": "sol",
+        "ltc": "ltc",
+        "mina": "mina",
+        "sui": "sui",
+    }
+    
+    if symbol and symbol.lower() in coin_map:
+        coin = coin_map[symbol.lower()]
+    elif symbol:
+        logger.warning(f"Symbol {symbol} not found in sentiment data")
+        return None
+    else:
+        # Default to BTC if no symbol specified
+        coin = "btc"
+    
+    table_name = f"sentiment_clean.{coin}_posts"
+    
+    try:
+        # Open database connection
+        conn = psycopg2.connect(
+            host=os.getenv("DB_HOST"),
+            port=os.getenv("DB_PORT"),
+            dbname=os.getenv("DB_NAME"),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD"),
+        )
+        
+        # Query sentiment aggregated by hour
+        query = f"""
+            SELECT 
+                DATE_TRUNC('1 hour', created_utc) as datetime,
+                AVG(sentiment_score) as sentiment_score,
+                COUNT(*) as post_count
+            FROM {table_name}
+            WHERE created_utc >= %s AND created_utc < %s
+            GROUP BY DATE_TRUNC('1 hour', created_utc)
+            ORDER BY datetime
+        """
+        
+        df = pd.read_sql(query, conn, params=(start_date, end_date))
+        conn.close()
+        
+        if df.empty:
+            logger.warning(f"No sentiment data found for {coin} between {start_date} and {end_date}")
+            return None
+        
+        # Rename column for consistency
+        col_name = f"sen_{source.upper()}"
+        df = df.rename(columns={"sentiment_score": col_name})
+        df = df.drop(columns=["post_count"])
+        df["datetime"] = pd.to_datetime(df["datetime"]).dt.tz_localize(None)
+        
+        logger.info(f"Fetched {len(df)} sentiment records for {coin} from {source}")
+        return df
+        
+    except Exception as e:
+        logger.error(f"Error fetching {source} sentiment: {e}")
+        return None

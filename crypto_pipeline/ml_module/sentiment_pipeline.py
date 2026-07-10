@@ -36,14 +36,15 @@ def collect_sentiment_data(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         logger.warning("No sentiment sources configured")
         return df
     
-    df_with_sentiment = df.copy()
+    # Extract symbol from config data section for sentiment queries
+    symbol = config.get("data", {}).get("symbol", "btc")
     
     sentiment_dfs = []
     for source in sources:
         logger.info(f"Collecting sentiment from {source}...")
         
         try:
-            source_df = _fetch_sentiment_from_source(source, df)
+            source_df = _fetch_sentiment_from_source(source, df, symbol=symbol)
             if source_df is not None:
                 sentiment_dfs.append(source_df)
             else:
@@ -55,27 +56,26 @@ def collect_sentiment_data(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     
     if not sentiment_dfs:
         logger.warning("No sentiment data collected from any source")
-        return df_with_sentiment
+        return df
     
     combined_sentiment = pd.concat(sentiment_dfs, axis=1)
     
     encoding = sentiment_config.get("encoding", "numerical")
     combined_sentiment = _encode_sentiment(combined_sentiment, encoding)
     
-    df_with_sentiment = _merge_sentiment(df_with_sentiment, combined_sentiment)
+    df = _merge_sentiment(df, combined_sentiment)
     
-    logger.info(f"Sentiment data merged: {df_with_sentiment.shape[1]} total columns")
-    return df_with_sentiment
+    logger.info(f"Sentiment data merged: {df.shape[1]} total columns")
+    return df
 
 
-def _fetch_sentiment_from_source(source: str, df: pd.DataFrame) -> pd.DataFrame:
+def _fetch_sentiment_from_source(source: str, df: pd.DataFrame, symbol: str = None) -> pd.DataFrame:
     """
-    Fetch sentiment data from a source (twitter, news, reddit, etc).
+    Fetch sentiment data from a source (reddit, twitter, news, etc).
+    Queries sentiment_clean PostgreSQL schema.
     """
     
     logger.info(f"  Fetching {source} sentiment data...")
-    
-    from sentiment_pipeline.sentiment_model import get_sentiment_for_period
     
     if "datetime" not in df.columns:
         raise ValueError("DataFrame must have datetime column for sentiment merge")
@@ -84,10 +84,13 @@ def _fetch_sentiment_from_source(source: str, df: pd.DataFrame) -> pd.DataFrame:
     end_date = df["datetime"].max()
     
     try:
+        from crypto_pipeline.utils.ml_utils import get_sentiment_for_period
+        
         sentiment_df = get_sentiment_for_period(
             source=source,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            symbol=symbol
         )
         
         if sentiment_df is None or sentiment_df.empty:
@@ -160,7 +163,7 @@ def _merge_sentiment(market_df: pd.DataFrame, sentiment_df: pd.DataFrame) -> pd.
     sentiment_cols = sentiment_df.columns
     for col in sentiment_cols:
         if col in merged.columns:
-            merged[col] = merged[col].fillna(method="ffill")
+            merged[col] = merged[col].ffill()
     
     merged = merged.reset_index()
     
