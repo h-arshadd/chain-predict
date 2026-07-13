@@ -1,0 +1,57 @@
+# preprocessing_lab/config.yaml
+#
+# This is the ONLY file you touch to switch preprocessing methods.
+# main.py reads "method" below, looks it up in the registry, and runs it.
+# No code changes needed.
+
+data:
+  feature_columns:
+    - open
+    - high
+    - low
+    - close
+    - volume
+    - ind_EMA
+    - ind_RSI_14
+    - ind_MACD_12_26_9
+    - ind_MACD_SIGNAL_12_26_9
+    - ind_MACD_hist
+    - pat_DOJI
+    - pat_ENGULFING
+
+# ---- change this one line to switch methods ----
+# options:
+#   none
+#   standard_scaler | minmax_scaler | robust_scaler | maxabs_scaler | quantile_transformer
+#   power_transformer | normalizer | rolling_zscore
+#   fractional_differencing
+#   winsorization | log_transform | gaussian_quantile_transform
+method: "standard_scaler"
+
+# per-method extra parameters. Only the keys relevant to the chosen
+# method are used; irrelevant keys are ignored.
+params: {}
+# examples for methods that take params (uncomment the block matching
+# your chosen method above):
+#
+# method: "rolling_zscore"
+# params:
+#   window: 168
+#
+# method: "fractional_differencing"
+# params:
+#   d: 0.4
+#   threshold: 0.0001
+#
+# method: "winsorization"
+# params:
+#   lower_pct: 0.01
+#   upper_pct: 0.99
+#
+# method: "quantile_transformer"
+# params:
+#   n_quantiles: 1000
+#   output_distribution: "uniform"
+
+output:
+  dir: "outputs"
