@@ -1,6 +1,6 @@
 # crypto_pipeline/ml_module/config.yaml
 
-model_type: regression  # regression | classification | timeseries
+model_type: classification  # regression | classification | timeseries
 
 data:
   enabled: true
@@ -46,15 +46,18 @@ features:
         pattern: pat_ENGULFING
 
 sentiment:
-  enabled: true  # Set to false to skip sentiment collection
+  enabled: false  # Set to false to skip sentiment collection
   source:
     - reddit
   encoding: numerical  # numerical (-1/0/1) | onehot
 
 target:
-  type: return  # regression: return | log_return
-                # classification: binary | threshold
-  horizon: 1
-  filter_noise: true
-  noise_method: threshold  # threshold | zscore | quantile
-  noise_threshold: 0.001
+  # regression -> log return (future close vs current close)
+  # classification -> Triple Barrier Labeling: -1/0/1 based on whether price
+  # hits the upper (take-profit) or lower (stop-loss) barrier first within
+  # `horizon` candles. Neither hit within horizon -> 0.
+  horizon: 4
+  upper_threshold: 0.001   # % above entry to count as "up" (take-profit)
+  lower_threshold: -0.001  # % below entry to count as "down" (stop-loss)
+  filter_noise: true       # regression only
+  noise_threshold: 0.001   # regression only

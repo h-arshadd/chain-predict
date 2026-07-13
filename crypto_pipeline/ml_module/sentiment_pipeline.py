@@ -84,7 +84,7 @@ def _fetch_sentiment_from_source(source: str, df: pd.DataFrame, symbol: str = No
     end_date = df["datetime"].max()
     
     try:
-        from crypto_pipeline.utils.ml_utils import get_sentiment_for_period
+        from crypto_pipeline.ml_module.ml_utils import get_sentiment_for_period
         
         sentiment_df = get_sentiment_for_period(
             source=source,
@@ -114,14 +114,10 @@ def _encode_sentiment(df: pd.DataFrame, encoding: str) -> pd.DataFrame:
     df_encoded = df  # CHANGED: Direct assignment instead of copy
     
     if encoding == "numerical":
-        for col in df_encoded.columns:
-            df_encoded[col] = df_encoded[col].map({
-                "bullish": 1,
-                "neutral": 0,
-                "bearish": -1,
-            })
-            
-        logger.info("Sentiment encoded as numerical: bullish=1, neutral=0, bearish=-1")
+        # sen_{SOURCE} columns already come back from get_sentiment_for_period
+        # as bullish=1/neutral=0/bearish=-1 averaged per hour, so there's
+        # nothing left to map here.
+        logger.info("Sentiment already numerical (bullish=1, neutral=0, bearish=-1), no mapping needed")
         
     elif encoding == "onehot":
         for col in df_encoded.columns:
@@ -160,11 +156,8 @@ def _merge_sentiment(market_df: pd.DataFrame, sentiment_df: pd.DataFrame) -> pd.
     
     merged = market_indexed.join(sentiment_indexed, how="left")
     
-    sentiment_cols = sentiment_df.columns
-    for col in sentiment_cols:
-        if col in merged.columns:
-            merged[col] = merged[col].ffill()
-    
+    # Hours with no posts stay NaN rather than being ffilled -- we don't
+    # want to invent sentiment for a period with no actual data.
     merged = merged.reset_index()
     
     logger.info(f"Merged sentiment on datetime: {merged.shape}")

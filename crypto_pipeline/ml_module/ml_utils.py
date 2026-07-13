@@ -1,4 +1,4 @@
-# crypto_pipeline/utils/ml_utils.py
+# crypto_pipeline/ml_module/ml_utils.py
 
 """
 ml_utils.py
@@ -121,15 +121,24 @@ def get_sentiment_for_period(source: str, start_date: datetime, end_date: dateti
             password=os.getenv("DB_PASSWORD"),
         )
         
-        # Query sentiment aggregated by hour
+        # Query sentiment aggregated by hour.
+        # sentiment_label (Bullish/Neutral/Bearish) is mapped to 1/0/-1 per
+        # post, then averaged per hour -> continuous value in [-1, 1]
+        # reflecting how bullish/bearish that hour leaned.
         query = f"""
             SELECT 
-                DATE_TRUNC('1 hour', created_utc) as datetime,
-                AVG(sentiment_score) as sentiment_score,
+                DATE_TRUNC('hour', created_utc) as datetime,
+                AVG(
+                    CASE LOWER(sentiment_label)
+                        WHEN 'bullish' THEN 1
+                        WHEN 'neutral' THEN 0
+                        WHEN 'bearish' THEN -1
+                    END
+                ) as sentiment_score,
                 COUNT(*) as post_count
             FROM {table_name}
             WHERE created_utc >= %s AND created_utc < %s
-            GROUP BY DATE_TRUNC('1 hour', created_utc)
+            GROUP BY DATE_TRUNC('hour', created_utc)
             ORDER BY datetime
         """
         

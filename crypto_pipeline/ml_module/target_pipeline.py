@@ -3,8 +3,8 @@
 """
 target_pipeline.py
 ------------------
-Generates prediction targets for regression and classification tasks.
-Handles return calculation, log returns, noise filtering, and binary classification targets.
+Generates prediction targets: log return for regression,
+-1/0/1 (threshold-based) for classification.
 """
 
 import logging
@@ -60,112 +60,99 @@ def generate_target(df: pd.DataFrame, config: dict) -> pd.DataFrame:
 
 def _generate_regression_target(df: pd.DataFrame, target_config: dict) -> pd.DataFrame:
     """
-    Generate regression targets (continuous values).
+    Generate regression target: log return, current close vs close
+    `horizon` candles in the future.
     """
     
-    target_type = target_config.get("type", "return")
     horizon = target_config.get("horizon", 1)
     
     if "close" not in df.columns:
         raise ValueError("close price column required for target generation")
     
-    future_close = df["close"].shift(-horizon)
     current_close = df["close"]
+    future_close = df["close"].shift(-horizon)
     
-    if target_type == "return":
-        df["target"] = (future_close - current_close) / current_close
-        logger.info(f"Regression target: simple return (horizon={horizon})")
-        
-    elif target_type == "log_return":
-        df["target"] = np.log(future_close / current_close)
-        logger.info(f"Regression target: log return (horizon={horizon})")
-        
-    else:
-        raise ValueError(f"Unknown regression target type: {target_type}")
+    df["target"] = np.log(future_close / current_close)
+    logger.info(f"Regression target: log return, future close (horizon={horizon})")
     
     if target_config.get("filter_noise", False):
-        noise_method = target_config.get("noise_method", "threshold")
-        df = _filter_noise(df, noise_method, target_config)
+        keep_mask = _noise_keep_mask(df["target"], target_config)
+        df = df[keep_mask]
     
     return df
 
 
 def _generate_classification_target(df: pd.DataFrame, target_config: dict) -> pd.DataFrame:
     """
-    Generate classification targets (binary labels).
+    Generate classification target using Triple Barrier Labeling:
+    -1 (down) / 0 (flat) / 1 (up).
+
+    Looking forward up to `horizon` candles from each row, checks whether
+    price hits the upper barrier (take-profit) or lower barrier (stop-loss)
+    first. If neither is hit within the horizon, label is 0 (flat/timeout).
     """
     
-    target_type = target_config.get("type", "binary")
     horizon = target_config.get("horizon", 1)
-    threshold = target_config.get("threshold", 0.0)
+    upper_threshold = target_config.get("upper_threshold", 0.001)
+    lower_threshold = target_config.get("lower_threshold", -0.001)
     
-    if "close" not in df.columns:
-        raise ValueError("close price column required for target generation")
+    required_cols = {"close", "high", "low"}
+    if not required_cols.issubset(df.columns):
+        raise ValueError(f"Triple barrier labeling requires columns: {required_cols}")
     
-    future_close = df["close"].shift(-horizon)
-    current_close = df["close"]
-    returns = (future_close - current_close) / current_close
+    close = df["close"].values
+    high = df["high"].values
+    low = df["low"].values
+    n = len(df)
     
-    if target_type == "binary":
-        df["target"] = (returns > threshold).astype(int)
-        logger.info(f"Classification target: binary (0/1, threshold={threshold}, horizon={horizon})")
+    labels = np.zeros(n)
+    labels[:] = np.nan  # rows too close to the end (no full horizon ahead) stay NaN
+    
+    for i in range(n - horizon):
+        entry_price = close[i]
+        upper_barrier = entry_price * (1 + upper_threshold)
+        lower_barrier = entry_price * (1 + lower_threshold)
         
-    elif target_type == "threshold":
-        df["target"] = np.where(
-            returns > threshold, 1,
-            np.where(returns < -threshold, -1, 0)
-        )
-        logger.info(f"Classification target: threshold-based (-1/0/1, threshold={threshold}, horizon={horizon})")
+        label = 0  # default: neither barrier hit within horizon
+        for step in range(1, horizon + 1):
+            future_high = high[i + step]
+            future_low = low[i + step]
+            
+            hit_upper = future_high >= upper_barrier
+            hit_lower = future_low <= lower_barrier
+            
+            if hit_upper and hit_lower:
+                # Both hit in the same candle -- can't tell which came first
+                # from OHLC alone, so treat as flat/ambiguous rather than guess.
+                label = 0
+                break
+            elif hit_upper:
+                label = 1
+                break
+            elif hit_lower:
+                label = -1
+                break
         
-    else:
-        raise ValueError(f"Unknown classification target type: {target_type}")
+        labels[i] = label
     
-    if target_config.get("filter_noise", False):
-        noise_method = target_config.get("noise_method", "threshold")
-        df = _filter_noise(df, noise_method, target_config)
+    df["target"] = labels
+    logger.info(
+        f"Classification target: Triple Barrier Labeling (-1/0/1, "
+        f"upper={upper_threshold}, lower={lower_threshold}, horizon={horizon})"
+    )
     
     return df
 
 
-def _filter_noise(df: pd.DataFrame, method: str, config: dict) -> pd.DataFrame:
+def _noise_keep_mask(values: pd.Series, config: dict) -> pd.Series:
     """
-    Filter noisy signals from target.
+    Build a boolean mask marking which rows to KEEP, based on the magnitude
+    of `values` (returns or target). True = keep, False = noise, drop it.
+    A row is kept if its absolute value is at least noise_threshold.
     """
     
-    initial_count = len(df)
+    noise_threshold = config.get("noise_threshold", 0.001)
+    mask = values.abs() >= noise_threshold
+    logger.info(f"Noise filtering (threshold={noise_threshold}): keeping {mask.sum()}/{len(mask)} rows")
     
-    if "target" not in df.columns:
-        logger.warning("Target column not found, skipping noise filtering")
-        return df
-    
-    if method == "threshold":
-        noise_threshold = config.get("noise_threshold", 0.001)
-        mask = df["target"].abs() >= noise_threshold
-        df = df[mask]
-        removed = initial_count - len(df)
-        logger.info(f"Noise filtering (threshold={noise_threshold}): removed {removed} rows")
-        
-    elif method == "zscore":
-        zscore_threshold = config.get("zscore_threshold", 3.0)
-        targets = df["target"]
-        z_scores = np.abs((targets - targets.mean()) / targets.std())
-        mask = z_scores <= zscore_threshold
-        df = df[mask]
-        removed = initial_count - len(df)
-        logger.info(f"Noise filtering (z-score={zscore_threshold}): removed {removed} rows")
-        
-    elif method == "quantile":
-        lower_q = config.get("lower_quantile", 0.05)
-        upper_q = config.get("upper_quantile", 0.95)
-        targets = df["target"]
-        lower_bound = targets.quantile(lower_q)
-        upper_bound = targets.quantile(upper_q)
-        mask = (targets >= lower_bound) & (targets <= upper_bound)
-        df = df[mask]
-        removed = initial_count - len(df)
-        logger.info(f"Noise filtering (quantile {lower_q}-{upper_q}): removed {removed} rows")
-        
-    else:
-        logger.warning(f"Unknown noise filter method: {method}")
-    
-    return df
+    return mask
