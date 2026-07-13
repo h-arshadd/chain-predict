@@ -1,0 +1,5 @@
+{
+  "method": "simple_differencing",
+  "order": 1,
+  "note": "first 1 row(s) are NaN by construction"
+}

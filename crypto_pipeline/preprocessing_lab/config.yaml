@@ -26,7 +26,7 @@ data:
 #   power_transformer | normalizer | rolling_zscore
 #   fractional_differencing
 #   winsorization | log_transform | gaussian_quantile_transform
-method: "standard_scaler"
+method: "gaussian_quantile_transform"
 
 # per-method extra parameters. Only the keys relevant to the chosen
 # method are used; irrelevant keys are ignored.

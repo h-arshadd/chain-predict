@@ -28,18 +28,11 @@ from crypto_pipeline.preprocessing_lab.scalers import (
 from crypto_pipeline.preprocessing_lab.stationarity import (
     apply_fractional_differencing,
     apply_simple_differencing,
-    apply_log_returns,
-    apply_pct_change,
-    apply_moving_average_detrend,
 )
 from crypto_pipeline.preprocessing_lab.distribution import (
     apply_winsorization,
     apply_log_transform,
     apply_gaussian_quantile_transform,
-    apply_box_cox,
-    apply_sqrt_transform,
-    apply_sigma_clipping,
-    apply_iqr_clipping,
 )
 
 
@@ -69,19 +62,12 @@ PREPROCESSING_REGISTRY: Dict[str, Callable] = {
     "normalizer": apply_normalizer,
     "rolling_zscore": apply_rolling_zscore,
 
-    # stationarity -- required 1 + extra 4
+    # stationarity
     "fractional_differencing": apply_fractional_differencing,
     "simple_differencing": apply_simple_differencing,
-    "log_returns": apply_log_returns,
-    "pct_change": apply_pct_change,
-    "moving_average_detrend": apply_moving_average_detrend,
 
-    # distribution processing -- required 3 + extra 4
+    # distribution processing
     "winsorization": apply_winsorization,
     "log_transform": apply_log_transform,
     "gaussian_quantile_transform": apply_gaussian_quantile_transform,
-    "box_cox": apply_box_cox,
-    "sqrt_transform": apply_sqrt_transform,
-    "sigma_clipping": apply_sigma_clipping,
-    "iqr_clipping": apply_iqr_clipping,
 }

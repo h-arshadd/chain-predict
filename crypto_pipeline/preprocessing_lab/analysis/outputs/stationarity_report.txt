@@ -1,0 +1,278 @@
+================================================================================
+STATIONARITY ANALYSIS REPORT
+================================================================================
+
+Methods Analyzed: 14
+
+--------------------------------------------------------------------------------
+COLUMN: close
+--------------------------------------------------------------------------------
+
+Method                         ADF             KPSS            Verdict              Trend Pres. 
+--------------------------------------------------------------------------------------------
+fractional_differencing        ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.88        
+gaussian_quantile_transform    ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.92        
+log_transform                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.99        
+maxabs_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+minmax_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+none                           ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+normalizer                     ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.74        
+power_transformer              ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+quantile_transformer           ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.97        
+robust_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+rolling_zscore                 ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.70        
+simple_differencing            ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.70        
+standard_scaler                ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+winsorization                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.99        
+
+--------------------------------------------------------------------------------
+COLUMN: high
+--------------------------------------------------------------------------------
+
+Method                         ADF             KPSS            Verdict              Trend Pres. 
+--------------------------------------------------------------------------------------------
+fractional_differencing        ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.87        
+gaussian_quantile_transform    ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.92        
+log_transform                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.99        
+maxabs_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+minmax_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+none                           ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+normalizer                     ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.70        
+power_transformer              ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+quantile_transformer           ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.98        
+robust_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+rolling_zscore                 ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.71        
+simple_differencing            ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.68        
+standard_scaler                ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+winsorization                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.99        
+
+--------------------------------------------------------------------------------
+COLUMN: ind_EMA
+--------------------------------------------------------------------------------
+
+Method                         ADF             KPSS            Verdict              Trend Pres. 
+--------------------------------------------------------------------------------------------
+fractional_differencing        ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.90        
+gaussian_quantile_transform    ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.91        
+log_transform                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.99        
+maxabs_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+minmax_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+none                           ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+normalizer                     ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.65        
+power_transformer              ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+quantile_transformer           ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.98        
+robust_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+rolling_zscore                 ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.63        
+simple_differencing            ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.66        
+standard_scaler                ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+winsorization                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+
+--------------------------------------------------------------------------------
+COLUMN: ind_MACD_12_26_9
+--------------------------------------------------------------------------------
+
+Method                         ADF             KPSS            Verdict              Trend Pres. 
+--------------------------------------------------------------------------------------------
+fractional_differencing        ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.92        
+gaussian_quantile_transform    ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.99        
+log_transform                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+maxabs_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+minmax_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+none                           ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+normalizer                     ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.99        
+power_transformer              ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+quantile_transformer           ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.95        
+robust_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+rolling_zscore                 ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.87        
+simple_differencing            ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.75        
+standard_scaler                ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+winsorization                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.98        
+
+--------------------------------------------------------------------------------
+COLUMN: ind_MACD_SIGNAL_12_26_9
+--------------------------------------------------------------------------------
+
+Method                         ADF             KPSS            Verdict              Trend Pres. 
+--------------------------------------------------------------------------------------------
+fractional_differencing        ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.91        
+gaussian_quantile_transform    ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.99        
+log_transform                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+maxabs_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+minmax_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+none                           ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+normalizer                     ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.99        
+power_transformer              ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+quantile_transformer           ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.95        
+robust_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+rolling_zscore                 ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.87        
+simple_differencing            ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.74        
+standard_scaler                ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+winsorization                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.98        
+
+--------------------------------------------------------------------------------
+COLUMN: ind_MACD_hist
+--------------------------------------------------------------------------------
+
+Method                         ADF             KPSS            Verdict              Trend Pres. 
+--------------------------------------------------------------------------------------------
+fractional_differencing        ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.93        
+gaussian_quantile_transform    ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.99        
+log_transform                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+maxabs_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+minmax_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+none                           ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+normalizer                     ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.99        
+power_transformer              ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+quantile_transformer           ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.96        
+robust_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+rolling_zscore                 ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.90        
+simple_differencing            ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.77        
+standard_scaler                ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+winsorization                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.96        
+
+--------------------------------------------------------------------------------
+COLUMN: ind_RSI_14
+--------------------------------------------------------------------------------
+
+Method                         ADF             KPSS            Verdict              Trend Pres. 
+--------------------------------------------------------------------------------------------
+fractional_differencing        ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.82        
+gaussian_quantile_transform    ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.98        
+log_transform                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.97        
+maxabs_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+minmax_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+none                           ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+normalizer                     ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.94        
+power_transformer              ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+quantile_transformer           ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.98        
+robust_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+rolling_zscore                 ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.89        
+simple_differencing            ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.67        
+standard_scaler                ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 1.00        
+winsorization                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.96        
+
+--------------------------------------------------------------------------------
+COLUMN: low
+--------------------------------------------------------------------------------
+
+Method                         ADF             KPSS            Verdict              Trend Pres. 
+--------------------------------------------------------------------------------------------
+fractional_differencing        ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.89        
+gaussian_quantile_transform    ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.93        
+log_transform                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.99        
+maxabs_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+minmax_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+none                           ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+normalizer                     ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.78        
+power_transformer              ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+quantile_transformer           ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.98        
+robust_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+rolling_zscore                 ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.74        
+simple_differencing            ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.72        
+standard_scaler                ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+winsorization                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.99        
+
+--------------------------------------------------------------------------------
+COLUMN: open
+--------------------------------------------------------------------------------
+
+Method                         ADF             KPSS            Verdict              Trend Pres. 
+--------------------------------------------------------------------------------------------
+fractional_differencing        ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.88        
+gaussian_quantile_transform    ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.92        
+log_transform                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.99        
+maxabs_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+minmax_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+none                           ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+normalizer                     ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.74        
+power_transformer              ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+quantile_transformer           ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.97        
+robust_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+rolling_zscore                 ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.70        
+simple_differencing            ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.70        
+standard_scaler                ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+winsorization                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.99        
+
+--------------------------------------------------------------------------------
+COLUMN: pat_DOJI
+--------------------------------------------------------------------------------
+
+Method                         ADF             KPSS            Verdict              Trend Pres. 
+--------------------------------------------------------------------------------------------
+fractional_differencing        ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+gaussian_quantile_transform    ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+log_transform                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+maxabs_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+minmax_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+none                           ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+normalizer                     ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+power_transformer              ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+quantile_transformer           ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+robust_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+rolling_zscore                 ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+simple_differencing            ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+standard_scaler                ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+winsorization                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+
+--------------------------------------------------------------------------------
+COLUMN: pat_ENGULFING
+--------------------------------------------------------------------------------
+
+Method                         ADF             KPSS            Verdict              Trend Pres. 
+--------------------------------------------------------------------------------------------
+fractional_differencing        ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+gaussian_quantile_transform    ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+log_transform                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+maxabs_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+minmax_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+none                           ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+normalizer                     ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+power_transformer              ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+quantile_transformer           ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+robust_scaler                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+rolling_zscore                 ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+simple_differencing            ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+standard_scaler                ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+winsorization                  ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) nan         
+
+--------------------------------------------------------------------------------
+COLUMN: volume
+--------------------------------------------------------------------------------
+
+Method                         ADF             KPSS            Verdict              Trend Pres. 
+--------------------------------------------------------------------------------------------
+fractional_differencing        ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.94        
+gaussian_quantile_transform    ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.88        
+log_transform                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.94        
+maxabs_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+minmax_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+none                           ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+normalizer                     ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.99        
+power_transformer              ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.88        
+quantile_transformer           ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.78        
+robust_scaler                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+rolling_zscore                 ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.89        
+simple_differencing            ✗ NON-S         ✓ STAT          TREND STATIONARY (detrend needed) 0.86        
+standard_scaler                ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 1.00        
+winsorization                  ✗ NON-S         ✗ NON-S         DEFINITELY NON-STATIONARY 0.88        
+
+================================================================================
+RECOMMENDATIONS
+================================================================================
+
+Best for Stationarity:
+  fractional_differencing        0.00%
+  gaussian_quantile_transform    0.00%
+  log_transform                  0.00%
+
+Best for Trend Preservation:
+  maxabs_scaler                  100.00%
+  minmax_scaler                  100.00%
+  none                           100.00%
+
+Best Balanced (Stationarity + Trend Preservation):
+  fractional_differencing        0.00%
+  gaussian_quantile_transform    0.00%
+  log_transform                  0.00%
+
+================================================================================
