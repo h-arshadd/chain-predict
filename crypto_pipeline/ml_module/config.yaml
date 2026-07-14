@@ -1,6 +1,6 @@
 # crypto_pipeline/ml_module/config.yaml
 
-model_type: classification  # regression | classification | timeseries
+model_type: regression  # regression | classification | timeseries
 
 data:
   enabled: true

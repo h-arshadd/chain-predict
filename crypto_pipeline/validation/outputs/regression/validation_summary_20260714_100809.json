@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-07-14T10:08:09.228786",
+  "validation_type": "regression",
+  "dataset_rows": 8756,
+  "signal_counts": {
+    "0": 4058,
+    "1": 2360,
+    "-1": 2338
+  },
+  "backtest_summary": {
+    "initial_balance": 10000.0,
+    "final_balance": 11363.01163261782,
+    "total_net_profit": 1363.0116326178195,
+    "roi_percent": 13.630116326178197,
+    "total_trades": 507,
+    "wins": 236,
+    "losses": 271,
+    "win_rate": 0.46548323471400394,
+    "max_drawdown": -0.03275648862073573
+  },
+  "verdict": "\u2713 PROFITABLE - Targets appear valid!"
+}

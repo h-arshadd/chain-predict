@@ -1,7 +1,0 @@
-{
-  "method": "fractional_differencing",
-  "d": 0.4,
-  "threshold": 0.0001,
-  "weight_length": 282,
-  "note": "first (weight_length - 1) rows are NaN by construction"
-}

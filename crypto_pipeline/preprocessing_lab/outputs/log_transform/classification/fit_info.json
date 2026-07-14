@@ -1,0 +1,4 @@
+{
+  "method": "log_transform",
+  "offset": 1e-08
+}

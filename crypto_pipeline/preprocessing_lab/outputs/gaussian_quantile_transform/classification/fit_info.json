@@ -1,0 +1,4 @@
+{
+  "method": "gaussian_quantile_transform",
+  "n_quantiles": 1000
+}

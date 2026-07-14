@@ -1,0 +1,36 @@
+# validation/config.yaml
+# Configuration for target validation via backtesting
+
+backtest_config:
+  initial_balance: 10000
+  position_size:
+    type: fixed_percentage
+    value: 10  # 10% of balance per trade
+  
+  take_profit:
+    type: percentage
+    value: 2  # 2%
+  
+  stop_loss:
+    type: percentage
+    value: 1  # 1%
+  
+  commission: 0.05  # 0.05%
+  slippage: 0.02    # 0.02%
+  
+  allow_long: true
+  allow_short: true
+  
+  entry_price: next_open
+  exit_price: next_open
+  max_open_positions: 1
+
+# Which dataset to validate (regression or classification)
+validation_type: regression  # or "regression"
+
+# Output settings
+output:
+  dir: outputs
+  save_results: true
+  save_equity_curve: true
+  save_trade_ledger: true

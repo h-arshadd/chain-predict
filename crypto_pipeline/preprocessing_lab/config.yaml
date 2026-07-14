@@ -1,9 +1,31 @@
 # preprocessing_lab/config.yaml
-#
-# This is the ONLY file you touch to switch preprocessing methods.
-# main.py reads "method" below, looks it up in the registry, and runs it.
-# No code changes needed.
 
+# Which preprocessing method(s) to run. List all of them to run every
+# method in one go, or leave just one if you only want that one.
+methods:
+  - none
+  - standard_scaler
+  - minmax_scaler
+  - robust_scaler
+  - maxabs_scaler
+  - quantile_transformer
+  - power_transformer
+  - normalizer
+  - rolling_zscore
+  - fractional_differencing
+  - simple_differencing
+  - winsorization
+  - log_transform
+  - gaussian_quantile_transform
+
+# Which target(s) to generate: regression (log return) and/or
+# classification (Triple Barrier Labeling -1/0/1). Independent of
+# ml_module/config.yaml's own model_type -- this overrides it here.
+target_types:
+  - regression
+  - classification
+
+# Dataset configuration
 data:
   feature_columns:
     - open
@@ -19,39 +41,72 @@ data:
     - pat_DOJI
     - pat_ENGULFING
 
-# ---- change this one line to switch methods ----
-# options:
-#   none
-#   standard_scaler | minmax_scaler | robust_scaler | maxabs_scaler | quantile_transformer
-#   power_transformer | normalizer | rolling_zscore
-#   fractional_differencing
-#   winsorization | log_transform | gaussian_quantile_transform
-method: "gaussian_quantile_transform"
+# Per-method column override. Some methods can't handle certain columns
+# (e.g. log_transform needs positive values -- MACD/MACD signal/MACD hist
+# are signed, and candlestick pattern columns are -100/0/100, so both are
+# excluded here). If a method isn't listed, it uses data.feature_columns
+# above as-is.
+method_feature_columns:
+  log_transform:
+    - open
+    - high
+    - low
+    - close
+    - volume
+    - ind_EMA
+    - ind_RSI_14
 
-# per-method extra parameters. Only the keys relevant to the chosen
-# method are used; irrelevant keys are ignored.
-params: {}
-# examples for methods that take params (uncomment the block matching
-# your chosen method above):
-#
-# method: "rolling_zscore"
-# params:
-#   window: 168
-#
-# method: "fractional_differencing"
-# params:
-#   d: 0.4
-#   threshold: 0.0001
-#
-# method: "winsorization"
-# params:
-#   lower_pct: 0.01
-#   upper_pct: 0.99
-#
-# method: "quantile_transformer"
-# params:
-#   n_quantiles: 1000
-#   output_distribution: "uniform"
-
+# Output directory
 output:
-  dir: "outputs"
+  dir: outputs
+
+# Method-specific parameters (include ALL possible, code filters for each method)
+params:
+  # Fractional Differencing params
+  d: 0.2
+  threshold: 0.001
+  
+  # Simple Differencing params
+  order: 1
+  
+  # Scaler params
+  feature_range: [0, 1]
+  n_quantiles: 1000
+  norm: l2
+  window: 96
+  
+  # Distribution params
+  lower_pct: 0.01
+  upper_pct: 0.99
+  offset: 0.00000001
+  
+  # Other
+  random_state: 42
+  method: yeo-johnson
+
+# NOTES:
+# 'target_types' - list one or both of: regression, classification.
+#   Output saved separately per type under outputs/<method>/<target_type>/.
+#
+# 'method_feature_columns' - optional per-method override of which columns
+# get transformed. Leave a method out of this section to use the default
+# data.feature_columns for it.
+#
+# 'methods' - remove entries from the list to skip them, or leave just
+# one if you only want a single method run. Available:
+# - fractional_differencing (uses: d, threshold)
+# - simple_differencing (uses: order)
+# - standard_scaler (uses: nothing)
+# - minmax_scaler (uses: feature_range)
+# - robust_scaler (uses: nothing)
+# - maxabs_scaler (uses: nothing)
+# - quantile_transformer (uses: n_quantiles, random_state)
+# - power_transformer (uses: method, random_state)
+# - normalizer (uses: norm)
+# - rolling_zscore (uses: window)
+# - winsorization (uses: lower_pct, upper_pct)
+# - log_transform (uses: offset)
+# - gaussian_quantile_transform (uses: n_quantiles, random_state)
+# - none (uses: nothing)
+#
+# The code automatically filters and passes only the params each method needs.

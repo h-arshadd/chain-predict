@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-07-14T10:28:48.423216",
+  "validation_type": "regression",
+  "dataset_rows": 8756,
+  "signal_counts": {
+    "0": 4058,
+    "1": 2360,
+    "-1": 2338
+  },
+  "backtest_summary": {
+    "initial_balance": 10000.0,
+    "final_balance": 9022.330315244846,
+    "total_net_profit": -977.6696847551539,
+    "roi_percent": -9.77669684755154,
+    "total_trades": 573,
+    "wins": 184,
+    "losses": 389,
+    "win_rate": 0.32111692844677137,
+    "max_drawdown": -0.1093775855060881
+  },
+  "verdict": "\u2717 LOSING MONEY even with perfect-foresight timing -- this is a strong signal of a real arithmetic bug in target computation (e.g. inverted sign, reversed shift direction, wrong barrier logic). Recommend an independent recomputation/diff of target values before doing anything else."
+}

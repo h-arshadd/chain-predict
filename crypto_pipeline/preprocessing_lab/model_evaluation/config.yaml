@@ -1,0 +1,39 @@
+# preprocessing_lab/model_evaluation/config.yaml
+
+# Which preprocessing methods to evaluate. Must already exist under
+# preprocessing_lab/outputs/<method>/<target_type>/transformed.csv
+# (i.e. you already ran preprocessing_lab/main.py for these).
+methods:
+  - none
+  - standard_scaler
+  - minmax_scaler
+  - robust_scaler
+  - maxabs_scaler
+  - quantile_transformer
+  - power_transformer
+  - normalizer
+  - rolling_zscore
+  - fractional_differencing
+  - simple_differencing
+  - winsorization
+  - log_transform
+  - gaussian_quantile_transform
+
+# Which target(s) to evaluate models on.
+target_types:
+  - regression
+  - classification
+
+# Time-based split (never shuffled -- this is time series data).
+# Ratios must sum to 1.0.
+split:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+
+# Preprocessing outputs directory (relative to preprocessing_lab/)
+preprocessing_outputs_dir: outputs
+
+# Where to save evaluation results (relative to model_evaluation/)
+output:
+  dir: outputs
