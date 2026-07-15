@@ -26,7 +26,7 @@ backtest_config:
   max_open_positions: 1
 
 # Which dataset to validate (regression or classification)
-validation_type: regression  # or "regression"
+validation_type: classification  # or "regression"
 
 # Output settings
 output:

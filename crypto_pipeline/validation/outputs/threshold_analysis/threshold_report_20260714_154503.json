@@ -1,0 +1,70 @@
+{
+  "regression": {
+    "label": "REGRESSION",
+    "upper_threshold": 0.001,
+    "lower_threshold": -0.001,
+    "near_pct": 0.2,
+    "total_rows": 8756,
+    "counts": {
+      "long": 3819,
+      "short": 3657,
+      "flat": 1280
+    },
+    "buckets": {
+      "long": {
+        "count": 3819,
+        "min": 0.0010009415249322138,
+        "mean": 0.006996295719924996,
+        "median": 0.004947831120554086,
+        "max": 0.09331267034334768,
+        "borderline_count": 119,
+        "borderline_pct": 3.1159989526053944
+      },
+      "short": {
+        "count": 3657,
+        "min": -0.06292151312979329,
+        "mean": -0.007375261255281484,
+        "median": -0.004789673453535555,
+        "max": -0.0010007111259020594,
+        "borderline_count": 116,
+        "borderline_pct": 3.171998906207274
+      }
+    },
+    "borderline_pct_overall": 3.1433921883360085,
+    "verdict": "Signals clear threshold comfortably -- could LOWER it to catch more real moves, if win-rate/ROI support it."
+  },
+  "classification": {
+    "label": "CLASSIFICATION",
+    "upper_threshold": 0.001,
+    "lower_threshold": -0.001,
+    "near_pct": 0.2,
+    "total_rows": 8756,
+    "counts": {
+      "long": 2360,
+      "short": 2338,
+      "flat": 4058
+    },
+    "buckets": {
+      "long": {
+        "count": 2359,
+        "min": -0.04028872929361324,
+        "mean": 0.0029309572361741333,
+        "median": 0.0022280843423456613,
+        "max": 0.0864694542602114,
+        "borderline_count": 84,
+        "borderline_pct": 3.5608308605341246
+      },
+      "short": {
+        "count": 2337,
+        "min": -0.06292151312979329,
+        "mean": -0.0031596287284277,
+        "median": -0.002052011394084438,
+        "max": 0.058868311414451376,
+        "borderline_count": 85,
+        "borderline_pct": 3.6371416345742404
+      }
+    },
+    "borderline_pct_overall": 3.5972754363558965,
+    "verdict": "Signals clear threshold comfortably -- could LOWER it to catch more real moves, if win-rate/ROI support it."
+  }
+}

@@ -134,46 +134,76 @@ def validate_target_distribution(df: pd.DataFrame, model_type: str) -> dict:
     return validation_results
 
 
-def convert_regression_to_signals(df: pd.DataFrame, threshold=0.0005) -> pd.DataFrame:
+def convert_regression_to_signals(df: pd.DataFrame, upper_threshold: float, lower_threshold: float) -> pd.DataFrame:
     """
     Convert regression targets (log returns) to signals.
-    
+
     Signal logic:
-    - target > threshold → buy signal (1)
-    - target < -threshold → sell signal (-1)
+    - target > upper_threshold → buy signal (1)
+    - target < lower_threshold → sell signal (-1)
     - else → no signal (0)
-    
+
+    IMPORTANT: upper_threshold/lower_threshold should be the SAME values
+    used to build the classification target (ml_module/config.yaml's
+    target.upper_threshold / target.lower_threshold) -- not a separate
+    number invented here. That's the threshold that was actually used to
+    decide what counts as a real move; reusing it keeps regression and
+    classification validated against the identical bar (same convention
+    already followed by preprocessing_lab/model_evaluation/signal_conversion.py).
+
     Args:
         df: DataFrame with 'target' column (log returns)
-        threshold: Threshold for considering a return significant
-        
+        upper_threshold: return above this counts as a buy signal
+        lower_threshold: return below this counts as a sell signal
+
     Returns:
-        DataFrame with 'datetime' and 'signal' columns
+        DataFrame with 'datetime', 'signal', 'return_value', 'threshold_used' columns.
+        return_value/threshold_used are carried along only so they can be
+        joined back onto the trade ledger after the backtest runs -- the
+        backtest engine itself only reads 'signal'.
     """
-    
+
     signals = df[['datetime', 'target']].copy()
+    signals = signals.rename(columns={'target': 'return_value'})
     signals['signal'] = 0
-    signals.loc[signals['target'] > threshold, 'signal'] = 1
-    signals.loc[signals['target'] < -threshold, 'signal'] = -1
-    
-    return signals[['datetime', 'signal']]
+    signals.loc[signals['return_value'] > upper_threshold, 'signal'] = 1
+    signals.loc[signals['return_value'] < lower_threshold, 'signal'] = -1
+    signals['threshold_used'] = np.where(
+        signals['signal'] == 1, upper_threshold,
+        np.where(signals['signal'] == -1, lower_threshold, np.nan)
+    )
+
+    return signals[['datetime', 'signal', 'return_value', 'threshold_used']]
 
 
-def convert_classification_to_signals(df: pd.DataFrame) -> pd.DataFrame:
+def convert_classification_to_signals(df: pd.DataFrame, upper_threshold: float, lower_threshold: float,
+                                       horizon: int) -> pd.DataFrame:
     """
     Convert classification targets (-1/0/1) directly to signals.
-    
+
+    The -1/0/1 label alone doesn't say how close price came to the barrier,
+    so we also compute the plain forward log-return over the same horizon
+    used to build the target -- that's the number to compare against the
+    threshold afterward.
+
     Args:
-        df: DataFrame with 'target' column (-1/0/1)
-        
+        df: DataFrame with 'target' (-1/0/1) and 'close' columns
+        upper_threshold, lower_threshold: same values used to build the target
+        horizon: same horizon used to build the target (candles ahead)
+
     Returns:
-        DataFrame with 'datetime' and 'signal' columns
+        DataFrame with 'datetime', 'signal', 'return_value', 'threshold_used' columns.
     """
-    
+
     signals = df[['datetime', 'target']].copy()
     signals = signals.rename(columns={'target': 'signal'})
-    
-    return signals[['datetime', 'signal']]
+    signals['return_value'] = np.log(df['close'].shift(-horizon) / df['close']).values
+    signals['threshold_used'] = np.where(
+        signals['signal'] == 1, upper_threshold,
+        np.where(signals['signal'] == -1, lower_threshold, np.nan)
+    )
+
+    return signals[['datetime', 'signal', 'return_value', 'threshold_used']]
 
 
 def validate_targets(ml_config_path: str, validation_config_path: str = None) -> dict:
@@ -259,8 +289,19 @@ def validate_targets(ml_config_path: str, validation_config_path: str = None) ->
     
     # Step 3: Convert targets to signals
     print("\n[3/5] Converting targets to trading signals...")
+    target_config = ml_config.get('target', {})
+    thresholds_used = {
+        "upper_threshold": target_config.get('upper_threshold', 0.001),
+        "lower_threshold": target_config.get('lower_threshold', -0.001),
+    }
     if validation_type == 'classification':
-        signals = convert_classification_to_signals(ml_df)
+        horizon = target_config.get('horizon', 1)
+        signals = convert_classification_to_signals(
+            ml_df,
+            upper_threshold=thresholds_used["upper_threshold"],
+            lower_threshold=thresholds_used["lower_threshold"],
+            horizon=horizon,
+        )
         signal_counts = signals['signal'].value_counts().to_dict()
         print(f"✓ Classification signals generated:")
         print(f"  - Buy signals (1):    {signal_counts.get(1, 0):>6}")
@@ -268,10 +309,18 @@ def validate_targets(ml_config_path: str, validation_config_path: str = None) ->
         print(f"  - Sell signals (-1):  {signal_counts.get(-1, 0):>6}")
     
     elif validation_type == 'regression':
-        threshold = validation_config.get('regression_threshold', 0.0005)
-        signals = convert_regression_to_signals(ml_df, threshold=threshold)
+        # Reuse the SAME thresholds that built the classification target
+        # (ml_module/config.yaml), instead of an unrelated local default --
+        # this is the value that actually matters, since it's what training
+        # / signal_conversion.py already treat as "what counts as a move".
+        signals = convert_regression_to_signals(
+            ml_df,
+            upper_threshold=thresholds_used["upper_threshold"],
+            lower_threshold=thresholds_used["lower_threshold"],
+        )
         signal_counts = signals['signal'].value_counts().to_dict()
-        print(f"✓ Regression signals generated (threshold={threshold}):")
+        print(f"✓ Regression signals generated "
+              f"(upper={thresholds_used['upper_threshold']}, lower={thresholds_used['lower_threshold']}):")
         print(f"  - Buy signals (1):    {signal_counts.get(1, 0):>6}")
         print(f"  - No signals (0):     {signal_counts.get(0, 0):>6}")
         print(f"  - Sell signals (-1):  {signal_counts.get(-1, 0):>6}")
@@ -334,6 +383,42 @@ def validate_targets(ml_config_path: str, validation_config_path: str = None) ->
     total_net_profit = backtest_result['total_net_profit']
     total_trades = backtest_result['total_trades']
     win_loss = backtest_result['win_loss']
+
+    # Enrich the trade ledger with the return value that triggered each
+    # trade and how far it sat from the threshold -- this way the SAVED
+    # trade_ledger_*.csv already has it, no separate join/script needed
+    # later. entry_time is always the 1-minute bar the triggering signal
+    # got aligned to (merge_asof backward, inside run_backtest), so the
+    # nearest signal at-or-before entry_time is the one that opened it.
+    if len(trade_ledger) > 0:
+        signal_events = signals[signals['signal'] != 0][
+            ['datetime', 'return_value', 'threshold_used']
+        ].sort_values('datetime')
+        trade_ledger = trade_ledger.sort_values('entry_time').reset_index(drop=True)
+        trade_ledger = pd.merge_asof(
+            trade_ledger, signal_events,
+            left_on='entry_time', right_on='datetime',
+            direction='backward',
+        )
+        trade_ledger = trade_ledger.drop(columns=['datetime'])
+        trade_ledger['distance_from_threshold_pct'] = (
+            (trade_ledger['return_value'] - trade_ledger['threshold_used']).abs()
+            / trade_ledger['threshold_used'].abs() * 100
+        )
+
+        print(f"\n  Long/short vs threshold (from enriched trade ledger):")
+        for direction_label in ['long', 'short']:
+            subset = trade_ledger[trade_ledger['direction'] == direction_label]
+            if len(subset) == 0:
+                print(f"    {direction_label.upper():<6}: 0 trades")
+                continue
+            avg_return = subset['return_value'].mean()
+            threshold_for_side = subset['threshold_used'].iloc[0]
+            avg_distance_pct = subset['distance_from_threshold_pct'].mean()
+            print(f"    {direction_label.upper():<6}: {len(subset):>4} trades | "
+                  f"avg return_value={avg_return:.6f} vs threshold={threshold_for_side:.6f} "
+                  f"(avg {avg_distance_pct:.1f}% away from threshold -- "
+                  f"{'CLOSE, consider tuning threshold' if avg_distance_pct < 20 else 'comfortably clear'})")
     
     initial_balance = backtest_config['initial_balance']
     roi_pct = (total_net_profit / initial_balance) * 100 if initial_balance > 0 else 0
@@ -390,6 +475,7 @@ def validate_targets(ml_config_path: str, validation_config_path: str = None) ->
         'target_timeframe': ml_timeframe,
         'exchange_symbol': f"{exchange}/{symbol}",
         'dataset_rows': rows_after_drop,
+        'thresholds_used': thresholds_used,
         'target_validation': target_validation,
         'signal_counts': signal_counts,
         'backtest_summary': {

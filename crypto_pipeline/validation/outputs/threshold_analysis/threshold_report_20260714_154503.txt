@@ -1,0 +1,38 @@
+======================================================================
+REGRESSION -- threshold report  (upper=0.001, lower=-0.001)
+======================================================================
+Total rows:   8756
+Long  (1):      3819 ( 43.6%)
+Short (-1):     3657 ( 41.8%)
+Flat  (0):      1280 ( 14.6%)
+
+LONG signals (3819):
+  return min/mean/median/max: 0.00100 / 0.00700 / 0.00495 / 0.09331
+  within 20% of threshold: 119 (3.1%)  <- borderline trades
+
+SHORT signals (3657):
+  return min/mean/median/max: -0.06292 / -0.00738 / -0.00479 / -0.00100
+  within 20% of threshold: 116 (3.2%)  <- borderline trades
+
+Borderline signals overall: 3.1% of all long/short signals
+-> Signals clear threshold comfortably -- could LOWER it to catch more real moves, if win-rate/ROI support it.
+
+
+======================================================================
+CLASSIFICATION -- threshold report  (upper=0.001, lower=-0.001)
+======================================================================
+Total rows:   8756
+Long  (1):      2360 ( 27.0%)
+Short (-1):     2338 ( 26.7%)
+Flat  (0):      4058 ( 46.3%)
+
+LONG signals (2359):
+  return min/mean/median/max: -0.04029 / 0.00293 / 0.00223 / 0.08647
+  within 20% of threshold: 84 (3.6%)  <- borderline trades
+
+SHORT signals (2337):
+  return min/mean/median/max: -0.06292 / -0.00316 / -0.00205 / 0.05887
+  within 20% of threshold: 85 (3.6%)  <- borderline trades
+
+Borderline signals overall: 3.6% of all long/short signals
+-> Signals clear threshold comfortably -- could LOWER it to catch more real moves, if win-rate/ROI support it.
