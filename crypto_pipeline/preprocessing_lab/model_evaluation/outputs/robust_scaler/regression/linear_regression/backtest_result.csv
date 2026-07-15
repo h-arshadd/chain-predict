@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+robust_scaler,regression,linear_regression,9842.994473738745,-157.005526261255,98,32,66,0.32653061224489793

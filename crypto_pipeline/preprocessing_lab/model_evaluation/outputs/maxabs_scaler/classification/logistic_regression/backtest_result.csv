@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+maxabs_scaler,classification,logistic_regression,9988.593,-11.406999999999243,1,0,1,0.0

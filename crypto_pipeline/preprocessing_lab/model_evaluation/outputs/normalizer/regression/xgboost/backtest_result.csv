@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+normalizer,regression,xgboost,9502.783982499002,-497.2160175009976,142,37,105,0.2605633802816901

@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+fractional_differencing,regression,lightgbm,9652.823288011581,-347.1767119884189,117,33,84,0.28205128205128205

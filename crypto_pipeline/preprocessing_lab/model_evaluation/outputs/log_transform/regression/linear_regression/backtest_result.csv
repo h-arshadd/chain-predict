@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+log_transform,regression,linear_regression,9801.094628486733,-198.9053715132668,107,34,73,0.3177570093457944

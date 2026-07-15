@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+gaussian_quantile_transform,classification,xgboost,9729.39403903374,-270.6059609662607,74,19,55,0.25675675675675674

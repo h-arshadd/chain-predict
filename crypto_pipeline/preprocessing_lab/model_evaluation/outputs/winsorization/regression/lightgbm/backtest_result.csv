@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+winsorization,regression,lightgbm,9481.648464152893,-518.3515358471068,125,30,95,0.24

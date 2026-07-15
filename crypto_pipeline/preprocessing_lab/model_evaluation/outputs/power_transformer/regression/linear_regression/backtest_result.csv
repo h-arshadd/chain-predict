@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+power_transformer,regression,linear_regression,9898.006856273536,-101.99314372646404,101,35,66,0.3465346534653465

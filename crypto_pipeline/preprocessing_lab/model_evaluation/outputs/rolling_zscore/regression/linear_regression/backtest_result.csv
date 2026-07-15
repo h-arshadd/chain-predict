@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+rolling_zscore,regression,linear_regression,9820.283984321097,-179.7160156789032,79,24,55,0.3037974683544304

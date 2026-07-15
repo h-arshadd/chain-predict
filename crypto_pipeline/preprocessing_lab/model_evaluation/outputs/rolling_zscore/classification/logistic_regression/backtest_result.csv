@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+rolling_zscore,classification,logistic_regression,10010.567681477907,10.567681477907172,28,11,17,0.39285714285714285

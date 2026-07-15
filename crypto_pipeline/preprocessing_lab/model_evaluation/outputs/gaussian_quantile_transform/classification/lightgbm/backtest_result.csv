@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+gaussian_quantile_transform,classification,lightgbm,9835.26623486622,-164.73376513378025,54,15,39,0.2777777777777778

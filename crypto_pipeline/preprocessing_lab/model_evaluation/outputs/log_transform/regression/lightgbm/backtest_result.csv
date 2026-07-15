@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+log_transform,regression,lightgbm,9720.083499977656,-279.9165000223438,119,36,83,0.3025210084033613

@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+simple_differencing,classification,lightgbm,9925.904465671578,-74.09553432842222,67,23,44,0.34328358208955223

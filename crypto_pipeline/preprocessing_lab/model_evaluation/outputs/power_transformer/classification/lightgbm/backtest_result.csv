@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+power_transformer,classification,lightgbm,9871.928960662804,-128.07103933719554,56,17,39,0.30357142857142855

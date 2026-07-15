@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+fractional_differencing,regression,linear_regression,9828.863813512817,-171.1361864871833,94,30,64,0.3191489361702128

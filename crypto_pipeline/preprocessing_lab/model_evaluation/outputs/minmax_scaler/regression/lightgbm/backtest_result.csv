@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+minmax_scaler,regression,lightgbm,9712.172568164244,-287.8274318357562,115,34,81,0.2956521739130435

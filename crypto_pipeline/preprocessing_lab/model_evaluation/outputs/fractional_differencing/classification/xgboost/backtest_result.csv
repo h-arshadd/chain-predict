@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+fractional_differencing,classification,xgboost,9733.231916583665,-266.7680834163348,50,10,40,0.2

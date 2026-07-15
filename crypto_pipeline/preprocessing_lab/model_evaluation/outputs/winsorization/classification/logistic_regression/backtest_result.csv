@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+winsorization,classification,logistic_regression,9970.265142413027,-29.734857586972794,52,19,33,0.36538461538461536

@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+rolling_zscore,classification,lightgbm,10011.253182425415,11.253182425414707,70,27,43,0.38571428571428573

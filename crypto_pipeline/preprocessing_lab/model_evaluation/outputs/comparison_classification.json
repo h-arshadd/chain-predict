@@ -1,0 +1,268 @@
+{
+  "none": {
+    "n_train": 5199,
+    "n_val": 1114,
+    "n_test": 1115,
+    "models": {
+      "logistic_regression": {
+        "accuracy": 0.5237668161434977,
+        "precision": 0.45174420688864036
+      },
+      "xgboost": {
+        "accuracy": 0.48071748878923765,
+        "precision": 0.39369997956020714
+      },
+      "lightgbm": {
+        "accuracy": 0.5049327354260089,
+        "precision": 0.4173692385493426
+      }
+    }
+  },
+  "standard_scaler": {
+    "n_train": 5199,
+    "n_val": 1114,
+    "n_test": 1115,
+    "models": {
+      "logistic_regression": {
+        "accuracy": 0.5112107623318386,
+        "precision": 0.5313275797280897
+      },
+      "xgboost": {
+        "accuracy": 0.48071748878923765,
+        "precision": 0.39369997956020714
+      },
+      "lightgbm": {
+        "accuracy": 0.5040358744394619,
+        "precision": 0.4109270747159586
+      }
+    }
+  },
+  "minmax_scaler": {
+    "n_train": 5199,
+    "n_val": 1114,
+    "n_test": 1115,
+    "models": {
+      "logistic_regression": {
+        "accuracy": 0.5031390134529148,
+        "precision": 0.16816546762589926
+      },
+      "xgboost": {
+        "accuracy": 0.48251121076233183,
+        "precision": 0.4024294334019882
+      },
+      "lightgbm": {
+        "accuracy": 0.5040358744394619,
+        "precision": 0.4138416761148283
+      }
+    }
+  },
+  "robust_scaler": {
+    "n_train": 5199,
+    "n_val": 1114,
+    "n_test": 1115,
+    "models": {
+      "logistic_regression": {
+        "accuracy": 0.5085201793721973,
+        "precision": 0.4682979503687706
+      },
+      "xgboost": {
+        "accuracy": 0.48071748878923765,
+        "precision": 0.39369997956020714
+      },
+      "lightgbm": {
+        "accuracy": 0.5085201793721973,
+        "precision": 0.4210823580156559
+      }
+    }
+  },
+  "maxabs_scaler": {
+    "n_train": 5199,
+    "n_val": 1114,
+    "n_test": 1115,
+    "models": {
+      "logistic_regression": {
+        "accuracy": 0.5031390134529148,
+        "precision": 0.16816546762589926
+      },
+      "xgboost": {
+        "accuracy": 0.48071748878923765,
+        "precision": 0.39369997956020714
+      },
+      "lightgbm": {
+        "accuracy": 0.5049327354260089,
+        "precision": 0.4173692385493426
+      }
+    }
+  },
+  "quantile_transformer": {
+    "n_train": 5199,
+    "n_val": 1114,
+    "n_test": 1115,
+    "models": {
+      "logistic_regression": {
+        "accuracy": 0.5210762331838565,
+        "precision": 0.4466625799838339
+      },
+      "xgboost": {
+        "accuracy": 0.48071748878923765,
+        "precision": 0.39369997956020714
+      },
+      "lightgbm": {
+        "accuracy": 0.5040358744394619,
+        "precision": 0.4138416761148283
+      }
+    }
+  },
+  "power_transformer": {
+    "n_train": 5199,
+    "n_val": 1114,
+    "n_test": 1115,
+    "models": {
+      "logistic_regression": {
+        "accuracy": 0.5183856502242152,
+        "precision": 0.44064084927814134
+      },
+      "xgboost": {
+        "accuracy": 0.48071748878923765,
+        "precision": 0.39369997956020714
+      },
+      "lightgbm": {
+        "accuracy": 0.5067264573991032,
+        "precision": 0.42682557257849885
+      }
+    }
+  },
+  "normalizer": {
+    "n_train": 5199,
+    "n_val": 1114,
+    "n_test": 1115,
+    "models": {
+      "logistic_regression": {
+        "accuracy": 0.5040358744394619,
+        "precision": 0.16801195814648728
+      },
+      "xgboost": {
+        "accuracy": 0.49417040358744396,
+        "precision": 0.4201894063872375
+      },
+      "lightgbm": {
+        "accuracy": 0.515695067264574,
+        "precision": 0.44652229355137063
+      }
+    }
+  },
+  "rolling_zscore": {
+    "n_train": 5133,
+    "n_val": 1099,
+    "n_test": 1101,
+    "models": {
+      "logistic_regression": {
+        "accuracy": 0.5068119891008175,
+        "precision": 0.44424207020255313
+      },
+      "xgboost": {
+        "accuracy": 0.46139872842870117,
+        "precision": 0.40403085740662487
+      },
+      "lightgbm": {
+        "accuracy": 0.4904632152588556,
+        "precision": 0.4257118760510233
+      }
+    }
+  },
+  "fractional_differencing": {
+    "n_train": 5149,
+    "n_val": 1103,
+    "n_test": 1104,
+    "models": {
+      "logistic_regression": {
+        "accuracy": 0.48641304347826086,
+        "precision": 0.39848612782316534
+      },
+      "xgboost": {
+        "accuracy": 0.48188405797101447,
+        "precision": 0.38060705068367656
+      },
+      "lightgbm": {
+        "accuracy": 0.48731884057971014,
+        "precision": 0.3767110762800418
+      }
+    }
+  },
+  "simple_differencing": {
+    "n_train": 5198,
+    "n_val": 1114,
+    "n_test": 1115,
+    "models": {
+      "logistic_regression": {
+        "accuracy": 0.49417040358744396,
+        "precision": 0.3068783068783069
+      },
+      "xgboost": {
+        "accuracy": 0.48699551569506727,
+        "precision": 0.42141910223208773
+      },
+      "lightgbm": {
+        "accuracy": 0.4798206278026906,
+        "precision": 0.4025001651703572
+      }
+    }
+  },
+  "winsorization": {
+    "n_train": 5199,
+    "n_val": 1114,
+    "n_test": 1115,
+    "models": {
+      "logistic_regression": {
+        "accuracy": 0.5228699551569507,
+        "precision": 0.44696616020145435
+      },
+      "xgboost": {
+        "accuracy": 0.49327354260089684,
+        "precision": 0.4089402651723058
+      },
+      "lightgbm": {
+        "accuracy": 0.49327354260089684,
+        "precision": 0.39938142282700806
+      }
+    }
+  },
+  "log_transform": {
+    "n_train": 5199,
+    "n_val": 1114,
+    "n_test": 1115,
+    "models": {
+      "logistic_regression": {
+        "accuracy": 0.5228699551569507,
+        "precision": 0.44555111623908156
+      },
+      "xgboost": {
+        "accuracy": 0.49327354260089684,
+        "precision": 0.4095974360640118
+      },
+      "lightgbm": {
+        "accuracy": 0.5049327354260089,
+        "precision": 0.4173692385493426
+      }
+    }
+  },
+  "gaussian_quantile_transform": {
+    "n_train": 5199,
+    "n_val": 1114,
+    "n_test": 1115,
+    "models": {
+      "logistic_regression": {
+        "accuracy": 0.5174887892376682,
+        "precision": 0.4353684844002756
+      },
+      "xgboost": {
+        "accuracy": 0.48071748878923765,
+        "precision": 0.39369997956020714
+      },
+      "lightgbm": {
+        "accuracy": 0.5067264573991032,
+        "precision": 0.4201889866405995
+      }
+    }
+  }
+}

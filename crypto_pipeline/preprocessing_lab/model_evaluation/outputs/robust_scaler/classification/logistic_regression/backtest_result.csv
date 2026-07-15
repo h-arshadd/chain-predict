@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+robust_scaler,classification,logistic_regression,10018.772114277102,18.772114277102446,16,7,9,0.4375

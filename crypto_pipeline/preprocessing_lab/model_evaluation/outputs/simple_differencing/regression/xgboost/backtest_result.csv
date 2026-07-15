@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+simple_differencing,regression,xgboost,9490.31402550392,-509.68597449608023,130,32,98,0.24615384615384617

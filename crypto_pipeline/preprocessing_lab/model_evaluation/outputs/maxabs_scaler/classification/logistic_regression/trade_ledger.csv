@@ -1,0 +1,2 @@
+entry_time,exit_time,direction,entry_price,exit_price,exit_reason,quantity,gross_pnl,commission,slippage,net_pnl,balance_after_trade,cumulative_pnl
+2025-11-10 06:00:00,2025-11-11 01:19:00,short,106100.0,107161.0,stop_loss,0.00942507068803016,-10.0,1.005,0.40199999999999997,-11.406999999999998,9988.593,-11.406999999999998

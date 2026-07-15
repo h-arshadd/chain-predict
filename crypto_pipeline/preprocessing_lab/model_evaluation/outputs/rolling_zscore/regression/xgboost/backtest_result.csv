@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+rolling_zscore,regression,xgboost,9946.332814304858,-53.6671856951416,122,45,77,0.36885245901639346

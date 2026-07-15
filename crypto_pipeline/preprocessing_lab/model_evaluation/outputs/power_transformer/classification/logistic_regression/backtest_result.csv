@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+power_transformer,classification,logistic_regression,10098.393408581525,98.39340858152536,44,20,24,0.45454545454545453

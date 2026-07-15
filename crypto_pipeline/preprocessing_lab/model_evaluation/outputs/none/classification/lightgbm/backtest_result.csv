@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+none,classification,lightgbm,9798.753484575163,-201.24651542483662,52,13,39,0.25

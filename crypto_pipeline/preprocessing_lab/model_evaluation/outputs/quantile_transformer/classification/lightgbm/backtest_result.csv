@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+quantile_transformer,classification,lightgbm,9724.82782288092,-275.1721771190805,58,13,45,0.22413793103448276

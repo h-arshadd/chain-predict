@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+log_transform,classification,xgboost,9745.966419754144,-254.03358024585577,62,15,47,0.24193548387096775

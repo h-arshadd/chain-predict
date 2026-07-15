@@ -1,0 +1,2 @@
+method,target_type,model,final_balance,total_net_profit,total_trades,wins,losses,win_rate
+simple_differencing,classification,logistic_regression,9910.851161393455,-89.14883860654481,21,5,16,0.23809523809523808
