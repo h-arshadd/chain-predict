@@ -1,0 +1,43 @@
+# crypto_pipeline/stats/config.yaml
+
+# Risk-free rate used by Sharpe/Sortino/Calmar/etc.
+risk_free_rate: 0.0
+
+# Trading periods per year, used to annualize ratios. Stats are computed
+# on DAILY returns (equity_curve resampled from 1-min -> daily), so this
+# stays at the standard 252 -- change only if you resample to something
+# else below.
+periods_per_year: 252
+
+# Resample the 1-min equity_curve to this frequency before computing
+# stats. QuantStats' annualization (periods_per_year above) assumes daily
+# returns, so "D" is the right default -- only change both together.
+resample_freq: "D"
+
+# quantstats.stats functions that need something other than a plain
+# returns series (a benchmark series, mainly) -- skipped automatically
+# since we don't have a benchmark to compare against.
+exclude_metrics:
+  - r_squared
+  - r2
+  - information_ratio
+  - treynor_ratio
+  - greeks
+  - rolling_greeks
+  - compare
+  - monthly_returns   # table, not a scalar metric -- see plots.py instead
+
+# Which plots to generate. Set generate_plots: false to skip plotting
+# entirely (e.g. for a quick metrics-only run).
+generate_plots: true
+plots:
+  - returns
+  - drawdown
+  - rolling_sharpe
+  - rolling_volatility
+  - monthly_heatmap
+  - yearly_returns
+  - distribution
+
+output:
+  dir: outputs
