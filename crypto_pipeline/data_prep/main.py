@@ -1,4 +1,4 @@
-# crypto_pipeline/ml_module/main.py
+# crypto_pipeline/data_prep/main.py
 
 """
 main.py
@@ -11,11 +11,11 @@ for regression and classification tasks.
 import logging
 import pandas as pd
 
-from crypto_pipeline.ml_module.ml_utils import load_config_yaml
-from crypto_pipeline.ml_module.data_pipeline import collect_market_data
-from crypto_pipeline.ml_module.feature_pipeline import engineer_features
-from crypto_pipeline.ml_module.sentiment_pipeline import collect_sentiment_data
-from crypto_pipeline.ml_module.target_pipeline import generate_target
+from crypto_pipeline.data_prep.ml_utils import load_config_yaml
+from crypto_pipeline.data_prep.data_pipeline import collect_market_data
+from crypto_pipeline.data_prep.feature_pipeline import engineer_features
+from crypto_pipeline.data_prep.sentiment_pipeline import collect_sentiment_data
+from crypto_pipeline.data_prep.target_pipeline import generate_target
 
 
 logger = logging.getLogger(__name__)
@@ -93,17 +93,26 @@ def run_ml_pipeline(config_path: str) -> pd.DataFrame:
 
 if __name__ == "__main__":
     import os
+
     config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+    config = load_config_yaml(config_path)
     df = run_ml_pipeline(config_path)
-    
+
     # Drop rows with NaN in any column except sentiment (sen_*) columns --
     # a missing/no-post sentiment value shouldn't discard an otherwise
     # valid OHLCV + feature row.
     sentiment_cols = [col for col in df.columns if col.startswith("sen_")]
     required_cols = [col for col in df.columns if col not in sentiment_cols]
     df = df.dropna(subset=required_cols)
-    
-    output_dir = os.path.join(os.path.dirname(__file__), "outputs")
+
+    # Output path includes exchange/symbol/model_type so different
+    # exchanges (binance/bybit) and target types (regression/classification)
+    # never overwrite each other's dataset.csv
+    exchange = config["data"]["exchange"]
+    symbol = config["data"]["symbol"]
+    model_type = config["model_type"]
+
+    output_dir = os.path.join(os.path.dirname(__file__), "outputs", exchange, symbol, model_type)
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, "dataset.csv")
     df.to_csv(output_path, index=False)
