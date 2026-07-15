@@ -1,0 +1,53 @@
+# crypto_pipeline/ml/config.yaml
+
+# exchange, symbol, and model_type are NOT duplicated here --
+# they're read directly from data_prep/config.yaml at runtime,
+# so there's only one place that can go out of sync.
+
+output:
+  save_debug_csv: false
+  base_dir: outputs
+
+features:
+  timestamp_column: datetime
+  target_column: target
+  horizon: 4              # should match data_prep/config.yaml's target.horizon
+
+  # Option A: explicit list (order preserved, wins if set)
+  # feature_columns:
+  #   - ind_RSI_14
+  #   - ind_EMA_20
+
+  # Option B: prefix-based (used if feature_columns is not set)
+  include_prefixes:
+    - ind_
+    - pat_
+    - sen_
+
+
+feature_columns_extra:
+  - close
+  - volume
+
+# Train/Test Split stage (PDF heading 3).
+# Time series -- chronological cutoff only, never shuffled/random.
+# test_size is the fraction of rows (by time order) held out for test,
+# taken from the END of the dataset. Everything before that cutoff is
+# train.
+split:
+  test_size: 0.2
+
+# Data Preprocessing stage (PDF heading 4).
+# Steps run in order, each one chained into the next -- e.g. the PDF's
+# own example: Raw Features -> Fractional Differencing -> RobustScaler.
+# Every step's params are fit on the train split ONLY, then the same
+# fitted transform is applied to the test split (see preprocessing_pipeline.py).
+# Leave "steps" empty ([]) to pass features through unchanged.
+preprocessing:
+  steps:
+    - method: fractional_differencing
+      params:
+        d: 0.2
+        threshold: 1e-3
+    - method: robust_scaler
+      params: {}
