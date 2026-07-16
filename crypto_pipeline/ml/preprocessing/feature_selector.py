@@ -86,6 +86,20 @@ def select_features(df: pd.DataFrame, ml_config: dict) -> dict:
     if not feature_columns:
         raise ValueError("No feature columns resolved -- check config's feature_columns/include_prefixes")
 
+    feature_columns_extra = features_config.get("feature_columns_extra") or []
+    if feature_columns_extra:
+        missing_extra = [c for c in feature_columns_extra if c not in df.columns]
+        if missing_extra:
+            raise ValueError(f"feature_columns_extra not found in dataset: {missing_extra}")
+
+        # Preserve order, skip anything already present (e.g. an explicit
+        # feature_columns list that already names one of these columns)
+        # rather than duplicating it.
+        already_selected = set(feature_columns)
+        new_extras = [c for c in feature_columns_extra if c not in already_selected]
+        feature_columns = list(feature_columns) + new_extras
+        logger.info(f"Appended feature_columns_extra: {new_extras}")
+
     logger.info(f"Feature selection: {len(feature_columns)} features, target='{target_column}', horizon={horizon}")
 
     return {

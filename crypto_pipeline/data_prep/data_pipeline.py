@@ -46,7 +46,14 @@ def _normalize_timeframe(timeframe: str) -> str:
 def collect_market_data(config: dict) -> pd.DataFrame:
     """
     Fetch market data from exchange and resample to configured timeframe.
-    
+
+    Note: this always fetches full OHLCV when data.enabled is True.
+    config.data.calculate_ohlcv does NOT affect fetching -- indicators,
+    patterns, and target generation all need real close/high/low/volume
+    to compute from. calculate_ohlcv only controls whether the raw OHLCV
+    columns are kept in the final output dataset (see main.py), after
+    they've already been used upstream.
+
     Args:
         config: ML module config dict with data section
         
@@ -61,12 +68,6 @@ def collect_market_data(config: dict) -> pd.DataFrame:
     
     if not data_config.get("enabled"):
         raise ValueError("Data collection is disabled in config")
-    
-    # NEW: Check if OHLCV calculation is disabled
-    calculate_ohlcv = data_config.get("calculate_ohlcv", True)
-    if not calculate_ohlcv:
-        logger.info("OHLCV calculation disabled in config")
-        return None
     
     required = ["symbol", "exchange", "timeframe", "start_date", "end_date"]
     for field in required:
