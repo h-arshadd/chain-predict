@@ -45,15 +45,22 @@ split:
 # Every step's params are fit on the train split ONLY, then the same
 # fitted transform is applied to the test split (see preprocessing_pipeline.py).
 # Leave "steps" empty ([]) to pass features through unchanged.
-# Model Training stage (PDF heading 5).
-# algorithm must be a key in ml/regressors/registry.py's REGRESSORS dict
-# (linear_regression, ridge, lasso, elasticnet, random_forest, extra_trees,
-# svr, xgboost, lightgbm, catboost). params are forwarded as-is to the
-# underlying estimator's constructor -- nothing here is validated/hardcoded
-# per-algorithm, so any param that estimator accepts can go in params.
-# Only used when data_prep/config.yaml's model_type is "regression" --
-# see classification config / model.algorithm choices once that pipeline
-# exists for the classification side.
+# Model Training stage (PDF headings 5 & 6).
+# algorithm must be a key in the registry that matches data_prep's
+# model_type:
+#   model_type=regression     -> ml/regressors/registry.py's REGRESSORS
+#                                 (linear_regression, ridge, lasso, elasticnet,
+#                                 random_forest, extra_trees, svr, xgboost,
+#                                 lightgbm, catboost)
+#   model_type=classification -> ml/classifiers/registry.py's CLASSIFIERS
+#                                 (logistic_regression, decision_tree,
+#                                 random_forest, extra_trees, svm, knn,
+#                                 naive_bayes, xgboost, lightgbm, catboost)
+# params are forwarded as-is to the underlying estimator's constructor --
+# nothing here is validated/hardcoded per-algorithm, so any param that
+# estimator accepts can go in params. Only one model runs per run, chosen
+# by whichever of regression_pipeline.py / classification_pipeline.py
+# matches data_prep/config.yaml's model_type (see those files).
 model:
   algorithm: random_forest
   params:

@@ -132,7 +132,7 @@ if __name__ == "__main__":
 
     output_dir = os.path.join(os.path.dirname(__file__), "outputs", exchange, symbol, model_type)
     os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, "dataset.csv")
+    output_path = os.path.join(output_dir, f"dataset_{model_type}.csv")
     df.to_csv(output_path, index=False)
     print(f"Output saved to {output_path}")
     print(f"Final dataset shape: {df.shape} (rows, cols)")
