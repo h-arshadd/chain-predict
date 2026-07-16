@@ -72,14 +72,17 @@ def run_preprocessing(train_df: pd.DataFrame, test_df: pd.DataFrame, feature_col
     if not steps:
         logger.info("No preprocessing steps configured -- passing data through unchanged")
         return {
-            "train_df": train_df.copy(),
-            "test_df": test_df.copy(),
+            "train_df": train_df,
+            "test_df": test_df,
             "fit_objects": [],
             "dropped_rows": {"train": 0, "test": 0},
         }
 
-    train_out = train_df.copy()
-    test_out = test_df.copy()
+    # No .copy() -- the first thing each loop iteration does is
+    # drop(columns=...) + concat(), both of which already return new
+    # DataFrames rather than mutating train_df/test_df in place.
+    train_out = train_df
+    test_out = test_df
     fit_objects = []
 
     train_initial_rows = len(train_out)

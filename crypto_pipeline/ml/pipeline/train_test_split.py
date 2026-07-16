@@ -83,8 +83,11 @@ def split_dataset(df: pd.DataFrame, ml_config: dict, timestamp_column: str = "da
     # positional cutoff by row order IS the chronological cutoff here.
     # No re-sort happens in this function: if the caller passes in an
     # unsorted df, that's a bug to fix at the source, not paper over here.
-    train_df = df.iloc[:cutoff_idx].copy()
-    test_df = df.iloc[cutoff_idx:].copy()
+    # No .copy() here -- these slices are only read from downstream
+    # (preprocessing_pipeline.run_preprocessing() builds new frames via
+    # drop()/concat(), never mutates train_df/test_df in place).
+    train_df = df.iloc[:cutoff_idx]
+    test_df = df.iloc[cutoff_idx:]
 
     train_start = train_df[timestamp_column].iloc[0]
     train_end = train_df[timestamp_column].iloc[-1]
