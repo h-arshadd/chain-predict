@@ -3,148 +3,192 @@
 """
 stats_runner.py
 ---------------
-Step 3 of the Stats task ("implement statistics module capable of
-calculating nearly all available statistics"), run across every
-(method, target_type, model) combo -- same loop shape as
-model_evaluation/backtest_runner.py, one directory level up in the tree.
+Batch driver for the Statistics module. Runs compute_stats() over a set
+of backtest results the Backtest module produced -- NOT over ml/
+model_evaluation signals. This module stays independent from ml: it
+never imports anything from crypto_pipeline.ml.
 
-Reuses backtest_runner.py's own load_config/load_ohlcv_1m/backtest_one
-instead of re-implementing them, and calls run_backtest() itself per
-combo (in-memory) -- no reading of trade_ledger.csv/signals.csv back off
-disk for the stats step. This IS "using the functions given in
-model_evaluation" rather than introducing a second, parallel way of
-loading signals/OHLCV.
+Core entry point, run(), takes backtest results as plain dicts -- the
+same dict run_backtest() itself returns (equity_curve, final_balance,
+total_net_profit, total_trades, win_loss, trade_ledger, ...). No
+re-deriving equity_curve/trade_summary from a trade ledger here -- if
+you already have run_backtest()'s return value, that's the only thing
+this needs; hand it over as-is.
 
-Independent from the Backtesting and ML modules per the task ("module
-should remain completely independent") in the sense that stats/ itself
-imports nothing from ml_module and only takes a plain dict in
-(calculator.compute_stats) -- this runner is just the batch-loop
-convenience on top, matching how backtest_runner.py already does its own
-batch loop on top of backtest.run_backtest().
-
-Run AFTER model_evaluation/main.py (needs signals.csv per combo to exist):
-    python -m crypto_pipeline.preprocessing_lab.model_evaluation.main
-    python -m crypto_pipeline.stats.stats_runner
-
-For each (method, target_type, model), saves:
-    <out_dir>/<method>/<target_type>/<model>/stats.json
-    <out_dir>/<method>/<target_type>/<model>/plots/*.png
-
-Also saves:
+For each combo, saves numeric output only -- no PNGs:
+    <out_dir>/metrics.json   -- {combo: {...every discovered metric...}}
+    <out_dir>/plots.json     -- {combo: {...numeric plot series/tables...}}
     <out_dir>/comparison_stats.csv
-        -- flat method/target_type/model table of the same headline
-           metrics used elsewhere (sharpe, sortino, calmar, max_drawdown,
-           cagr, profit_factor, win_rate, recovery_factor, risk_of_ruin),
-           same idea as comparison_backtest.csv.
+        -- flat table of the same headline metrics used elsewhere
+           (sharpe, sortino, calmar, max_drawdown, cagr, profit_factor,
+           win_rate, recovery_factor, risk_of_ruin) -- kept as the one
+           quick-look CSV; everything else is numeric JSON.
+
+Usage (call run() directly with results you already have in memory):
+    from crypto_pipeline.stats.stats_runner import run
+
+    # backtest_results: {combo_name: run_backtest()'s return dict}
+    backtest_results = {
+        "binance_btc": run_backtest(ohlcv_1m, signals, backtest_config),
+        "bybit_btc": run_backtest(ohlcv_1m_2, signals_2, backtest_config),
+    }
+    run(backtest_results, stats_config=stats_config)
+
+Usage (as a script):
+    python -m crypto_pipeline.stats.stats_runner
+    -- runs the Backtest module itself for every exchange/symbol combo
+    (same helpers/loop as backtest/main.py) and feeds the resulting
+    backtest results into run(). See the __main__ block below.
 """
 
 import os
+import json
 
-import yaml
 import pandas as pd
 
-from crypto_pipeline.preprocessing_lab.model_evaluation.backtest_runner import (
-    load_config as load_yaml,
-    load_ohlcv_1m,
-    backtest_one,
-)
-from crypto_pipeline.stats.calculator import compute_stats, save_stats
+from crypto_pipeline.stats.calculator import compute_stats
+from crypto_pipeline.stats.utils import to_json_safe
 
 # Headline metrics for the flat comparison table -- the PDF's explicitly
 # named "most important" list. Every other discovered metric still lives
-# in each combo's own stats.json; this is just the at-a-glance table.
+# in metrics.json; this is just the at-a-glance table.
 _HEADLINE_METRICS = [
     "sharpe", "sortino", "calmar", "max_drawdown", "cagr",
     "profit_factor", "win_rate", "recovery_factor", "risk_of_ruin",
 ]
 
 
+def _load_yaml(path: str) -> dict:
+    import yaml
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
+
+
+def _default_stats_config() -> dict:
+    here = os.path.dirname(os.path.abspath(__file__))
+    return _load_yaml(os.path.join(here, "config.yaml"))
+
+
 def run(
-    model_eval_config_path: str,
-    ml_config_path: str,
-    stats_config_path: str = None,
-    backtest_config_path: str = None,
+    backtest_results: dict,
+    stats_config: dict = None,
+    stats_out_dir: str = None,
 ):
-    here = os.path.dirname(os.path.abspath(model_eval_config_path))
-    config = load_yaml(model_eval_config_path)
-    ml_config = load_yaml(ml_config_path)
+    """
+    Parameters
+    ----------
+    backtest_results : dict
+        {combo_name: backtest_result}, where backtest_result is exactly
+        what run_backtest() returns (needs "equity_curve" at minimum;
+        "final_balance"/"total_net_profit"/"total_trades"/"win_loss" are
+        used for trade_summary if present). combo_name is whatever label
+        the caller wants (e.g. "binance_btc") -- used only as the key in
+        metrics.json/plots.json and a column in comparison_stats.csv.
+    stats_config : dict, optional
+        Loaded from stats/config.yaml if not given.
+    stats_out_dir : str, optional
+        Where to save metrics.json / plots.json / comparison_stats.csv.
+        Defaults to <stats config's output.dir>, next to this file.
 
-    stats_here = os.path.dirname(os.path.abspath(stats_config_path)) if stats_config_path else \
-        os.path.join(os.path.dirname(os.path.abspath(__file__)))
-    if stats_config_path is None:
-        stats_config_path = os.path.join(stats_here, "config.yaml")
-    stats_config = load_yaml(stats_config_path)
+    Returns
+    -------
+    dict: {"metrics": {...}, "plots": {...}, "comparison": DataFrame}
+    """
+    stats_config = stats_config or _default_stats_config()
 
-    methods = config["methods"]
-    if isinstance(methods, str):
-        methods = [methods]
+    if stats_out_dir is None:
+        stats_here = os.path.dirname(os.path.abspath(__file__))
+        stats_out_dir = os.path.join(stats_here, stats_config["output"]["dir"])
 
-    target_types = config.get("target_types", ["regression"])
-    if isinstance(target_types, str):
-        target_types = [target_types]
-
-    signals_dir = os.path.join(here, config["output"]["dir"])
-    stats_out_dir = os.path.join(stats_here, stats_config["output"]["dir"])
-
-    # Same idea as backtest_runner.py: loaded/fetched once, reused for
-    # every combo below, so every stats run is computed off the identical
-    # price series and trading conditions.
-    backtest_config = load_yaml(backtest_config_path) if backtest_config_path else \
-        _default_backtest_config()
-    ohlcv_1m = load_ohlcv_1m(ml_config)
-
+    all_metrics = {}
+    all_plots = {}
     rows = []
 
-    for target_type in target_types:
-        for method_name in methods:
-            method_dir = os.path.join(signals_dir, method_name, target_type)
-            if not os.path.isdir(method_dir):
-                continue
+    for combo, backtest_result in backtest_results.items():
+        if not backtest_result or backtest_result.get("total_trades", 0) == 0:
+            print(f"  skip {combo}: no trades")
+            continue
 
-            model_names = sorted(
-                d for d in os.listdir(method_dir)
-                if os.path.isdir(os.path.join(method_dir, d))
-            )
+        print(f"computing stats: {combo}")
+        stats_dict = compute_stats(backtest_result, stats_config)
 
-            for model_name in model_names:
-                model_dir = os.path.join(method_dir, model_name)
-                signals_path = os.path.join(model_dir, "signals.csv")
-                if not os.path.exists(signals_path):
-                    print(f"  skip {method_name}/{target_type}/{model_name}: no signals.csv")
-                    continue
+        all_metrics[combo] = stats_dict["metrics"]
+        all_plots[combo] = stats_dict["plots"]
 
-                print(f"computing stats: {method_name} | {target_type} | {model_name}")
-                backtest_result = backtest_one(signals_path, ohlcv_1m, backtest_config)
+        row = {"combo": combo}
+        row.update({m: stats_dict["metrics"].get(m) for m in _HEADLINE_METRICS})
+        rows.append(row)
 
-                out_dir = os.path.join(stats_out_dir, method_name, target_type, model_name)
-                plot_dir = os.path.join(out_dir, "plots")
-                stats_dict = compute_stats(backtest_result, stats_config, plot_dir=plot_dir)
-                save_stats(stats_dict, os.path.join(out_dir, "stats.json"))
+    os.makedirs(stats_out_dir, exist_ok=True)
 
-                row = {"method": method_name, "target_type": target_type, "model": model_name}
-                row.update({m: stats_dict["metrics"].get(m) for m in _HEADLINE_METRICS})
-                rows.append(row)
+    metrics_path = os.path.join(stats_out_dir, "metrics.json")
+    with open(metrics_path, "w") as f:
+        json.dump(to_json_safe(all_metrics), f, indent=2)
+    print(f"Saved: {metrics_path}")
+
+    plots_path = os.path.join(stats_out_dir, "plots.json")
+    with open(plots_path, "w") as f:
+        json.dump(to_json_safe(all_plots), f, indent=2)
+    print(f"Saved: {plots_path}")
 
     comparison = pd.DataFrame(rows)
     comparison_path = os.path.join(stats_out_dir, "comparison_stats.csv")
-    os.makedirs(stats_out_dir, exist_ok=True)
     comparison.to_csv(comparison_path, index=False)
-    print(f"\nSaved: {comparison_path}")
+    print(f"Saved: {comparison_path}")
 
-    return comparison
-
-
-def _default_backtest_config():
-    from crypto_pipeline.backtest.backtest import load_config as load_backtest_config
-    return load_backtest_config()
+    return {"metrics": all_metrics, "plots": all_plots, "comparison": comparison}
 
 
 if __name__ == "__main__":
-    here = os.path.dirname(os.path.abspath(__file__))
-    model_eval_here = os.path.join(
-        here, "..", "preprocessing_lab", "model_evaluation"
+    # Runs the Backtest module itself, per exchange/symbol, straight in
+    # memory -- same loop shape and same helpers backtest/main.py already
+    # uses (get_data for signal-generation OHLCV, get_1m_data for
+    # execution OHLCV, build_signals, run_backtest) -- then hands the
+    # resulting backtest_results dict to run(). No CSV, no DB read-back:
+    # main.py's insert_trades() write to Postgres is a separate concern
+    # from this stats run.
+    from crypto_pipeline.backtest.main import (
+        parse_backtest_dates,
+        get_1m_data,
+        build_signals,
     )
-    model_eval_config_path = os.path.join(model_eval_here, "config.yaml")
-    ml_config_path = os.path.join(here, "..", "ml_module", "config.yaml")
-    stats_config_path = os.path.join(here, "config.yaml")
-    run(model_eval_config_path, ml_config_path, stats_config_path)
+    from crypto_pipeline.backtest.backtest import load_config, run_backtest
+    from crypto_pipeline.data.data_downloader import get_data
+
+    backtest_config = parse_backtest_dates(load_config())
+
+    exchanges = ["binance", "bybit"]
+    symbols = ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
+
+    backtest_results = {}
+
+    for exchange in exchanges:
+        for symbol in symbols:
+            combo = f"{exchange}_{symbol}"
+
+            hourly_result = get_data(
+                exchange=exchange,
+                symbol=symbol,
+                start_date=backtest_config["start_date"],
+                end_date=backtest_config["end_date"],
+            )
+            ohlcv_1h = hourly_result["resampled"]
+            if ohlcv_1h.empty:
+                print(f"Skipping {combo}: no hourly data returned.")
+                continue
+
+            signals = build_signals(ohlcv_1h)
+
+            ohlcv_1m = get_1m_data(
+                exchange=exchange,
+                symbol=symbol,
+                start_date=backtest_config["start_date"],
+                end_date=backtest_config["end_date"],
+            )
+            if ohlcv_1m.empty:
+                print(f"Skipping {combo}: no 1-minute data returned.")
+                continue
+
+            backtest_results[combo] = run_backtest(ohlcv_1m, signals, backtest_config)
+
+    run(backtest_results)
