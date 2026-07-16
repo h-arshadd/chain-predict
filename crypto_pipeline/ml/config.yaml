@@ -24,10 +24,12 @@ features:
     - pat_
     - sen_
 
-
-feature_columns_extra:
-  - close
-  - volume
+  # Extra columns to append after the prefix-resolved features (or after
+  # an explicit feature_columns list, if set). Order-preserved, appended
+  # at the end. Must exist in the dataset or feature_selector raises.
+  feature_columns_extra:
+    - close
+    - volume
 
 # Train/Test Split stage (PDF heading 3).
 # Time series -- chronological cutoff only, never shuffled/random.
@@ -43,11 +45,27 @@ split:
 # Every step's params are fit on the train split ONLY, then the same
 # fitted transform is applied to the test split (see preprocessing_pipeline.py).
 # Leave "steps" empty ([]) to pass features through unchanged.
+# Model Training stage (PDF heading 5).
+# algorithm must be a key in ml/regressors/registry.py's REGRESSORS dict
+# (linear_regression, ridge, lasso, elasticnet, random_forest, extra_trees,
+# svr, xgboost, lightgbm, catboost). params are forwarded as-is to the
+# underlying estimator's constructor -- nothing here is validated/hardcoded
+# per-algorithm, so any param that estimator accepts can go in params.
+# Only used when data_prep/config.yaml's model_type is "regression" --
+# see classification config / model.algorithm choices once that pipeline
+# exists for the classification side.
+model:
+  algorithm: random_forest
+  params:
+    n_estimators: 200
+    max_depth: 8
+    random_state: 42
+
 preprocessing:
   steps:
     - method: fractional_differencing
       params:
         d: 0.2
-        threshold: 1e-3
+        threshold: 1.0e-3
     - method: robust_scaler
       params: {}
