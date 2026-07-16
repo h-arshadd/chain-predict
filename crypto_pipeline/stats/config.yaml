@@ -27,7 +27,8 @@ exclude_metrics:
   - compare
   - monthly_returns   # table, not a scalar metric -- see plots.py instead
 
-# Which plots to generate. Set generate_plots: false to skip plotting
+# Which plots' underlying numeric data to compute (saved into plots.json
+# -- no .png files are generated). Set generate_plots: false to skip this
 # entirely (e.g. for a quick metrics-only run).
 generate_plots: true
 plots:

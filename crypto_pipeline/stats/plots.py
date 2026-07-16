@@ -3,53 +3,107 @@
 """
 plots.py
 --------
-Thin wrappers around quantstats.plots, each saving one .png. Kept as a
-name -> function map (same registry idea as preprocessing_lab/registry.py)
-so config.yaml's `plots:` list drives exactly which ones run, with no
-if/elif chain here.
+Used to save quantstats.plots PNGs. Now generates the same underlying
+numeric data those plots were drawn from instead, so it can be stored in
+JSON (no matplotlib figures, no images on disk).
+
+Kept as a name -> function map (same registry idea as
+preprocessing_lab/registry.py) so config.yaml's `plots:` list drives
+exactly which series get computed, with no if/elif chain here.
+
+Each entry in PLOT_DATA_REGISTRY takes (returns, equity) and returns
+something JSON-safe (dict / list of records) -- callers should still run
+the result through utils.to_json_safe before writing it out.
 """
 
-import os
-import matplotlib
-matplotlib.use("Agg")  # headless -- no display available when run as a pipeline step
-
+import pandas as pd
 import quantstats as qs
 
 
-def _save(plot_func, returns, path, **kwargs):
-    plot_func(returns, savefig=path, show=False, **kwargs)
+def _series_to_records(series: pd.Series) -> dict:
+    """{timestamp_str: value} for a datetime-indexed series."""
+    return {str(idx): val for idx, val in series.items()}
 
 
-PLOT_REGISTRY = {
-    "returns": lambda returns, path: _save(qs.plots.returns, returns, path),
-    "drawdown": lambda returns, path: _save(qs.plots.drawdown, returns, path),
-    "rolling_sharpe": lambda returns, path: _save(qs.plots.rolling_sharpe, returns, path),
-    "rolling_volatility": lambda returns, path: _save(qs.plots.rolling_volatility, returns, path),
-    "monthly_heatmap": lambda returns, path: _save(qs.plots.monthly_heatmap, returns, path),
-    "yearly_returns": lambda returns, path: _save(qs.plots.yearly_returns, returns, path),
-    "distribution": lambda returns, path: _save(qs.plots.distribution, returns, path),
+def _returns_data(returns: pd.Series, equity: pd.Series) -> dict:
+    """Plain period returns, plus cumulative compounded returns."""
+    cumulative = qs.stats.compsum(returns)
+    return {
+        "returns": _series_to_records(returns),
+        "cumulative_returns": _series_to_records(cumulative),
+    }
+
+
+def _drawdown_data(returns: pd.Series, equity: pd.Series) -> dict:
+    drawdown = qs.stats.to_drawdown_series(returns)
+    details = qs.stats.drawdown_details(drawdown)
+    details_records = (
+        details.to_dict(orient="records") if isinstance(details, pd.DataFrame) else []
+    )
+    return {
+        "drawdown_series": _series_to_records(drawdown),
+        "drawdown_periods": details_records,
+    }
+
+
+def _rolling_sharpe_data(returns: pd.Series, equity: pd.Series) -> dict:
+    rolling = qs.stats.rolling_sharpe(returns)
+    return {"rolling_sharpe": _series_to_records(rolling)}
+
+
+def _rolling_volatility_data(returns: pd.Series, equity: pd.Series) -> dict:
+    rolling = qs.stats.rolling_volatility(returns)
+    return {"rolling_volatility": _series_to_records(rolling)}
+
+
+def _monthly_heatmap_data(returns: pd.Series, equity: pd.Series) -> dict:
+    monthly = qs.stats.monthly_returns(returns)
+    if isinstance(monthly, pd.DataFrame):
+        monthly.index = monthly.index.astype(str)
+        table = {str(year): row.dropna().to_dict() for year, row in monthly.iterrows()}
+    else:
+        table = _series_to_records(monthly)
+    return {"monthly_returns": table}
+
+
+def _yearly_returns_data(returns: pd.Series, equity: pd.Series) -> dict:
+    yearly = returns.resample("YE").apply(lambda r: (1 + r).prod() - 1)
+    yearly.index = yearly.index.year.astype(str)
+    return {"yearly_returns": yearly.to_dict()}
+
+
+def _distribution_data(returns: pd.Series, equity: pd.Series) -> dict:
+    return {"distribution": qs.stats.distribution(returns)}
+
+
+PLOT_DATA_REGISTRY = {
+    "returns": _returns_data,
+    "drawdown": _drawdown_data,
+    "rolling_sharpe": _rolling_sharpe_data,
+    "rolling_volatility": _rolling_volatility_data,
+    "monthly_heatmap": _monthly_heatmap_data,
+    "yearly_returns": _yearly_returns_data,
+    "distribution": _distribution_data,
 }
 
 
-def generate_plots(returns, out_dir: str, plot_names: list) -> list:
+def generate_plot_data(returns: pd.Series, equity: pd.Series, plot_names: list) -> dict:
     """
-    Generates each requested plot and saves it as <out_dir>/<name>.png.
-    A plot that fails on this data (e.g. not enough points for a rolling
-    window) is skipped rather than aborting the rest.
+    Computes the numeric data behind each requested "plot" and returns
+    {plot_name: {...data...}}. A plot whose data can't be computed on
+    this data (e.g. not enough points for a rolling window) is skipped
+    rather than aborting the rest.
     """
-    os.makedirs(out_dir, exist_ok=True)
-    saved = []
+    result = {}
 
     for name in plot_names:
-        plot_func = PLOT_REGISTRY.get(name)
-        if plot_func is None:
-            print(f"  (skip plot '{name}': not in PLOT_REGISTRY)")
+        func = PLOT_DATA_REGISTRY.get(name)
+        if func is None:
+            print(f"  (skip plot '{name}': not in PLOT_DATA_REGISTRY)")
             continue
-        path = os.path.join(out_dir, f"{name}.png")
         try:
-            plot_func(returns, path)
-            saved.append(path)
+            result[name] = func(returns, equity)
         except Exception as e:
             print(f"  (skip plot '{name}': {e})")
 
-    return saved
+    return result

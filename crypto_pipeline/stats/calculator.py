@@ -12,6 +12,17 @@ round-trip, no re-deriving anything backtest.py already computed.
 
     result = run_backtest(ohlcv_1m, signals, backtest_config)
     stats = compute_stats(result, config)
+
+Public signature and returned dict shape (metrics / trade_summary /
+plots) are unchanged from before -- the ml module (ml/evaluation/
+evaluator.py) calls compute_stats(backtest_result, stats_config,
+plot_dir=plot_dir) and only ever reads stats["metrics"] / stats["trade_summary"],
+so it's unaffected by the change below. The only thing that changed is
+*what* ends up under stats["plots"]: numeric plot data (JSON-safe dicts of
+series/tables) instead of a list of saved .png paths. plot_dir is now just
+used as a JSON-safety label passthrough for callers that want to persist
+the plot data themselves (see stats_runner.py / save_stats()); no images
+are written to it.
 """
 
 import os
@@ -30,8 +41,10 @@ def compute_stats(backtest_result: dict, config: dict, plot_dir: str = None) -> 
     config : dict
         Loaded from stats/config.yaml.
     plot_dir : str, optional
-        Where to save plots. Skipped if not given, even if
-        config["generate_plots"] is true.
+        Unused for file output now (no PNGs are written). Kept only so
+        existing callers (e.g. ml/evaluation/evaluator.py) that pass
+        plot_dir= don't need to change. Plot *data* is generated whenever
+        config["generate_plots"] is true, regardless of this argument.
 
     Returns
     -------
@@ -39,7 +52,7 @@ def compute_stats(backtest_result: dict, config: dict, plot_dir: str = None) -> 
         {
           "metrics": {...every discovered quantstats stat...},
           "trade_summary": {...pulled straight from backtest_result...},
-          "plots": [<paths saved>],
+          "plots": {...numeric data behind each configured plot...},
         }
     """
     equity = backtest_result["equity_curve"]
@@ -53,9 +66,9 @@ def compute_stats(backtest_result: dict, config: dict, plot_dir: str = None) -> 
         exclude=config.get("exclude_metrics"),
     )
 
-    saved_plots = []
-    if plot_dir and config.get("generate_plots", True):
-        saved_plots = plots.generate_plots(returns, plot_dir, config.get("plots", []))
+    plot_data = {}
+    if config.get("generate_plots", True):
+        plot_data = plots.generate_plot_data(returns, equity, config.get("plots", []))
 
     trade_summary = {
         "final_balance": backtest_result.get("final_balance"),
@@ -67,7 +80,7 @@ def compute_stats(backtest_result: dict, config: dict, plot_dir: str = None) -> 
     return to_json_safe({
         "metrics": computed_metrics,
         "trade_summary": trade_summary,
-        "plots": saved_plots,
+        "plots": plot_data,
     })
 
 
