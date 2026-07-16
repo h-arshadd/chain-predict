@@ -6,12 +6,12 @@ dataset_loader.py
 Dataset Loading stage (PDF heading 1).
 
 Does NOT fetch from Postgres itself --
-crypto_pipeline.data_prep.main.run_ml_pipeline() already does that
+crypto_pipeline.ml.data_prep.main.run_ml_pipeline() already does that
 (OHLCV + features + sentiment + target). This module just takes that
 output, validates it, and optionally writes a debug CSV for manual
 inspection (never read back in by any pipeline step).
 
-exchange / symbol / model_type are read from data_prep/config.yaml,
+exchange / symbol / model_type are read from ml/data_prep/config.yaml,
 not duplicated in ml/config.yaml, so there is one source of truth.
 """
 
@@ -21,7 +21,7 @@ import os
 import pandas as pd
 import yaml
 
-from crypto_pipeline.data_prep.main import run_ml_pipeline
+from crypto_pipeline.ml.data_prep.main import run_ml_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ def load_dataset(ml_config_path: str, data_prep_config_path: str) -> pd.DataFram
 
     Args:
         ml_config_path: path to ml/config.yaml (output/debug settings)
-        data_prep_config_path: path to data_prep/config.yaml (passed
+        data_prep_config_path: path to ml/data_prep/config.yaml (passed
             through to run_ml_pipeline, and read for exchange/symbol/model_type)
 
     Returns:

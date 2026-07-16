@@ -12,7 +12,7 @@ names (via ml/regressors/registry.py for traditional models, or
 ml/deep_learning/registry.py for mlp/lstm/gru).
 
 Routing between regression and classification is AUTOMATIC, driven by
-data_prep/config.yaml's model_type -- not a separate switch you flip
+ml/data_prep/config.yaml's model_type -- not a separate switch you flip
 here. That file already decides regression vs classification once, at
 the source: model_type controls which target target_pipeline.py
 generates (continuous log-return for regression, -1/0/1 triple-barrier
@@ -97,7 +97,7 @@ def run_regression_pipeline(
 
     Args:
         ml_config_path: path to ml/config.yaml
-        data_prep_config_path: path to data_prep/config.yaml
+        data_prep_config_path: path to ml/data_prep/config.yaml
         ohlcv_1m: 1-minute OHLCV DataFrame (datetime, open, high, low,
             close) covering the test period -- passed straight through
             to evaluator.evaluate_model() for backtest execution. Not
@@ -171,7 +171,7 @@ def run_regression_pipeline(
                 f"run_regression_pipeline() requires data_prep_config['model_type'] == "
                 f"'regression', got '{model_type}'. Use classification_pipeline.py for "
                 f"a classification dataset instead -- model_type is set once in "
-                f"data_prep/config.yaml and drives which target was generated, so it "
+                f"ml/data_prep/config.yaml and drives which target was generated, so it "
                 f"can't be overridden here."
             )
 

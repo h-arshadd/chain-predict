@@ -1,4 +1,4 @@
-# crypto_pipeline/data_prep/main.py
+# crypto_pipeline/ml/data_prep/main.py
 
 """
 main.py
@@ -11,11 +11,11 @@ for regression and classification tasks.
 import logging
 import pandas as pd
 
-from crypto_pipeline.data_prep.ml_utils import load_config_yaml
-from crypto_pipeline.data_prep.data_pipeline import collect_market_data
-from crypto_pipeline.data_prep.feature_pipeline import engineer_features
-from crypto_pipeline.data_prep.sentiment_pipeline import collect_sentiment_data
-from crypto_pipeline.data_prep.target_pipeline import generate_target
+from crypto_pipeline.ml.data_prep.ml_utils import load_config_yaml
+from crypto_pipeline.ml.data_prep.data_pipeline import collect_market_data
+from crypto_pipeline.ml.data_prep.feature_pipeline import engineer_features
+from crypto_pipeline.ml.data_prep.sentiment_pipeline import collect_sentiment_data
+from crypto_pipeline.ml.data_prep.target_pipeline import generate_target
 
 
 logger = logging.getLogger(__name__)
