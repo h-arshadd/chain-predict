@@ -28,33 +28,41 @@ import os
 import joblib
 import yaml
 
-from crypto_pipeline.ml.persistence.artifact_manager import ARTIFACTS_DIR, CONFIGS_SUBDIR, CONFIG_FILENAMES
+from crypto_pipeline.ml.persistence.artifact_manager import (
+    ARTIFACTS_DIR, MODELS_DIR, CONFIGS_SUBDIR, CONFIG_FILENAMES,
+)
 from crypto_pipeline.ml.regressors.registry import REGRESSORS
 from crypto_pipeline.ml.classifiers.registry import CLASSIFIERS
 from crypto_pipeline.ml.deep_learning.registry import DL_REGRESSORS, DL_CLASSIFIERS
+from crypto_pipeline.ml.timeseries.registry import TS_MODELS
 
 logger = logging.getLogger(__name__)
 
 # model_kind (as written by metadata.py) -> which registry + file extension
 # to use for reconstruction. Mirrors metadata._MODEL_INFO_BUILDERS's own
-# four-way split -- one place per model kind, no if/elif chain here either.
+# five-way split -- one place per model kind, no if/elif chain here either.
 _MODEL_KIND_REGISTRIES = {
     "regressor": (REGRESSORS, "joblib"),
     "classifier": (CLASSIFIERS, "joblib"),
     "deep_learning_regressor": (DL_REGRESSORS, "pt"),
     "deep_learning_classifier": (DL_CLASSIFIERS, "pt"),
+    "timeseries": (TS_MODELS, "darts"),
 }
 
 
-def load_run(run_id: str, base_dir: str = ARTIFACTS_DIR) -> dict:
+def load_run(run_id: str, base_dir: str = ARTIFACTS_DIR, models_dir: str = MODELS_DIR) -> dict:
     """
     Load everything needed to run inference for one trained run.
 
     Args:
         run_id: the run folder/config name, e.g. from
             artifact_manager.make_run_id() or save_run()'s return value.
-        base_dir: root artifacts folder, defaults to "artifacts" (must
-            match whatever base_dir save_run() was originally called with).
+        base_dir: root artifacts folder (configs live here), defaults to
+            "artifacts" (must match whatever base_dir save_run() was
+            originally called with).
+        models_dir: root models folder (model + preprocessing files live
+            here), defaults to "models" (must match whatever models_dir
+            save_run() was originally called with).
 
     Returns:
         dict:
@@ -74,7 +82,7 @@ def load_run(run_id: str, base_dir: str = ARTIFACTS_DIR) -> dict:
                 feed features in (heading 11's explicit requirement)
     """
     config_dir = os.path.join(base_dir, CONFIGS_SUBDIR, run_id)
-    run_dir = os.path.join(base_dir, run_id)
+    run_dir = os.path.join(models_dir, run_id)
 
     if not os.path.isdir(config_dir):
         raise FileNotFoundError(f"No config folder found for run_id='{run_id}' at {config_dir}")

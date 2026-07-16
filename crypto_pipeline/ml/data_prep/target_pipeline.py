@@ -4,7 +4,8 @@
 target_pipeline.py
 ------------------
 Generates prediction targets: log return for regression,
--1/0/1 (threshold-based) for classification.
+-1/0/1 (threshold-based) for classification, raw close price for
+timeseries (Darts-backed models forecast the series directly).
 """
 
 import logging
@@ -41,8 +42,7 @@ def generate_target(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         df = _generate_classification_target(df, target_config)
     
     elif model_type == "timeseries":
-        logger.warning("Timeseries target generation not yet implemented")
-        df = _generate_regression_target(df, target_config)
+        df = _generate_timeseries_target(df, target_config)
     
     else:
         raise ValueError(f"Unknown model_type: {model_type}")
@@ -141,6 +141,31 @@ def _generate_classification_target(df: pd.DataFrame, target_config: dict) -> pd
         f"upper={upper_threshold}, lower={lower_threshold}, horizon={horizon})"
     )
     
+    return df
+
+
+def _generate_timeseries_target(df: pd.DataFrame, target_config: dict) -> pd.DataFrame:
+    """
+    Generate timeseries target: the raw close price itself, unshifted.
+
+    Unlike regression (log return) and classification (triple-barrier
+    label), Darts models (ml/timeseries/*, e.g. NBEATSModel, TCNModel)
+    forecast the actual series values directly and handle
+    non-stationarity/scaling internally -- there's no need to
+    pre-compute a return here, and doing so would just mean converting
+    predictions back to a price before signal generation anyway. The
+    target column is simply a copy of "close"; horizon is not applied
+    here since Darts models take how-many-steps-ahead as a predict()-time
+    argument (output_chunk_length / n), not something baked into the
+    target column itself.
+    """
+
+    if "close" not in df.columns:
+        raise ValueError("close price column required for target generation")
+
+    df["target"] = df["close"]
+    logger.info("Timeseries target: raw close price (no return/label transform)")
+
     return df
 
 

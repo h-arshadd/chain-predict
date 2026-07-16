@@ -28,6 +28,15 @@ Per the PDF:
 type" -- this is enforced by generate_predictions() always returning
 the same dict shape, with probabilities=None for regression instead of
 a different return type/signature.
+
+Timeseries (Darts-backed models, ml/timeseries/*) does NOT go through
+generate_predictions(): Darts models forecast n steps forward from
+wherever train() left off (model.predict(n=...)), there is no X_test
+DataFrame to predict row-by-row against, so the same function signature
+doesn't apply. generate_timeseries_predictions() below is the
+timeseries equivalent -- same standardized-dict philosophy, different
+shape because the input shape is genuinely different, not because
+timeseries is treated as a lesser case.
 """
 
 import logging
@@ -108,4 +117,39 @@ def _predict_classification(model, X_test: pd.DataFrame) -> dict:
         "probabilities": probabilities,
         "classes": classes,
         "n_predictions": len(predictions),
+    }
+
+
+def generate_timeseries_predictions(model, n: int, last_known_close: float, past_covariates=None) -> dict:
+    """
+    Generate a standardized prediction result for a timeseries model
+    (ml/timeseries/*, e.g. NBEATSTimeseriesModel, TCNTimeseriesModel).
+
+    Args:
+        model: a trained BaseTimeseriesModel exposing .predict(n, past_covariates)
+        n: int, how many steps ahead to forecast (typically
+            ml/config.yaml's model.params.output_chunk_length)
+        last_known_close: float, the close price the forecast is
+            anchored from (the last row of whatever series train() was
+            fit on) -- echoed back here so timeseries_signals.py can
+            compute a % change without needing the original DataFrame.
+        past_covariates: optional darts.TimeSeries of covariates
+            (indicator/pattern/sentiment columns) covering the forecast
+            horizon, forwarded to model.predict() unchanged.
+
+    Returns:
+        dict:
+            task_type: "timeseries"
+            forecast: np.ndarray, the n predicted future close prices,
+                in chronological order
+            last_known_close: float, echoed back
+            n_predictions: int, len(forecast)
+    """
+    forecast = model.predict(n=n, past_covariates=past_covariates)
+    logger.info(f"Generated {len(forecast)}-step timeseries forecast from last_known_close={last_known_close}")
+    return {
+        "task_type": "timeseries",
+        "forecast": forecast,
+        "last_known_close": last_known_close,
+        "n_predictions": len(forecast),
     }

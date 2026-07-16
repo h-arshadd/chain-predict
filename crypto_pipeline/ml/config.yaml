@@ -62,17 +62,51 @@ split:
 #                                 naive_bayes, xgboost, lightgbm, catboost)
 #                              -> or ml/deep_learning/registry.py's DL_CLASSIFIERS
 #                                 (mlp, lstm, gru) if using a deep learning model instead
+#   model_type=timeseries     -> ml/timeseries/registry.py's TS_MODELS
+#                                 (nbeats, tcn) -- Darts-backed, no
+#                                 traditional/deep-learning split here,
+#                                 every model in this family is Darts-backed.
+#                                 Requires input_chunk_length and
+#                                 output_chunk_length in params (every
+#                                 Darts model in this family needs both).
 # params are forwarded as-is to the underlying estimator's constructor --
 # nothing here is validated/hardcoded per-algorithm, so any param that
 # estimator accepts can go in params. Only one model runs per run, chosen
-# by whichever of regression_pipeline.py / classification_pipeline.py
-# matches ml/data_prep/config.yaml's model_type (see those files).
+# by whichever of regression_pipeline.py / classification_pipeline.py /
+# timeseries_pipeline.py matches ml/data_prep/config.yaml's model_type
+# (see those files).
 model:
-  algorithm: random_forest
+  algorithm: nbeats
   params:
-    n_estimators: 200
-    max_depth: 8
+    input_chunk_length: 48   # how many past steps the model looks at
+    output_chunk_length: 12  # how many future steps it predicts (= forecast horizon n)
+    n_epochs: 50
+    batch_size: 32
     random_state: 42
+
+  # TCN alternative -- swap the block above for this if algorithm: tcn
+  # instead of nbeats. Both are Darts-backed and support past_covariates
+  # natively (see ml/timeseries/tcn_model.py).
+  # algorithm: tcn
+  # params:
+  #   input_chunk_length: 48
+  #   output_chunk_length: 12
+  #   kernel_size: 3
+  #   num_filters: 32
+  #   dilation_base: 2
+  #   num_layers: null
+  #   dropout: 0.2
+  #   n_epochs: 50
+  #   batch_size: 32
+  #   random_state: 42
+
+  # Traditional regressor example (ml/regressors/registry.py) -- use if
+  # model_type: regression instead of timeseries.
+  # algorithm: random_forest
+  # params:
+  #   n_estimators: 200
+  #   max_depth: 8
+  #   random_state: 42
 
   # Deep learning example (ml/deep_learning/registry.py) -- swap the
   # block above for this if algorithm is "mlp"/"lstm"/"gru" instead of
@@ -106,12 +140,14 @@ preprocessing:
       params: {}
 
 # Signal Generation stage (PDF heading 9).
-# Converts predictor.generate_predictions()'s output into Buy/Sell/Hold
-# labels (ml/signals/regression_signals.py or classification_signals.py,
-# whichever matches data_prep's model_type -- same routing pattern as
-# the model section above). Thresholds are the ONLY thing configurable
-# here; the Buy/Sell/Hold comparison logic itself lives in signal_utils.py
-# and is never touched by config.
+# Converts predictor.generate_predictions()'s output (or, for timeseries,
+# predictor.generate_timeseries_predictions()'s forecast path) into
+# Buy/Sell/Hold labels (ml/signals/regression_signals.py,
+# classification_signals.py, or timeseries_signals.py, whichever matches
+# data_prep's model_type -- same routing pattern as the model section
+# above). Thresholds are the ONLY thing configurable here; the
+# Buy/Sell/Hold comparison logic itself lives in signal_utils.py and is
+# never touched by config.
 signals:
   # Used by ml/signals/regression_signals.py.
   # predicted return > buy_threshold  -> Buy
@@ -133,6 +169,17 @@ signals:
     bearish_class: -1
     bullish_threshold: 0.6
     bearish_threshold: 0.6
+
+  # Used by ml/signals/timeseries_signals.py. A timeseries model
+  # forecasts a whole path (n steps ahead), not one return/probability
+  # per row -- this is thresholded on the % change from the last known
+  # close to the FINAL forecasted step (see timeseries_signals.py).
+  # predicted % change > buy_threshold  -> Buy
+  # predicted % change < sell_threshold -> Sell
+  # otherwise                           -> Hold
+  timeseries:
+    buy_threshold: 0.002
+    sell_threshold: -0.002
 
 # Model Evaluation stage (PDF heading 10).
 # Used by ml/evaluation/evaluator.py's select_best_model() when comparing
