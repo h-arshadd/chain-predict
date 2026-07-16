@@ -56,7 +56,7 @@ def build_metadata(
         model_kind: "regressor" | "classifier" | "deep_learning_regressor"
             | "deep_learning_classifier" -- picks which model_info
             section shape gets used.
-        data_prep_config: data_prep/config.yaml dict, for dataset info
+        data_prep_config: ml/data_prep/config.yaml dict, for dataset info
             (symbol/exchange/timeframe/date range) and feature
             engineering config (indicators/patterns/sentiment params).
         feature_columns: list[str], from feature_selector.select_features(),

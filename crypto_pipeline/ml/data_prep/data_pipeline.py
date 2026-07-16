@@ -1,4 +1,4 @@
-# crypto_pipeline/ml_module/data_pipeline.py
+# crypto_pipeline/ml/data_prep/data_pipeline.py
 
 """
 data_pipeline.py

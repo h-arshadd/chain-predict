@@ -1,4 +1,4 @@
-# crypto_pipeline/ml_module/config.yaml
+# crypto_pipeline/ml/data_prep/config.yaml
 
 model_type: classification # regression | classification | timeseries
 

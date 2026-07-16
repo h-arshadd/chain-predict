@@ -1,4 +1,4 @@
-# crypto_pipeline/ml_module/sentiment_pipeline.py
+# crypto_pipeline/ml/data_prep/sentiment_pipeline.py
 
 """
 sentiment_pipeline.py
@@ -84,7 +84,7 @@ def _fetch_sentiment_from_source(source: str, df: pd.DataFrame, symbol: str = No
     end_date = df["datetime"].max()
     
     try:
-        from crypto_pipeline.ml_module.ml_utils import get_sentiment_for_period
+        from crypto_pipeline.ml.data_prep.ml_utils import get_sentiment_for_period
         
         sentiment_df = get_sentiment_for_period(
             source=source,

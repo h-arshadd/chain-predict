@@ -13,7 +13,7 @@ models, or ml/deep_learning/registry.py for mlp/lstm/gru).
 
 Mirrors regression_pipeline.py exactly, including the routing rule --
 see that file's module docstring for the full rationale. Short version:
-data_prep/config.yaml's model_type decides regression vs classification
+ml/data_prep/config.yaml's model_type decides regression vs classification
 once, at the source (it controls which target target_pipeline.py
 generates), so this pipeline reads that same field and refuses to run
 against a non-classification dataset rather than taking a separate
@@ -89,7 +89,7 @@ def run_classification_pipeline(
 
     Args:
         ml_config_path: path to ml/config.yaml
-        data_prep_config_path: path to data_prep/config.yaml
+        data_prep_config_path: path to ml/data_prep/config.yaml
         ohlcv_1m: 1-minute OHLCV DataFrame (datetime, open, high, low,
             close) covering the test period -- passed straight through
             to evaluator.evaluate_model() for backtest execution. Not
@@ -162,7 +162,7 @@ def run_classification_pipeline(
                 f"run_classification_pipeline() requires data_prep_config['model_type'] == "
                 f"'classification', got '{model_type}'. Use regression_pipeline.py for "
                 f"a regression dataset instead -- model_type is set once in "
-                f"data_prep/config.yaml and drives which target was generated, so it "
+                f"ml/data_prep/config.yaml and drives which target was generated, so it "
                 f"can't be overridden here."
             )
 
