@@ -17,8 +17,9 @@ Deliberately does NOT re-run preprocessing on X_new itself -- every
 fitted preprocessing object is already sitting in run["fit_objects"],
 and how they're re-applied (which columns, what order) is
 preprocessing_pipeline.py's job, not this file's. This stays a plain
-loader: read the three artifacts back off disk, hand them to the
-caller unchanged.
+loader: read the artifacts back off disk (the 5 per-stage config yamls
+under configs/{run_id}/, plus the model and preprocessing objects),
+hand them to the caller unchanged.
 """
 
 import logging
@@ -27,7 +28,7 @@ import os
 import joblib
 import yaml
 
-from crypto_pipeline.ml.persistence.artifact_manager import ARTIFACTS_DIR, CONFIGS_SUBDIR
+from crypto_pipeline.ml.persistence.artifact_manager import ARTIFACTS_DIR, CONFIGS_SUBDIR, CONFIG_FILENAMES
 from crypto_pipeline.ml.regressors.registry import REGRESSORS
 from crypto_pipeline.ml.classifiers.registry import CLASSIFIERS
 from crypto_pipeline.ml.deep_learning.registry import DL_REGRESSORS, DL_CLASSIFIERS
@@ -57,13 +58,14 @@ def load_run(run_id: str, base_dir: str = ARTIFACTS_DIR) -> dict:
 
     Returns:
         dict:
-            metadata: the full config dict written by metadata.build_metadata()
-                (dataset/features/data_split/preprocessing/model/evaluation,
-                plus run_summary)
+            metadata: dict with keys "data_prep", "split", "preprocessing",
+                "model", "evaluation" -- the 5 per-stage config dicts
+                written by metadata.build_*_metadata(), read back from
+                configs/{run_id}/*.yaml
             model: a trained, ready-to-.predict() model instance -- the
-                exact class + algorithm the run_summary/model_info
-                section says was used, loaded via that class's own
-                .load() (per PDF heading 5/6/7's required interface)
+                exact class + algorithm metadata["model"] says was used,
+                loaded via that class's own .load() (per PDF heading
+                5/6/7's required interface)
             fit_objects: list of {method, fit_info} from
                 preprocessing_pipeline.run_preprocessing(), in the exact
                 order they were originally applied (heading 4/11's
@@ -71,20 +73,27 @@ def load_run(run_id: str, base_dir: str = ARTIFACTS_DIR) -> dict:
             feature_columns: list[str], the exact order inference must
                 feed features in (heading 11's explicit requirement)
     """
-    configs_dir = os.path.join(base_dir, CONFIGS_SUBDIR)
-    config_path = os.path.join(configs_dir, f"{run_id}.yaml")
+    config_dir = os.path.join(base_dir, CONFIGS_SUBDIR, run_id)
     run_dir = os.path.join(base_dir, run_id)
 
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"No config found for run_id='{run_id}' at {config_path}")
+    if not os.path.isdir(config_dir):
+        raise FileNotFoundError(f"No config folder found for run_id='{run_id}' at {config_dir}")
 
-    with open(config_path, "r") as f:
-        metadata = yaml.safe_load(f)
+    metadata = {}
+    for stage, filename in CONFIG_FILENAMES.items():
+        stage_path = os.path.join(config_dir, filename)
+        if not os.path.exists(stage_path):
+            raise FileNotFoundError(f"Missing '{stage}' config for run_id='{run_id}' at {stage_path}")
+        with open(stage_path, "r") as f:
+            metadata[stage] = yaml.safe_load(f)
 
-    model_kind = metadata.get("model_kind")
+    model_kind = metadata["model"].get("model_type")
+    # metadata.py's model builders write model_type as "regressor" /
+    # "classifier" / "deep_learning_regressor" / "deep_learning_classifier"
+    # -- same values _MODEL_KIND_REGISTRIES keys on below.
     if model_kind not in _MODEL_KIND_REGISTRIES:
         raise ValueError(
-            f"Unknown model_kind '{model_kind}' in {config_path}. "
+            f"Unknown model_kind '{model_kind}' in {os.path.join(config_dir, CONFIG_FILENAMES['model'])}. "
             f"Expected one of: {sorted(_MODEL_KIND_REGISTRIES.keys())}"
         )
 
@@ -112,7 +121,7 @@ def load_run(run_id: str, base_dir: str = ARTIFACTS_DIR) -> dict:
     preprocessing_path = os.path.join(run_dir, "preprocessing.joblib")
     fit_objects = joblib.load(preprocessing_path) if os.path.exists(preprocessing_path) else []
 
-    feature_columns = metadata.get("features", {}).get("feature_columns", [])
+    feature_columns = metadata["preprocessing"].get("feature_columns", [])
 
     return {
         "metadata": metadata,

@@ -5,8 +5,11 @@ feature_selector.py
 --------------------
 Feature Selection stage (PDF heading 2).
 
-Feature columns, target column, timestamp column, and prediction horizon
-are all defined through config -- never hardcoded here.
+Feature columns, target column, and timestamp column are all defined
+through ml/config.yaml -- never hardcoded here. Prediction horizon is
+NOT set here: it comes from data_prep_config["target"]["horizon"], the
+same value target_pipeline.py used to generate the target in the first
+place, so there is exactly one place horizon is ever set.
 
 Two ways to select feature columns in config:
   1. Explicit list: features.feature_columns: [ind_RSI_14, ind_EMA_20, ...]
@@ -30,14 +33,18 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
-def select_features(df: pd.DataFrame, ml_config: dict) -> dict:
+def select_features(df: pd.DataFrame, ml_config: dict, data_prep_config: dict) -> dict:
     """
     Resolve feature columns, target column, timestamp column, and
-    prediction horizon from config against the actual dataset.
+    prediction horizon against the actual dataset.
 
     Args:
         df: dataset from dataset_loader.load_dataset()
         ml_config: ml/config.yaml dict
+        data_prep_config: ml/data_prep/config.yaml dict -- horizon is
+            read from here (target.horizon), not from ml_config, since
+            it's the same value target_pipeline.py already used to
+            generate the target.
 
     Returns:
         dict with keys:
@@ -51,10 +58,10 @@ def select_features(df: pd.DataFrame, ml_config: dict) -> dict:
 
     timestamp_column = features_config.get("timestamp_column", "datetime")
     target_column = features_config.get("target_column", "target")
-    horizon = features_config.get("horizon")
+    horizon = data_prep_config.get("target", {}).get("horizon")
 
     if horizon is None:
-        raise ValueError("features.horizon must be set in ml/config.yaml")
+        raise ValueError("target.horizon must be set in ml/data_prep/config.yaml")
 
     if timestamp_column not in df.columns:
         raise ValueError(f"timestamp_column '{timestamp_column}' not found in dataset")
