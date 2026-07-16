@@ -176,10 +176,11 @@ def build_model_metadata(
         _classifier_model_info()           -- traditional classifiers
         _deep_learning_regressor_model_info() -- MLP/LSTM/GRU regressors
         _deep_learning_classifier_model_info() -- MLP/LSTM/GRU classifiers
+        _timeseries_model_info()           -- Darts-backed models (NBEATS/TCN)
 
     Args:
         model_kind: "regressor" | "classifier" | "deep_learning_regressor"
-            | "deep_learning_classifier"
+            | "deep_learning_classifier" | "timeseries"
         algorithm: str, e.g. "random_forest", "xgboost", "lstm"
         hyperparams: dict, as passed to train() (for deep learning models
             this includes hidden_layers, dropout, optimizer, etc; for
@@ -247,6 +248,19 @@ def _deep_learning_classifier_model_info(algorithm: str, hyperparams: dict, clas
     }
 
 
+def _timeseries_model_info(algorithm: str, hyperparams: dict, classes: Optional[np.ndarray]) -> dict:
+    """Darts-backed timeseries model (ml/timeseries/*, e.g. NBEATSModel, TCNModel) -- no classes, uses Darts' own checkpoint format."""
+    return {
+        "model_type": "timeseries",
+        "algorithm": algorithm,
+        "input_chunk_length": hyperparams.get("input_chunk_length"),
+        "output_chunk_length": hyperparams.get("output_chunk_length"),
+        "hyperparameters": hyperparams,
+        "random_seed": hyperparams.get("random_state"),
+        "serialization_format": "darts_checkpoint",
+    }
+
+
 def _architecture_info(hyperparams: dict) -> dict:
     """Shared by both deep learning model_info builders -- the network-shape hyperparams."""
     return {
@@ -277,6 +291,7 @@ _MODEL_INFO_BUILDERS = {
     "classifier": _classifier_model_info,
     "deep_learning_regressor": _deep_learning_regressor_model_info,
     "deep_learning_classifier": _deep_learning_classifier_model_info,
+    "timeseries": _timeseries_model_info,
 }
 
 
