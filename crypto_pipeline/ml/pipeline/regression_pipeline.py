@@ -34,7 +34,7 @@ there, ml/deep_learning/registry.py's DL_REGRESSORS is checked instead.
 Either way the rest of the pipeline is unchanged -- every model exposes
 the same train()/predict()/save()/load() interface, so nothing past
 this point cares which registry it came from. model_kind ("regressor"
-vs "deep_learning_regressor") is threaded through to build_metadata()
+vs "deep_learning_regressor") is threaded through to build_model_metadata()
 so persistence/model_loader.py can reconstruct the right class later.
 
 This module runs the full PDF pipeline end to end: every run writes its
@@ -74,7 +74,13 @@ from crypto_pipeline.ml.deep_learning.registry import DL_REGRESSORS, build_dl_re
 from crypto_pipeline.ml.signals.regression_signals import generate_regression_signals
 from crypto_pipeline.ml.evaluation.evaluator import evaluate_model
 from crypto_pipeline.backtest.backtest import load_config as load_backtest_config
-from crypto_pipeline.ml.persistence.metadata import build_metadata
+from crypto_pipeline.ml.persistence.metadata import (
+    build_data_prep_metadata,
+    build_split_metadata,
+    build_preprocessing_metadata,
+    build_model_metadata,
+    build_evaluation_metadata,
+)
 from crypto_pipeline.ml.persistence.artifact_manager import make_run_id, save_run, ARTIFACTS_DIR
 from crypto_pipeline.ml.utils.logger import setup_logging
 
@@ -177,7 +183,7 @@ def run_regression_pipeline(
 
         # Headings 1-4: load, select features, split, preprocess.
         df = load_dataset(ml_config_path, data_prep_config_path)
-        selected = select_features(df, ml_config)
+        selected = select_features(df, ml_config, data_prep_config)
         feature_columns = selected["feature_columns"]
         target_column = selected["target_column"]
 
@@ -189,11 +195,12 @@ def run_regression_pipeline(
         train_df = preprocessed["train_df"]
         test_df = preprocessed["test_df"]
 
-        # Row-count bookkeeping for metadata.build_metadata()'s run_summary
-        # (heading 11 + your lead's "total rows, training rows from where to
-        # where, everything possible" requirement) -- captured here since
-        # this is the one place both the pre-split total and the post-drop
-        # train/test counts are all in scope together.
+        # Row-count bookkeeping for metadata.build_data_prep_metadata()
+        # and build_split_metadata() (heading 11 + your lead's "total
+        # rows, training rows from where to where, everything possible"
+        # requirement) -- captured here since this is the one place both
+        # the pre-split total and the post-drop train/test counts are
+        # all in scope together.
         row_counts = {
             "total_rows": len(df),
             "train_rows": len(train_df),
@@ -268,27 +275,39 @@ def run_regression_pipeline(
             run_id=algorithm,
         )
 
-        # Heading 11: full model/experiment persistence. metadata.build_metadata()
-        # assembles the complete experiment config (dataset/features/split/
-        # preprocessing/model/evaluation + a flat run_summary); test_metrics
-        # comes straight from this run's own evaluation, not re-derived.
-        # model_kind is whichever registry matched above -- this is what
-        # lets model_loader.load_run() reconstruct a deep learning model
-        # from the DL registry instead of the traditional one later.
-        metadata = build_metadata(
-            model_kind=model_kind,
-            data_prep_config=data_prep_config,
-            feature_columns=feature_columns,
-            target_column=target_column,
-            timestamp_column=selected["timestamp_column"],
-            split_info=split_info,
-            preprocessing_config=ml_config.get("preprocessing", {}),
-            fit_objects=preprocessed["fit_objects"],
-            algorithm=algorithm,
-            hyperparams=params,
-            row_counts=row_counts,
-            test_metrics={**evaluation["ml_metrics"], **evaluation["trading_metrics"]},
-        )
+        # Heading 11: full model/experiment persistence. Each pipeline
+        # stage gets its own config dict -- data_prep's config never
+        # touches the model's, so a run can be inspected stage by stage.
+        # test_metrics comes straight from this run's own evaluation,
+        # not re-derived. model_kind is whichever registry matched
+        # above -- this is what lets model_loader.load_run() reconstruct
+        # a deep learning model from the DL registry instead of the
+        # traditional one later.
+        metadata = {
+            "data_prep": build_data_prep_metadata(
+                data_prep_config=data_prep_config,
+                row_counts=row_counts,
+            ),
+            "split": build_split_metadata(
+                split_info=split_info,
+                row_counts=row_counts,
+            ),
+            "preprocessing": build_preprocessing_metadata(
+                feature_columns=feature_columns,
+                target_column=target_column,
+                timestamp_column=selected["timestamp_column"],
+                preprocessing_config=ml_config.get("preprocessing", {}),
+                fit_objects=preprocessed["fit_objects"],
+            ),
+            "model": build_model_metadata(
+                model_kind=model_kind,
+                algorithm=algorithm,
+                hyperparams=params,
+            ),
+            "evaluation": build_evaluation_metadata(
+                test_metrics={**evaluation["ml_metrics"], **evaluation["trading_metrics"]},
+            ),
+        }
         artifact_paths = save_run(
             run_id=resolved_run_id,
             metadata=metadata,
