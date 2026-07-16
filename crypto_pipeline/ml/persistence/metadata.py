@@ -43,6 +43,7 @@ def build_metadata(
     fit_objects: list,
     algorithm: str,
     hyperparams: dict,
+    row_counts: dict,
     train_metrics: Optional[dict] = None,
     val_metrics: Optional[dict] = None,
     test_metrics: Optional[dict] = None,
@@ -75,6 +76,19 @@ def build_metadata(
             train() (for deep learning models this includes
             hidden_layers, dropout, optimizer, etc; for traditional
             models whatever was forwarded to the sklearn-style constructor).
+        row_counts: dict, e.g.:
+            {
+              "total_rows": 8760,
+              "train_rows": 7008, "test_rows": 1752,
+              "dropped_rows_train": 0, "dropped_rows_test": 0,
+              "n_features": 42,
+            }
+            Everything a reader would need to sanity-check the run at a
+            glance without re-running the pipeline -- how many rows went
+            in, how many made it through preprocessing on each side of
+            the split, how many features were used. Pass whatever subset
+            you have; missing keys are simply omitted (not padded with
+            null), so this stays honest about what was actually tracked.
         train_metrics / val_metrics / test_metrics: dict or None, filled
             in once heading 10 (Evaluation) runs. Left as {} if not yet
             available, so this function can be called right after
@@ -92,9 +106,9 @@ def build_metadata(
             f"Unknown model_kind '{model_kind}'. Available: {sorted(_MODEL_INFO_BUILDERS.keys())}"
         )
 
-    dataset_info = _dataset_info(data_prep_config)
+    dataset_info = _dataset_info(data_prep_config, row_counts)
     feature_info = _feature_info(data_prep_config, feature_columns, target_column, timestamp_column)
-    data_split = _data_split(split_info)
+    data_split = _data_split(split_info, row_counts)
     preprocessing = _preprocessing_info(preprocessing_config, fit_objects)
     model_info = _MODEL_INFO_BUILDERS[model_kind](algorithm, hyperparams, classes)
     evaluation = {
@@ -105,6 +119,25 @@ def build_metadata(
 
     return {
         "model_kind": model_kind,
+        # run_summary: everything a reader would want at a glance without
+        # opening the dataset/features/model sections below -- one flat
+        # block, not nested, since this is meant to be skimmed.
+        "run_summary": {
+            "dataset_name": dataset_info["dataset_name"],
+            "symbol": dataset_info["symbol"],
+            "exchange": dataset_info["exchange"],
+            "timeframe": dataset_info["timeframe"],
+            "start_date": dataset_info["start_date"],
+            "end_date": dataset_info["end_date"],
+            "total_rows": dataset_info["total_rows"],
+            "train_period": f"{data_split['train_start']} -> {data_split['train_end']}",
+            "train_rows": data_split["train_rows"],
+            "test_period": f"{data_split['test_start']} -> {data_split['test_end']}",
+            "test_rows": data_split["test_rows"],
+            "n_features": feature_info["n_features"],
+            "model_type": model_info["model_type"],
+            "algorithm": algorithm,
+        },
         "dataset": dataset_info,
         "features": feature_info,
         "data_split": data_split,
@@ -117,21 +150,35 @@ def build_metadata(
 # ----------------------------------------------------------------------
 # Sections shared by every model kind
 # ----------------------------------------------------------------------
-def _dataset_info(data_prep_config: dict) -> dict:
+def _dataset_info(data_prep_config: dict, row_counts: dict) -> dict:
     data_cfg = data_prep_config.get("data", {})
+    symbol = data_cfg.get("symbol")
+    exchange = data_cfg.get("exchange")
+    timeframe = data_cfg.get("timeframe")
+    start_date = data_cfg.get("start_date")
+    end_date = data_cfg.get("end_date")
+
     return {
-        "symbol": data_cfg.get("symbol"),
-        "exchange": data_cfg.get("exchange"),
-        "timeframe": data_cfg.get("timeframe"),
-        "start_date": data_cfg.get("start_date"),
-        "end_date": data_cfg.get("end_date"),
+        # dataset_name: synthesized, not a separate config field anywhere
+        # upstream -- {exchange}_{symbol}_{timeframe} is the same naming
+        # shape dataset_loader.py's debug CSV path already uses
+        # (base_dir/exchange/symbol/model_type/), so this is recognizable
+        # rather than inventing a new convention.
+        "dataset_name": "_".join(str(p) for p in (exchange, symbol, timeframe) if p),
+        "symbol": symbol,
+        "exchange": exchange,
+        "timeframe": timeframe,
+        "start_date": start_date,
+        "end_date": end_date,
         "model_type": data_prep_config.get("model_type"),
+        "total_rows": row_counts.get("total_rows"),
     }
 
 
 def _feature_info(data_prep_config: dict, feature_columns: list, target_column: str, timestamp_column: str) -> dict:
     return {
         "feature_columns": list(feature_columns),
+        "n_features": len(feature_columns),
         "target_column": target_column,
         "timestamp_column": timestamp_column,
         "feature_engineering_config": {
@@ -143,16 +190,24 @@ def _feature_info(data_prep_config: dict, feature_columns: list, target_column: 
     }
 
 
-def _data_split(split_info: dict) -> dict:
+def _data_split(split_info: dict, row_counts: dict) -> dict:
     def _iso(value):
         return value.isoformat() if isinstance(value, pd.Timestamp) else value
 
     return {
         "train_start": _iso(split_info.get("train_start")),
         "train_end": _iso(split_info.get("train_end")),
+        "train_rows": row_counts.get("train_rows"),
         "test_start": _iso(split_info.get("test_start")),
         "test_end": _iso(split_info.get("test_end")),
+        "test_rows": row_counts.get("test_rows"),
         "test_size": split_info.get("test_size"),
+        # Rows dropped by preprocessing_pipeline.run_preprocessing()'s
+        # trailing dropna() (stationarity methods leave leading NaNs) --
+        # train_rows/test_rows above are already POST-drop, so this is
+        # what explains any gap against the pre-split row counts.
+        "dropped_rows_train": row_counts.get("dropped_rows_train"),
+        "dropped_rows_test": row_counts.get("dropped_rows_test"),
     }
 
 

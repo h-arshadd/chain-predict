@@ -45,17 +45,21 @@ split:
 # Every step's params are fit on the train split ONLY, then the same
 # fitted transform is applied to the test split (see preprocessing_pipeline.py).
 # Leave "steps" empty ([]) to pass features through unchanged.
-# Model Training stage (PDF headings 5 & 6).
+# Model Training stage (PDF headings 5, 6 & 7).
 # algorithm must be a key in the registry that matches data_prep's
 # model_type:
 #   model_type=regression     -> ml/regressors/registry.py's REGRESSORS
 #                                 (linear_regression, ridge, lasso, elasticnet,
 #                                 random_forest, extra_trees, svr, xgboost,
 #                                 lightgbm, catboost)
+#                              -> or ml/deep_learning/registry.py's DL_REGRESSORS
+#                                 (mlp, lstm, gru) if using a deep learning model instead
 #   model_type=classification -> ml/classifiers/registry.py's CLASSIFIERS
 #                                 (logistic_regression, decision_tree,
 #                                 random_forest, extra_trees, svm, knn,
 #                                 naive_bayes, xgboost, lightgbm, catboost)
+#                              -> or ml/deep_learning/registry.py's DL_CLASSIFIERS
+#                                 (mlp, lstm, gru) if using a deep learning model instead
 # params are forwarded as-is to the underlying estimator's constructor --
 # nothing here is validated/hardcoded per-algorithm, so any param that
 # estimator accepts can go in params. Only one model runs per run, chosen
@@ -68,6 +72,28 @@ model:
     max_depth: 8
     random_state: 42
 
+  # Deep learning example (ml/deep_learning/registry.py) -- swap the
+  # block above for this if algorithm is "mlp"/"lstm"/"gru" instead of
+  # a traditional sklearn-style algorithm. All keys are read by
+  # base_network.py's BaseNetwork/BaseClassifierNetwork; see that file's
+  # docstring for the full list.
+  # algorithm: lstm
+  # params:
+  #   hidden_layers: 2
+  #   hidden_units: 64
+  #   activation: relu
+  #   dropout: 0.2
+  #   batch_norm: false
+  #   optimizer: adam
+  #   learning_rate: 0.001
+  #   scheduler: reduce_on_plateau
+  #   scheduler_params:
+  #     patience: 5
+  #   batch_size: 32
+  #   epochs: 50
+  #   early_stopping_patience: 10
+  #   random_seed: 42
+
 preprocessing:
   steps:
     - method: fractional_differencing
@@ -76,3 +102,41 @@ preprocessing:
         threshold: 1.0e-3
     - method: robust_scaler
       params: {}
+
+# Signal Generation stage (PDF heading 9).
+# Converts predictor.generate_predictions()'s output into Buy/Sell/Hold
+# labels (ml/signals/regression_signals.py or classification_signals.py,
+# whichever matches data_prep's model_type -- same routing pattern as
+# the model section above). Thresholds are the ONLY thing configurable
+# here; the Buy/Sell/Hold comparison logic itself lives in signal_utils.py
+# and is never touched by config.
+signals:
+  # Used by ml/signals/regression_signals.py.
+  # predicted return > buy_threshold  -> Buy
+  # predicted return < sell_threshold -> Sell
+  # otherwise                         -> Hold
+  regression:
+    buy_threshold: 0.002
+    sell_threshold: -0.002
+
+  # Used by ml/signals/classification_signals.py.
+  # bullish_class/bearish_class must match the actual label values in
+  # your target column -- data_prep's triple-barrier target encodes
+  # -1 (down) / 0 (neutral) / 1 (up), so 1/-1 are the defaults here.
+  # bullish probability > bullish_threshold -> Buy
+  # bearish probability > bearish_threshold -> Sell
+  # otherwise                               -> Hold
+  classification:
+    bullish_class: 1
+    bearish_class: -1
+    bullish_threshold: 0.6
+    bearish_threshold: 0.6
+
+# Model Evaluation stage (PDF heading 10).
+# Used by ml/evaluation/evaluator.py's select_best_model() when comparing
+# several runs -- picks which trading_metrics key decides the "best" model.
+# ML metrics (MAE/accuracy/etc.) are never used for this, only this metric.
+# Supported values: total_return, sharpe_ratio, sortino_ratio, calmar_ratio,
+# max_drawdown, profit_factor, win_rate.
+evaluation:
+  primary_metric: sharpe_ratio
