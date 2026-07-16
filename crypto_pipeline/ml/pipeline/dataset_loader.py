@@ -146,7 +146,7 @@ def _validate_dataset(df: pd.DataFrame) -> None:
 def _save_debug_csv(df: pd.DataFrame, data_prep_config: dict, output_config: dict) -> None:
     """
     Save a debug-only CSV for manual inspection.
-    Path: {base_dir}/{exchange}/{symbol}/{model_type}/dataset.csv
+    Path: {base_dir}/{exchange}/{symbol}/{model_type}/dataset_{model_type}.csv
     """
 
     exchange = data_prep_config["data"]["exchange"]
@@ -157,7 +157,7 @@ def _save_debug_csv(df: pd.DataFrame, data_prep_config: dict, output_config: dic
     out_dir = os.path.join(base_dir, exchange, symbol, model_type)
     os.makedirs(out_dir, exist_ok=True)
 
-    out_path = os.path.join(out_dir, "dataset.csv")
+    out_path = os.path.join(out_dir, f"dataset_{model_type}.csv")
     df.to_csv(out_path, index=False)
     logger.info(f"Debug CSV saved to {out_path}")
 
