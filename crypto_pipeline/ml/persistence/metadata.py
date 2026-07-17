@@ -7,21 +7,33 @@ Builds the per-stage experiment config dicts that get written alongside
 every trained model (PDF heading 11: "Each trained model shall include a
 configuration describing the complete experiment").
 
-One yaml per pipeline stage, instead of a single combined file -- each
-stage's builder only knows about that stage's own inputs, so a new field
-in (say) preprocessing never touches the data_prep or model builders:
+This is a RECORD of what ran (dates, split boundaries, row counts,
+which preprocessing/model settings were used, signal counts, and a
+handful of summary metrics) -- it's meant to be readable at a glance
+and reusable later for inference. It intentionally does NOT hold any
+of the heavy computation (no per-day quantstats series, no equity
+curves, no trade ledgers) -- that stuff already lives in
+pipeline_out/{algorithm}/07_metrics.csv and 07_trade_ledger.csv if you
+need the full detail.
+
+One builder per pipeline stage -- each only knows about that stage's
+own inputs, so a new field in (say) preprocessing never touches the
+data_prep or model builders:
 
     build_data_prep_metadata()    -- data/features/sentiment/target
                                       config (from ml/config.yaml), dataset info
-    build_split_metadata()        -- train_test_split.py: train/test date
-                                      ranges, row counts, test_size
+    build_split_metadata()        -- train_test_split.py: train/test/(validation)
+                                      date ranges, row counts, test_size
     build_preprocessing_metadata() -- preprocessing/ folder: configured
                                       steps + which methods actually fit
     build_model_metadata()        -- regressors/classifiers/deep_learning
                                       folders: algorithm, hyperparams,
                                       architecture (isolated per model_kind,
                                       same as before)
-    build_evaluation_metadata()   -- evaluation/ folder: train/val/test metrics
+    build_evaluation_metadata()   -- evaluation/ folder: a short scalar
+                                      summary (ml metrics + trade summary
+                                      + a few named trading metrics), not
+                                      the full quantstats output
 
 artifact_manager.py merges all five into one run_config.json under
 artifacts/configs/{run_id}/; this module only assembles the dicts.
@@ -36,17 +48,21 @@ import pandas as pd
 # ----------------------------------------------------------------------
 # data_prep/ -- dataset + feature engineering + sentiment + target config
 # ----------------------------------------------------------------------
-def build_data_prep_metadata(ml_config: dict, row_counts: dict) -> dict:
+def build_data_prep_metadata(ml_config: dict, row_counts: dict, target_counts: Optional[dict] = None) -> dict:
     """
     Everything that drove data prep: what data was pulled
     (symbol/exchange/timeframe/date range), how features were engineered
     (indicators/patterns), sentiment config, and target generation
     config (horizon/thresholds) -- read straight from ml/config.yaml
-    plus the resulting row count.
+    plus the resulting row count and target label distribution.
 
     Args:
         ml_config: ml/config.yaml dict
         row_counts: dict from the pipeline, uses "total_rows"
+        target_counts: optional dict of {label: count} for the
+            triple-barrier target column (e.g. {"-1": 1200, "0": 3400,
+            "1": 1150}) -- how many rows fall into each class before
+            train/test split. None if not computed by the caller.
 
     Returns:
         dict to be written to artifacts/configs/{run_id}/data_prep.yaml
@@ -78,6 +94,7 @@ def build_data_prep_metadata(ml_config: dict, row_counts: dict) -> dict:
         "sentiment": ml_config.get("sentiment", {}),
         "target": ml_config.get("target", {}),
         "total_rows": row_counts.get("total_rows"),
+        "target_counts": target_counts or {},
     }
 
 
@@ -86,15 +103,18 @@ def build_data_prep_metadata(ml_config: dict, row_counts: dict) -> dict:
 # ----------------------------------------------------------------------
 def build_split_metadata(split_info: dict, row_counts: dict) -> dict:
     """
-    Train/test split record (PDF heading 3's required fields): training
-    start/end date, test start/end date, plus row counts on each side
-    both before and after preprocessing's trailing dropna().
+    Train/test(/validation) split record (PDF heading 3's required
+    fields): start/end date and row count for each split.
 
     Args:
-        split_info: dict from train_test_split.split_dataset()
-        row_counts: dict from the pipeline (train_rows/test_rows are
-            POST preprocessing-drop; dropped_rows_train/test explain
-            the gap against the pre-drop split)
+        split_info: dict from train_test_split.split_dataset(). If/when
+            a validation split is added there, this picks it up
+            automatically as long as it uses the same
+            val_start/val_end/val_size key naming as train/test -- no
+            other caller needs to change.
+        row_counts: dict from the pipeline (train_rows/test_rows/
+            val_rows are POST preprocessing-drop; dropped_rows_train/
+            test/val explain the gap against the pre-drop split)
 
     Returns:
         dict to be written to artifacts/configs/{run_id}/split.yaml
@@ -102,7 +122,7 @@ def build_split_metadata(split_info: dict, row_counts: dict) -> dict:
     def _iso(value):
         return value.isoformat() if isinstance(value, pd.Timestamp) else value
 
-    return {
+    result = {
         "test_size": split_info.get("test_size"),
         "train": {
             "start_date": _iso(split_info.get("train_start")),
@@ -117,6 +137,20 @@ def build_split_metadata(split_info: dict, row_counts: dict) -> dict:
             "dropped_rows": row_counts.get("dropped_rows_test"),
         },
     }
+
+    # Only added if a validation split actually exists upstream --
+    # split_dataset() doesn't produce one today, so this stays out of
+    # the written config until it does (no empty/null placeholder
+    # clutter in the meantime).
+    if split_info.get("val_start") is not None or row_counts.get("val_rows") is not None:
+        result["validation"] = {
+            "start_date": _iso(split_info.get("val_start")),
+            "end_date": _iso(split_info.get("val_end")),
+            "rows": row_counts.get("val_rows"),
+            "dropped_rows": row_counts.get("dropped_rows_val"),
+        }
+
+    return result
 
 
 # ----------------------------------------------------------------------
@@ -166,6 +200,7 @@ def build_model_metadata(
     model_kind: str,
     algorithm: str,
     hyperparams: dict,
+    requested_hyperparams: Optional[dict] = None,
     classes: Optional[np.ndarray] = None,
 ) -> dict:
     """
@@ -182,10 +217,18 @@ def build_model_metadata(
         model_kind: "regressor" | "classifier" | "deep_learning_regressor"
             | "deep_learning_classifier" | "timeseries"
         algorithm: str, e.g. "random_forest", "xgboost", "lstm"
-        hyperparams: dict, as passed to train() (for deep learning models
-            this includes hidden_layers, dropout, optimizer, etc; for
-            traditional models whatever was forwarded to the
-            sklearn-style constructor)
+        hyperparams: dict -- the model's COMPLETE effective parameter
+            set (for sklearn-style models: model.model.get_params(),
+            i.e. every override PLUS every library default that
+            actually got used; for deep learning/timeseries models:
+            same as requested_hyperparams, since those don't expose a
+            generic get_params()). Written as "hyperparameters".
+        requested_hyperparams: dict or None -- just the keys explicitly
+            set in ml_config's param_overrides for this run (i.e. what
+            _params_for() returned), kept separately so it's easy to
+            see what you actually configured vs what the library filled
+            in. Written as "configured_overrides". Defaults to
+            `hyperparams` if not given (keeps old call sites working).
         classes: np.ndarray or None -- required for classifier /
             deep_learning_classifier kinds (the label set), ignored for
             regressor kinds
@@ -197,7 +240,11 @@ def build_model_metadata(
         raise ValueError(
             f"Unknown model_kind '{model_kind}'. Available: {sorted(_MODEL_INFO_BUILDERS.keys())}"
         )
-    return _MODEL_INFO_BUILDERS[model_kind](algorithm, hyperparams, classes)
+    if requested_hyperparams is None:
+        requested_hyperparams = hyperparams
+    info = _MODEL_INFO_BUILDERS[model_kind](algorithm, hyperparams, classes)
+    info["configured_overrides"] = requested_hyperparams
+    return info
 
 
 def _regressor_model_info(algorithm: str, hyperparams: dict, classes: Optional[np.ndarray]) -> dict:
@@ -296,23 +343,55 @@ _MODEL_INFO_BUILDERS = {
 
 
 # ----------------------------------------------------------------------
-# evaluation/ -- train/val/test metrics
+# evaluation/ -- short scalar summary (NOT the full quantstats dump)
 # ----------------------------------------------------------------------
+
+# The trading metrics worth keeping in the config as a quick-glance
+# summary -- same names evaluator.py's _METRIC_NAME_MAP already maps
+# onto compute_stats()'s actual quantstats keys. Everything else
+# quantstats returns (rolling_sharpe, pct_rank, per-day series, etc.)
+# is computation, not config, and is skipped here -- the full dict is
+# still available in pipeline_out/{algorithm}/07_metrics.csv.
+_SUMMARY_TRADING_METRICS = (
+    "comp", "sharpe", "sortino", "calmar", "max_drawdown", "profit_factor", "win_rate",
+)
+
+
 def build_evaluation_metadata(
-    train_metrics: Optional[dict] = None,
-    val_metrics: Optional[dict] = None,
-    test_metrics: Optional[dict] = None,
+    ml_metrics: Optional[dict] = None,
+    trading_metrics: Optional[dict] = None,
+    trade_summary: Optional[dict] = None,
+    signal_counts: Optional[dict] = None,
 ) -> dict:
     """
-    Evaluation results (PDF heading 10). Left as {} for any split not yet
-    available, so this can be called right after training and updated
-    later without changing shape.
+    Evaluation results (PDF heading 10) -- a short, scalar-only summary
+    meant to be read at a glance and reused for inference later, not
+    the full backtest/quantstats computation.
+
+    Args:
+        ml_metrics: dict from compute_regression_metrics() /
+            compute_classification_metrics() (already scalar-only,
+            e.g. {"mae": ..., "rmse": ...} or {"accuracy": ..., ...})
+        trading_metrics: the full "metrics" dict from
+            stats.calculator.compute_stats() (evaluation["trading_metrics"]);
+            only the named scalars in _SUMMARY_TRADING_METRICS are
+            pulled out of it, everything else (rolling/per-day series)
+            is dropped
+        trade_summary: the "trade_summary" dict from compute_stats()
+            (final_balance, total_net_profit, total_trades, win_loss)
+            -- already scalar-only, kept as-is
+        signal_counts: dict from signals.signal_utils.signal_counts(),
+            e.g. {"Buy": 40, "Sell": 35, "Hold": 900}
 
     Returns:
         dict to be written to artifacts/configs/{run_id}/evaluation.yaml
     """
+    trading_metrics = trading_metrics or {}
     return {
-        "train_metrics": train_metrics or {},
-        "val_metrics": val_metrics or {},
-        "test_metrics": test_metrics or {},
+        "ml_metrics": ml_metrics or {},
+        "trading_metrics_summary": {
+            k: trading_metrics.get(k) for k in _SUMMARY_TRADING_METRICS if k in trading_metrics
+        },
+        "trade_summary": trade_summary or {},
+        "signal_counts": signal_counts or {},
     }

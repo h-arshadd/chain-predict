@@ -208,6 +208,36 @@ def _params_for(algorithm: str, model_type: str, ml_config: dict) -> dict:
     return overrides.get(model_type, {}).get(algorithm, {}) or {}
 
 
+def _effective_hyperparams(model, requested_params: dict) -> dict:
+    """
+    What the model actually trained with, not just what was overridden
+    in config. `requested_params` (from _params_for()) only holds the
+    keys explicitly set in ml_config's param_overrides -- anything left
+    out falls back to the underlying estimator's own defaults, and
+    those defaults are otherwise invisible in the saved config.
+
+    For sklearn-style estimators (regressors/classifiers -- anything
+    with model.model.get_params()) this pulls the complete effective
+    parameter set straight off the fitted estimator. For everything
+    else (deep learning nets, Darts timeseries models -- no generic
+    get_params()) requested_params IS the full picture already: any
+    remaining defaults live inside that model's own _build_network()/
+    constructor and aren't introspectable generically, so there's
+    nothing more to add here.
+    """
+    inner_model = getattr(model, "model", None)
+    if inner_model is not None and hasattr(inner_model, "get_params"):
+        try:
+            return inner_model.get_params()
+        except Exception:
+            logger.warning(
+                f"{type(model).__name__}.model.get_params() failed -- "
+                f"falling back to the requested param_overrides only",
+                exc_info=True,
+            )
+    return dict(requested_params)
+
+
 def _fetch_ohlcv_1m(ml_config: dict) -> pd.DataFrame:
     """
     Fetch 1-minute OHLCV straight from Postgres, same call pattern
@@ -329,6 +359,19 @@ def run_ml_pipeline(
     }
     logger.info(f"Row counts: {row_counts}")
 
+    # How many rows fall into each target class (e.g. -1/0/1 for the
+    # triple-barrier label) over the full dataset, before the
+    # train/test split -- written into data_prep metadata below so a
+    # later inference run can see the class balance the model trained on.
+    # Classification-only: regression's target is a continuous float
+    # (log return), so value_counts() on it would just be ~1 per unique
+    # value -- not a meaningful distribution, so it's skipped there.
+    if model_type == "classification":
+        target_counts = {str(k): int(v) for k, v in df[target_column].value_counts().items()}
+    else:
+        target_counts = {}
+    logger.info(f"Target counts: {target_counts}")
+
     backtest_config = load_backtest_config(backtest_config_path)
     stats_config = _load_yaml(stats_config_path) if stats_config_path else _default_stats_config()
 
@@ -348,6 +391,7 @@ def run_ml_pipeline(
                 target_column=target_column,
                 timestamp_column=timestamp_column,
                 row_counts=row_counts,
+                target_counts=target_counts,
                 ohlcv_1m=ohlcv_1m,
                 backtest_config=backtest_config,
                 stats_config=stats_config,
@@ -380,6 +424,7 @@ def _run_one_algorithm(
     target_column: str,
     timestamp_column: str,
     row_counts: dict,
+    target_counts: dict,
     ohlcv_1m: pd.DataFrame,
     backtest_config: dict,
     stats_config: dict,
@@ -390,7 +435,14 @@ def _run_one_algorithm(
 ) -> dict:
     """Train/predict/signal/evaluate/persist one algorithm end to end."""
 
-    resolved_run_id = make_run_id(algorithm)
+    data_cfg = ml_config.get("data", {})
+    resolved_run_id = make_run_id(
+        algorithm,
+        symbol=data_cfg.get("symbol"),
+        exchange=data_cfg.get("exchange"),
+        model_type=model_type,
+        horizon=ml_config.get("target", {}).get("horizon"),
+    )
     log_path = setup_logging(run_id=resolved_run_id)
     logger.info(f"Training '{algorithm}': run_id={resolved_run_id}, model_type={model_type}, log file={log_path}")
 
@@ -530,7 +582,8 @@ def _run_one_algorithm(
         signals_df = predictions_df.copy()
         signals_df["signal"] = signals
     _dump("06_signals.csv", signals_df)
-    logger.info(f"[{algorithm}] Signal counts: {signal_counts(signals)}")
+    algo_signal_counts = signal_counts(signals)
+    logger.info(f"[{algorithm}] Signal counts: {algo_signal_counts}")
 
     # ---- Heading 10: evaluation (ML metrics + backtest + stats) ------
     evaluation = evaluate_model(
@@ -546,6 +599,9 @@ def _run_one_algorithm(
         run_id=algorithm,
     )
 
+    # 07_metrics.csv keeps the FULL computation (ml metrics + every
+    # quantstats key) for anyone who wants to dig into one run -- the
+    # run_config.json written below only gets the short summary.
     metrics_row = {**evaluation["ml_metrics"], **evaluation["trading_metrics"]}
     _dump("07_metrics.csv", pd.DataFrame([metrics_row]))
     _dump("07_trade_ledger.csv", evaluation["backtest_result"]["trade_ledger"])
@@ -555,6 +611,7 @@ def _run_one_algorithm(
         "data_prep": build_data_prep_metadata(
             ml_config=ml_config,
             row_counts=row_counts,
+            target_counts=target_counts,
         ),
         "split": build_split_metadata(
             split_info=split_info,
@@ -570,11 +627,15 @@ def _run_one_algorithm(
         "model": build_model_metadata(
             model_kind=model_kind,
             algorithm=algorithm,
-            hyperparams=params,
+            hyperparams=_effective_hyperparams(model, params),
+            requested_hyperparams=params,
             classes=classes,
         ),
         "evaluation": build_evaluation_metadata(
-            test_metrics=metrics_row,
+            ml_metrics=evaluation["ml_metrics"],
+            trading_metrics=evaluation["trading_metrics"],
+            trade_summary=evaluation["trade_summary"],
+            signal_counts=algo_signal_counts,
         ),
     }
     artifact_paths = save_run(

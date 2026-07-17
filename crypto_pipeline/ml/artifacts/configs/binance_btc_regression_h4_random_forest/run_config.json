@@ -1,0 +1,236 @@
+{
+  "run_summary": {
+    "run_id": "binance_btc_regression_h4_random_forest",
+    "algorithm": "random_forest",
+    "model_kind": "regressor",
+    "pipeline_type": "regression",
+    "symbol": "btc",
+    "exchange": "binance",
+    "timeframe": "1h",
+    "start_date": "2024-01-01",
+    "end_date": "2026-01-01",
+    "horizon": 4
+  },
+  "data_prep": {
+    "dataset_name": "binance_btc_1h",
+    "model_type": "regression",
+    "data": {
+      "symbol": "btc",
+      "exchange": "binance",
+      "timeframe": "1h",
+      "start_date": "2024-01-01",
+      "end_date": "2026-01-01",
+      "calculate_ohlcv": true
+    },
+    "features": {
+      "enabled": true,
+      "indicators": {
+        "EMA": [
+          {
+            "parameters": {
+              "period": 20
+            },
+            "aliases": {
+              "ema": "ind_EMA_20"
+            }
+          },
+          {
+            "parameters": {
+              "period": 50
+            },
+            "aliases": {
+              "ema": "ind_EMA_50"
+            }
+          }
+        ],
+        "RSI": [
+          {
+            "parameters": {
+              "period": 14
+            },
+            "aliases": {
+              "value": "ind_RSI_14"
+            }
+          }
+        ],
+        "MACD": [
+          {
+            "parameters": {
+              "fastperiod": 12,
+              "slowperiod": 26,
+              "signalperiod": 9
+            },
+            "aliases": {
+              "macd": "ind_MACD_12_26_9",
+              "signal": "ind_MACD_SIGNAL_12_26_9",
+              "histogram": "ind_MACD_HIST_12_26_9"
+            }
+          }
+        ]
+      },
+      "patterns": {
+        "DOJI": {
+          "aliases": {
+            "pattern": "pat_DOJI"
+          }
+        },
+        "ENGULFING": {
+          "aliases": {
+            "pattern": "pat_ENGULFING"
+          }
+        }
+      },
+      "timestamp_column": "datetime",
+      "target_column": "target",
+      "include_prefixes": [
+        "ind_",
+        "pat_",
+        "sen_"
+      ],
+      "feature_columns_extra": [
+        "close",
+        "volume"
+      ]
+    },
+    "sentiment": {
+      "enabled": false,
+      "source": [
+        "reddit"
+      ],
+      "encoding": "numerical"
+    },
+    "target": {
+      "horizon": 4,
+      "upper_threshold": 0.001,
+      "lower_threshold": -0.001,
+      "filter_noise": true,
+      "noise_threshold": 0.001
+    },
+    "total_rows": 15087,
+    "target_counts": {}
+  },
+  "split": {
+    "test_size": 0.2,
+    "train": {
+      "start_date": "2024-01-03T02:00:00",
+      "end_date": "2025-08-05T11:00:00",
+      "rows": 11998,
+      "dropped_rows": 72
+    },
+    "test": {
+      "start_date": "2025-08-05T12:00:00",
+      "end_date": "2025-12-31T19:00:00",
+      "rows": 2945,
+      "dropped_rows": 72
+    }
+  },
+  "preprocessing": {
+    "feature_columns": [
+      "ind_EMA",
+      "ind_MACD_12_26_9",
+      "ind_MACD_SIGNAL_12_26_9",
+      "ind_MACD_hist",
+      "ind_RSI_14",
+      "pat_DOJI",
+      "pat_ENGULFING",
+      "close",
+      "volume"
+    ],
+    "n_features": 9,
+    "target_column": "target",
+    "timestamp_column": "datetime",
+    "steps": [
+      {
+        "method": "fractional_differencing",
+        "params": {
+          "d": 0.2,
+          "threshold": 0.001
+        }
+      },
+      {
+        "method": "robust_scaler",
+        "params": {}
+      }
+    ],
+    "fitted_methods": [
+      "fractional_differencing",
+      "robust_scaler"
+    ]
+  },
+  "model": {
+    "model_type": "regressor",
+    "algorithm": "random_forest",
+    "hyperparameters": {
+      "bootstrap": true,
+      "ccp_alpha": 0.0,
+      "criterion": "squared_error",
+      "max_depth": null,
+      "max_features": 1.0,
+      "max_leaf_nodes": null,
+      "max_samples": null,
+      "min_impurity_decrease": 0.0,
+      "min_samples_leaf": 1,
+      "min_samples_split": 2,
+      "min_weight_fraction_leaf": 0.0,
+      "monotonic_cst": null,
+      "n_estimators": 100,
+      "n_jobs": null,
+      "oob_score": false,
+      "random_state": 42,
+      "verbose": 0,
+      "warm_start": false
+    },
+    "random_seed": 42,
+    "serialization_format": "joblib",
+    "configured_overrides": {
+      "n_estimators": 100,
+      "criterion": "squared_error",
+      "max_depth": null,
+      "min_samples_split": 2,
+      "min_samples_leaf": 1,
+      "min_weight_fraction_leaf": 0.0,
+      "max_features": 1.0,
+      "max_leaf_nodes": null,
+      "min_impurity_decrease": 0.0,
+      "bootstrap": true,
+      "oob_score": false,
+      "n_jobs": null,
+      "random_state": 42,
+      "verbose": 0,
+      "warm_start": false,
+      "ccp_alpha": 0.0,
+      "max_samples": null
+    }
+  },
+  "evaluation": {
+    "ml_metrics": {
+      "mae": 0.007346767569167914,
+      "mse": 0.00010366671831064495,
+      "rmse": 0.010181685435655776
+    },
+    "trading_metrics_summary": {
+      "comp": -0.033382749311198334,
+      "sharpe": -0.88410641570379,
+      "sortino": -1.210611037707337,
+      "calmar": -0.3158153406278681,
+      "max_drawdown": -0.90333827493112,
+      "profit_factor": 0.7054005809335171,
+      "win_rate": 0.40540540540540543
+    },
+    "trade_summary": {
+      "final_balance": 9666.172506888008,
+      "total_net_profit": -333.8274931119922,
+      "total_trades": 241,
+      "win_loss": {
+        "wins": 80,
+        "losses": 161,
+        "win_rate": 0.33195020746887965
+      }
+    },
+    "signal_counts": {
+      "Buy": 535,
+      "Sell": 628,
+      "Hold": 1782
+    }
+  }
+}
