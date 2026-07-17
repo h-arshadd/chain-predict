@@ -31,7 +31,3 @@ crypto_pipeline/ml/models/
 crypto_pipeline/ml/artifacts/
 crypto_pipeline/ml/pipeline_out/
 crypto_pipeline/ml/outputs/
-crypto_pipeline/ml/logs/*.log
-**/__pycache__/
-*.pyc
-.env
