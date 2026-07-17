@@ -40,22 +40,30 @@ CLASSIFIERS: Dict[str, Type[BaseClassifier]] = {
 }
 
 
-def build_classifier(algorithm: str, **hyperparams) -> BaseClassifier:
+def build_classifier(algorithm_name: str, **hyperparams) -> BaseClassifier:
     """
     Instantiate a classifier by config name.
 
     Args:
-        algorithm: key into CLASSIFIERS, e.g. "random_forest"
+        algorithm_name: key into CLASSIFIERS, e.g. "random_forest"
         **hyperparams: forwarded to the model's constructor, and from
             there straight into the underlying estimator -- ml/config.yaml's
             model.params dict is unpacked into this.
 
+    Note: this parameter is named `algorithm_name` (not `algorithm`)
+    specifically because some models' own hyperparams include a key
+    called "algorithm" (e.g. KNN's `algorithm: auto` sklearn param).
+    If this function's own parameter were also named `algorithm`,
+    `build_classifier(algorithm, **hyperparams)` would raise
+    "got multiple values for argument 'algorithm'" whenever hyperparams
+    contained that key.
+
     Returns:
         An untrained BaseClassifier subclass instance (call .train() next).
     """
-    if algorithm not in CLASSIFIERS:
+    if algorithm_name not in CLASSIFIERS:
         raise ValueError(
-            f"Unknown classification algorithm '{algorithm}'. "
+            f"Unknown classification algorithm '{algorithm_name}'. "
             f"Available: {sorted(CLASSIFIERS.keys())}"
         )
-    return CLASSIFIERS[algorithm](**hyperparams)
+    return CLASSIFIERS[algorithm_name](**hyperparams)

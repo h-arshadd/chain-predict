@@ -110,8 +110,14 @@ class BaseNetwork(ABC):
         self.input_dim: Optional[int] = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        seed = _require(self.hyperparams, "random_seed")
-        torch.manual_seed(seed)
+        # random_seed (like every other deep learning hyperparam) is
+        # required, but only once training actually happens -- see
+        # train() below. It's NOT required here in __init__, because
+        # ml/persistence/model_loader.py constructs this class with zero
+        # hyperparams (model_cls()) before calling .load(), which then
+        # restores self.hyperparams from the saved checkpoint. Requiring
+        # random_seed in __init__ would make every saved deep learning
+        # model impossible to reload.
 
     # ------------------------------------------------------------------
     # Subclasses implement this (architecture)
@@ -153,6 +159,10 @@ class BaseNetwork(ABC):
         the model just trains for the configured number of epochs.
         """
         self.input_dim = X_train.shape[1]
+
+        seed = _require(self.hyperparams, "random_seed")
+        torch.manual_seed(seed)
+
         self.model = self._build_network(self.input_dim).to(self.device)
 
         train_loader = self._make_loader(X_train, y_train, shuffle=True)
@@ -189,19 +199,36 @@ class BaseNetwork(ABC):
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
+    def _extra_save_state(self) -> dict:
+        """
+        Hook for subclasses to add extra keys to the saved checkpoint.
+        Default: nothing extra (plain BaseNetwork regressors don't need
+        this). BaseClassifierNetwork overrides this to persist
+        _classes_ -- see that class for why.
+        """
+        return {}
+
+    def _restore_extra_state(self, checkpoint: dict) -> None:
+        """
+        Hook for subclasses to restore whatever _extra_save_state()
+        added, called by load() before _build_network() runs (some
+        subclasses' _build_network(), e.g. BaseClassifierNetwork's,
+        needs that restored state to size the output layer).
+        """
+        pass
+
     def save(self, path: str) -> None:
         """Persist the fitted model as a PyTorch checkpoint (PDF heading 11)."""
         if self.model is None:
             raise RuntimeError(f"{type(self).__name__}: cannot save before train() has been called")
-        torch.save(
-            {
-                "class_name": type(self).__name__,
-                "state_dict": self.model.state_dict(),
-                "hyperparams": self.hyperparams,
-                "input_dim": self.input_dim,
-            },
-            path,
-        )
+        checkpoint = {
+            "class_name": type(self).__name__,
+            "state_dict": self.model.state_dict(),
+            "hyperparams": self.hyperparams,
+            "input_dim": self.input_dim,
+        }
+        checkpoint.update(self._extra_save_state())
+        torch.save(checkpoint, path)
 
     def load(self, path: str) -> "BaseNetwork":
         """Load a previously-saved checkpoint from `path` into this instance."""
@@ -215,6 +242,7 @@ class BaseNetwork(ABC):
             )
         self.hyperparams = checkpoint["hyperparams"]
         self.input_dim = checkpoint["input_dim"]
+        self._restore_extra_state(checkpoint)
         self.model = self._build_network(self.input_dim).to(self.device)
         self.model.load_state_dict(checkpoint["state_dict"])
         self.model.eval()
@@ -314,6 +342,17 @@ class BaseClassifierNetwork(BaseNetwork):
 
     def _output_dim(self) -> int:
         return len(self._classes_)
+
+    def _extra_save_state(self) -> dict:
+        """
+        Persist _classes_ alongside the checkpoint. Needed at reload
+        time before _build_network() runs, since _output_dim() (used to
+        size the network's output layer) reads len(self._classes_).
+        """
+        return {"classes_": self._classes_}
+
+    def _restore_extra_state(self, checkpoint: dict) -> None:
+        self._classes_ = checkpoint["classes_"]
 
     def _make_target_tensor(self, y: pd.Series) -> torch.Tensor:
         if self._classes_ is None:

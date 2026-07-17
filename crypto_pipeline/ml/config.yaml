@@ -6,7 +6,7 @@
 # generation, evaluation -- is controlled from here. There is only one
 # entry point (ml/main.py) and only one config file.
 
-model_type: regression # regression | classification | timeseries
+model_type: classification # regression | classification | timeseries
 
 # ---------------------------------------------------------------------
 # Data Prep stages (market data, features, sentiment, target)
@@ -540,7 +540,8 @@ model:
         min_child_weight: 1
         reg_alpha: 0.0
         reg_lambda: 1.0
-        objective: "binary:logistic"   # switch to "multi:softprob" yourself for >2 classes
+        objective: "multi:softprob"   # 3-class triple-barrier target (-1/0/1) needs multiclass, not binary
+        num_class: 3
         booster: gbtree
         random_state: 42
         n_jobs: null
@@ -564,7 +565,7 @@ model:
         learning_rate: null   # null = CatBoost picks it automatically from the data
         depth: 6
         l2_leaf_reg: 3.0
-        loss_function: Logloss   # switch to "MultiClass" yourself for >2 classes
+        loss_function: MultiClass   # 3-class triple-barrier target (-1/0/1) needs MultiClass, not Logloss
         random_seed: 42
         verbose: false
         allow_writing_files: false
