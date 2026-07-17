@@ -35,6 +35,12 @@ _NON_METRIC_NAMES = {
     "Literal", "NDArray", "Returns", "distribution", "warn",
     "validate_input", "safe_concat", "drawdown_details",
     "montecarlo", "montecarlo_cagr", "montecarlo_drawdown", "montecarlo_sharpe",
+    # These return a full series/DataFrame (one value per date), not a
+    # single scalar summary number, so they don't belong in metrics.json --
+    # plots.py already covers this ground properly as actual plot data.
+    "compsum", "to_drawdown_series", "rolling_sharpe", "rolling_sortino",
+    "rolling_volatility", "pct_rank", "remove_outliers", "outliers",
+    "implied_volatility", "monthly_returns",
 }
 
 
