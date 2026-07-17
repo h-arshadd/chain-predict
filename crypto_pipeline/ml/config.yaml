@@ -55,17 +55,20 @@ split:
 #                                 random_forest, extra_trees, svr, xgboost,
 #                                 lightgbm, catboost)
 #                              -> or ml/deep_learning/registry.py's DL_REGRESSORS
-#                                 (mlp, lstm, gru) if using a deep learning model instead
+#                                 (mlp, lstm, gru) if using a deep learning
+#                                 model instead
 #   model_type=classification -> ml/classifiers/registry.py's CLASSIFIERS
 #                                 (logistic_regression, decision_tree,
 #                                 random_forest, extra_trees, svm, knn,
 #                                 naive_bayes, xgboost, lightgbm, catboost)
 #                              -> or ml/deep_learning/registry.py's DL_CLASSIFIERS
-#                                 (mlp, lstm, gru) if using a deep learning model instead
+#                                 (mlp, lstm, gru) if using a deep learning
+#                                 model instead
 #   model_type=timeseries     -> ml/timeseries/registry.py's TS_MODELS
-#                                 (nbeats, tcn) -- Darts-backed, no
-#                                 traditional/deep-learning split here,
-#                                 every model in this family is Darts-backed.
+#                                 (nbeats, tcn) -- Darts-backed, every model
+#                                 in this family forecasts the target series
+#                                 n steps ahead (not a per-row
+#                                 regression/classification prediction).
 #                                 Requires input_chunk_length and
 #                                 output_chunk_length in params (every
 #                                 Darts model in this family needs both).
@@ -75,14 +78,102 @@ split:
 # by whichever of regression_pipeline.py / classification_pipeline.py /
 # timeseries_pipeline.py matches ml/data_prep/config.yaml's model_type
 # (see those files).
+#
+# model.algorithms is a dict keyed by model_type, not a flat list --
+# {regression: [...], classification: [...], timeseries: [...]}. Keyed
+# this way on purpose: model_type (set in ml/data_prep/config.yaml) can
+# change independently of this file, and a flat list would silently be
+# the wrong algorithms (or error out confusingly) the moment you switch
+# model_type without also rewriting the list by hand. With a key per
+# model_type, all three are always ready -- switching model_type just
+# picks a different key below, nothing else to edit.
+#
+# model.algorithms.<current model_type> is REQUIRED and must be
+# non-empty -- it's the only thing that decides what trains this run.
+# There's no "leave it unset -> run everything registered" behavior:
+# main.py raises a clear error naming what's available for the current
+# model_type if the matching key is missing or empty. This is
+# deliberate -- it used to default to "every algorithm registered",
+# which silently trained mlp (and, before it moved to timeseries,
+# lstm/gru) even when you never asked for a deep learning model, just
+# because it happened to be registered.
+#
+# Available per model_type:
+#   regression     -> ml/regressors/registry.py's REGRESSORS
+#                      (linear_regression, ridge, lasso, elasticnet,
+#                      random_forest, extra_trees, svr, xgboost,
+#                      lightgbm, catboost)
+#                      + ml/deep_learning/registry.py's DL_REGRESSORS
+#                      (mlp, lstm, gru)
+#   classification -> ml/classifiers/registry.py's CLASSIFIERS
+#                      (logistic_regression, decision_tree, random_forest,
+#                      extra_trees, svm, knn, naive_bayes, xgboost,
+#                      lightgbm, catboost)
+#                      + ml/deep_learning/registry.py's DL_CLASSIFIERS
+#                      (mlp, lstm, gru)
+#   timeseries     -> ml/timeseries/registry.py's TS_MODELS
+#                      (nbeats, tcn)
+#
+# Only the list matching ml/data_prep/config.yaml's current model_type
+# is used; the other two just sit here ready for next time you switch.
+# Edit any list to whatever subset you actually want -- e.g. leave mlp/
+# lstm/gru commented out if you don't want deep learning training
+# alongside sklearn models.
+#
+# param_overrides is optional and per-algorithm -- any algorithm not
+# listed here just uses its model class's own defaults (empty dict).
+# timeseries algorithms (nbeats/tcn) are the one exception: they
+# require output_chunk_length, so it must be set here for each one you
+# enable.
 model:
-  algorithm: nbeats
-  params:
-    input_chunk_length: 48   # how many past steps the model looks at
-    output_chunk_length: 12  # how many future steps it predicts (= forecast horizon n)
-    n_epochs: 50
-    batch_size: 32
-    random_state: 42
+  algorithms:
+    regression:
+      - linear_regression
+      - ridge
+      - lasso
+      - elasticnet
+      - random_forest
+      - extra_trees
+      - svr
+      - xgboost
+      - lightgbm
+      - catboost
+      # - mlp    # uncomment to include the deep learning regressor in this run
+      # - lstm   # uncomment to include the deep learning regressor in this run
+      # - gru    # uncomment to include the deep learning regressor in this run
+
+    classification:
+      - logistic_regression
+      - decision_tree
+      - random_forest
+      - extra_trees
+      - svm
+      - knn
+      - naive_bayes
+      - xgboost
+      - lightgbm
+      - catboost
+      # - mlp    # uncomment to include the deep learning classifier in this run
+      # - lstm   # uncomment to include the deep learning classifier in this run
+      # - gru    # uncomment to include the deep learning classifier in this run
+
+    timeseries:
+      - nbeats
+      - tcn
+
+  param_overrides:
+    nbeats:
+      input_chunk_length: 48   # how many past steps the model looks at
+      output_chunk_length: 12  # how many future steps it predicts (= forecast horizon n)
+      n_epochs: 50
+      batch_size: 32
+      random_state: 42
+    tcn:
+      input_chunk_length: 48
+      output_chunk_length: 12
+      n_epochs: 50
+      batch_size: 32
+      random_state: 42
 
   # TCN alternative -- swap the block above for this if algorithm: tcn
   # instead of nbeats. Both are Darts-backed and support past_covariates
@@ -109,11 +200,13 @@ model:
   #   random_state: 42
 
   # Deep learning example (ml/deep_learning/registry.py) -- swap the
-  # block above for this if algorithm is "mlp"/"lstm"/"gru" instead of
-  # a traditional sklearn-style algorithm. All keys are read by
+  # block above for this if algorithm is "mlp", "lstm", or "gru" instead
+  # of a traditional sklearn-style algorithm. All keys are read by
   # base_network.py's BaseNetwork/BaseClassifierNetwork; see that file's
-  # docstring for the full list.
-  # algorithm: lstm
+  # docstring for the full list. hidden_units is a per-layer list for
+  # mlp, but a single int (hidden_size) for lstm/gru -- see
+  # ml/deep_learning/lstm.py / gru.py's docstrings.
+  # algorithm: mlp  # or: lstm, gru
   # params:
   #   hidden_layers: 2
   #   hidden_units: 64
