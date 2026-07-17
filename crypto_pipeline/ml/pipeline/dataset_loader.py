@@ -6,8 +6,8 @@ dataset_loader.py
 Dataset Loading stage (PDF heading 1).
 
 Does NOT fetch from Postgres itself --
-crypto_pipeline.ml.data_prep.main.run_data_prep_pipeline() already does
-that (OHLCV + features + sentiment + target). This module just takes
+crypto_pipeline.ml.data_prep.run_pipeline.run_data_prep_pipeline() already
+does that (OHLCV + features + sentiment + target). This module just takes
 that output, validates it, and optionally writes a debug CSV for manual
 inspection (never read back in by any pipeline step).
 
@@ -20,7 +20,7 @@ import os
 
 import pandas as pd
 
-from crypto_pipeline.ml.data_prep.main import run_data_prep_pipeline
+from crypto_pipeline.ml.data_prep.run_pipeline import run_data_prep_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ def _validate_dataset(df: pd.DataFrame) -> None:
     ever sees the data. This function does NOT fill anything -- it only
     verifies that promise held. sen_* columns are the one expected
     exception (a missing sentiment reading for an hour is valid, per
-    data_prep/main.py's own dropna logic), everything else must be clean
+    data_prep/run_pipeline.py's own dropna logic), everything else must be clean
     by the time it reaches here.
     """
 
