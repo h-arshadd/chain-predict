@@ -39,17 +39,17 @@ class _LSTMCore(nn.Module):
 
 
 def _build_lstm(base_network, input_dim: int, output_dim: int) -> nn.Module:
-    hidden_layers = base_network.hyperparams.get("hidden_layers", 2)
-    hidden_units = base_network.hyperparams.get("hidden_units", 64)
+    hidden_layers = _require(base_network.hyperparams, "hidden_layers")
+    hidden_units = _require(base_network.hyperparams, "hidden_units")
     if isinstance(hidden_units, list):
         hidden_units = hidden_units[0]  # LSTM hidden_size is a single int, not per-layer
-    dropout = base_network.hyperparams.get("dropout", 0.0)
+    dropout = _require(base_network.hyperparams, "dropout")
 
     head = base_network._mlp_block(hidden_units, output_dim)
     return _LSTMCore(input_dim, hidden_units, hidden_layers, dropout, head)
 
 
-from crypto_pipeline.ml.deep_learning.base_network import BaseClassifierNetwork, BaseNetwork
+from crypto_pipeline.ml.deep_learning.base_network import BaseClassifierNetwork, BaseNetwork, _require
 
 
 class LSTMRegressorModel(BaseNetwork):

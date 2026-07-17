@@ -70,6 +70,22 @@ SCHEDULERS = {
 }
 
 
+def _require(hyperparams: dict, key: str):
+    """
+    Fetch `key` from hyperparams (i.e. ml/config.yaml's model.params),
+    raising instead of silently falling back to a hardcoded default.
+    Every deep learning hyperparameter must be set explicitly in
+    config.yaml, same as every traditional regressor/classifier's params.
+    """
+    if key not in hyperparams:
+        raise ValueError(
+            f"Missing required deep learning param '{key}' in ml/config.yaml's "
+            f"model.params -- deep learning hyperparameters are not defaulted, "
+            f"they must be set explicitly."
+        )
+    return hyperparams[key]
+
+
 class BaseNetwork(ABC):
     """
     Args:
@@ -94,7 +110,7 @@ class BaseNetwork(ABC):
         self.input_dim: Optional[int] = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        seed = self.hyperparams.get("random_seed", 42)
+        seed = _require(self.hyperparams, "random_seed")
         torch.manual_seed(seed)
 
     # ------------------------------------------------------------------
@@ -144,7 +160,7 @@ class BaseNetwork(ABC):
 
         optimizer = self._build_optimizer()
         scheduler = self._build_scheduler(optimizer)
-        loss_fn = get_loss_fn(self.hyperparams.get("loss", self._default_loss()))
+        loss_fn = get_loss_fn(self.hyperparams["loss"] if "loss" in self.hyperparams else self._default_loss())
 
         self.model = train_network(
             model=self.model,
@@ -152,10 +168,10 @@ class BaseNetwork(ABC):
             optimizer=optimizer,
             loss_fn=loss_fn,
             device=self.device,
-            epochs=self.hyperparams.get("epochs", 50),
+            epochs=_require(self.hyperparams, "epochs"),
             val_loader=val_loader,
             scheduler=scheduler,
-            early_stopping_patience=self.hyperparams.get("early_stopping_patience", 10),
+            early_stopping_patience=_require(self.hyperparams, "early_stopping_patience"),
         )
         return self
 
@@ -208,26 +224,26 @@ class BaseNetwork(ABC):
     # Shared building blocks
     # ------------------------------------------------------------------
     def _build_optimizer(self) -> torch.optim.Optimizer:
-        name = self.hyperparams.get("optimizer", "adam")
+        name = _require(self.hyperparams, "optimizer")
         if name not in OPTIMIZERS:
             raise ValueError(f"Unknown optimizer '{name}'. Available: {list(OPTIMIZERS.keys())}")
-        lr = self.hyperparams.get("learning_rate", 1e-3)
+        lr = _require(self.hyperparams, "learning_rate")
         return OPTIMIZERS[name](self.model.parameters(), lr=lr)
 
     def _build_scheduler(self, optimizer: torch.optim.Optimizer):
-        name = self.hyperparams.get("scheduler", "none")
+        name = _require(self.hyperparams, "scheduler")
         if name not in SCHEDULERS:
             raise ValueError(f"Unknown scheduler '{name}'. Available: {list(SCHEDULERS.keys())}")
         scheduler_cls = SCHEDULERS[name]
         if scheduler_cls is None:
             return None
-        scheduler_params = self.hyperparams.get("scheduler_params", {}) or {}
+        scheduler_params = _require(self.hyperparams, "scheduler_params") or {}
         return scheduler_cls(optimizer, **scheduler_params)
 
     def _make_loader(self, X: pd.DataFrame, y: pd.Series, shuffle: bool) -> DataLoader:
         X_tensor = torch.tensor(X.values, dtype=torch.float32)
         y_tensor = self._make_target_tensor(y)
-        batch_size = self.hyperparams.get("batch_size", 32)
+        batch_size = _require(self.hyperparams, "batch_size")
         return DataLoader(TensorDataset(X_tensor, y_tensor), batch_size=batch_size, shuffle=shuffle)
 
     def _mlp_block(self, input_dim: int, output_dim: int) -> nn.Module:
@@ -238,18 +254,18 @@ class BaseNetwork(ABC):
         from self.hyperparams -- this is the one place those five configs
         are actually wired into torch layers.
         """
-        hidden_layers = self.hyperparams.get("hidden_layers", 2)
-        hidden_units = self.hyperparams.get("hidden_units", 64)
+        hidden_layers = _require(self.hyperparams, "hidden_layers")
+        hidden_units = _require(self.hyperparams, "hidden_units")
         if isinstance(hidden_units, int):
             hidden_units = [hidden_units] * hidden_layers
 
-        activation_name = self.hyperparams.get("activation", "relu")
+        activation_name = _require(self.hyperparams, "activation")
         if activation_name not in ACTIVATIONS:
             raise ValueError(f"Unknown activation '{activation_name}'. Available: {list(ACTIVATIONS.keys())}")
         activation_cls = ACTIVATIONS[activation_name]
 
-        dropout = self.hyperparams.get("dropout", 0.0)
-        batch_norm = self.hyperparams.get("batch_norm", False)
+        dropout = _require(self.hyperparams, "dropout")
+        batch_norm = _require(self.hyperparams, "batch_norm")
 
         layers = []
         prev_dim = input_dim
