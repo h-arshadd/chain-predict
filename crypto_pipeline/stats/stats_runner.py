@@ -16,8 +16,7 @@ you already have run_backtest()'s return value, that's the only thing
 this needs; hand it over as-is.
 
 For each combo, saves numeric output only -- no PNGs:
-    <out_dir>/metrics.json   -- {combo: {...every discovered metric...}}
-    <out_dir>/plots.json     -- {combo: {...numeric plot series/tables...}}
+    <out_dir>/stats.json           -- {combo: {"metrics": {...}, "plots": {...}}}
     <out_dir>/comparison_stats.csv
         -- flat table of the same headline metrics used elsewhere
            (sharpe, sortino, calmar, max_drawdown, cagr, profit_factor,
@@ -51,7 +50,7 @@ from crypto_pipeline.stats.utils import to_json_safe
 
 # Headline metrics for the flat comparison table -- the PDF's explicitly
 # named "most important" list. Every other discovered metric still lives
-# in metrics.json; this is just the at-a-glance table.
+# in stats.json; this is just the at-a-glance table.
 _HEADLINE_METRICS = [
     "sharpe", "sortino", "calmar", "max_drawdown", "cagr",
     "profit_factor", "win_rate", "recovery_factor", "risk_of_ruin",
@@ -83,12 +82,12 @@ def run(
         "final_balance"/"total_net_profit"/"total_trades"/"win_loss" are
         used for trade_summary if present). combo_name is whatever label
         the caller wants (e.g. "binance_btc") -- used only as the key in
-        metrics.json/plots.json and a column in comparison_stats.csv.
+        stats.json and a column in comparison_stats.csv.
     stats_config : dict, optional
         Loaded from stats/config.yaml if not given.
     stats_out_dir : str, optional
-        Where to save metrics.json / plots.json / comparison_stats.csv.
-        Defaults to <stats config's output.dir>, next to this file.
+        Where to save stats.json / comparison_stats.csv. Defaults to
+        <stats config's output.dir>, next to this file.
 
     Returns
     -------
@@ -100,8 +99,7 @@ def run(
         stats_here = os.path.dirname(os.path.abspath(__file__))
         stats_out_dir = os.path.join(stats_here, stats_config["output"]["dir"])
 
-    all_metrics = {}
-    all_plots = {}
+    all_stats = {}
     rows = []
 
     for combo, backtest_result in backtest_results.items():
@@ -112,8 +110,10 @@ def run(
         print(f"computing stats: {combo}")
         stats_dict = compute_stats(backtest_result, stats_config)
 
-        all_metrics[combo] = stats_dict["metrics"]
-        all_plots[combo] = stats_dict["plots"]
+        all_stats[combo] = {
+            "metrics": stats_dict["metrics"],
+            "plots": stats_dict["plots"],
+        }
 
         row = {"combo": combo}
         row.update({m: stats_dict["metrics"].get(m) for m in _HEADLINE_METRICS})
@@ -121,22 +121,21 @@ def run(
 
     os.makedirs(stats_out_dir, exist_ok=True)
 
-    metrics_path = os.path.join(stats_out_dir, "metrics.json")
-    with open(metrics_path, "w") as f:
-        json.dump(to_json_safe(all_metrics), f, indent=2)
-    print(f"Saved: {metrics_path}")
-
-    plots_path = os.path.join(stats_out_dir, "plots.json")
-    with open(plots_path, "w") as f:
-        json.dump(to_json_safe(all_plots), f, indent=2)
-    print(f"Saved: {plots_path}")
+    stats_path = os.path.join(stats_out_dir, "stats.json")
+    with open(stats_path, "w") as f:
+        json.dump(to_json_safe(all_stats), f, indent=2)
+    print(f"Saved: {stats_path}")
 
     comparison = pd.DataFrame(rows)
     comparison_path = os.path.join(stats_out_dir, "comparison_stats.csv")
     comparison.to_csv(comparison_path, index=False)
     print(f"Saved: {comparison_path}")
 
-    return {"metrics": all_metrics, "plots": all_plots, "comparison": comparison}
+    return {
+        "metrics": {combo: v["metrics"] for combo, v in all_stats.items()},
+        "plots": {combo: v["plots"] for combo, v in all_stats.items()},
+        "comparison": comparison,
+    }
 
 
 if __name__ == "__main__":
