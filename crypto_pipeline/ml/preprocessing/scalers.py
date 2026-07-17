@@ -222,6 +222,43 @@ def apply_rolling_zscore(df: pd.DataFrame, fit_mask=None, window=168):
     return out, fit_info
 
 
+def apply_winsorization(df: pd.DataFrame, fit_mask=None, lower_quantile=0.01, upper_quantile=0.99):
+    """
+    Clips each column to the [lower_quantile, upper_quantile] range,
+    same fit-on-train-only contract as the scalers above: quantile
+    bounds are computed from fit_mask's rows (train), then the SAME
+    bounds are applied to every row passed in (train or test) -- no
+    quantile is ever recomputed on test data.
+
+    Unlike a scaler, this doesn't change the data's scale/distribution
+    shape, it only caps extreme outliers at the fitted percentile
+    bounds -- values inside the range pass through unchanged.
+
+    Args:
+        df: feature columns only
+        fit_mask: boolean mask selecting which rows to compute the
+            quantile bounds from (the train-set mask in the real
+            pipeline; None means "fit on everything given")
+        lower_quantile: rows below this per-column quantile (fit on
+            fit_mask rows) get clipped up to it, default 1st percentile
+        upper_quantile: rows above this per-column quantile get clipped
+            down to it, default 99th percentile
+    """
+    fit_df = _fit_slice(df, fit_mask)
+    lower_bounds = fit_df.quantile(lower_quantile)
+    upper_bounds = fit_df.quantile(upper_quantile)
+    out = df.clip(lower=lower_bounds, upper=upper_bounds, axis=1)
+    fit_info = {
+        "method": "winsorization",
+        "lower_quantile": lower_quantile,
+        "upper_quantile": upper_quantile,
+        "lower_bounds": dict(zip(df.columns, lower_bounds)),
+        "upper_bounds": dict(zip(df.columns, upper_bounds)),
+        "note": "clipping only, not reversible (values outside the bounds lose their original value)",
+    }
+    return out, fit_info
+
+
 PREPROCESSING_SCALERS: Dict[str, Callable] = {
     "standard_scaler": apply_standard_scaler,
     "minmax_scaler": apply_minmax_scaler,
@@ -231,4 +268,5 @@ PREPROCESSING_SCALERS: Dict[str, Callable] = {
     "power_transformer": apply_power_transformer,
     "normalizer": apply_normalizer,
     "rolling_zscore": apply_rolling_zscore,
+    "winsorization": apply_winsorization,
 }
