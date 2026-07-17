@@ -43,7 +43,6 @@ under both artifacts/configs/ and models/, so the two stay linked.
 import json
 import logging
 import os
-from datetime import datetime, timezone
 from typing import Optional
 
 import joblib
@@ -72,10 +71,75 @@ CONFIGS_SUBDIR = "configs"
 RUN_CONFIG_FILENAME = "run_config.json"
 
 
-def make_run_id(algorithm: str) -> str:
-    """Default run_id: {UTC timestamp}_{algorithm}, e.g. '20260716_142530_random_forest'."""
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    return f"{timestamp}_{algorithm}"
+def make_run_id(algorithm: str, symbol: str = None, exchange: str = None,
+                 model_type: str = None, horizon=None) -> str:
+    """
+    Default run_id, used as the folder name for both models/{run_id}/
+    and artifacts/configs/{run_id}/:
+
+        {exchange}_{symbol}_{model_type}_h{horizon}_{algorithm}
+
+    e.g. 'binance_BTCUSDT_classification_h4_xgboost'
+
+    No timestamp -- by design, so folder names stay short and readable.
+    This means running the exact same algorithm/symbol/exchange/
+    model_type/horizon combo twice OVERWRITES the previous run's folder
+    (same name both times) -- both models/{run_id}/ and
+    artifacts/configs/{run_id}/. If you want to keep multiple runs of
+    the same config side by side, pass your own run_id instead of
+    relying on this default.
+
+    Any piece that's missing (None) is just skipped rather than writing
+    "None" into the folder name, so this still works if called with
+    only `algorithm` (old call sites don't break).
+
+    Args:
+        algorithm: e.g. "xgboost", "random_forest", "lstm"
+        symbol: e.g. "BTCUSDT" -- ml_config["data"]["symbol"]
+        exchange: e.g. "binance" -- ml_config["data"]["exchange"]
+        model_type: "regression" | "classification" | "timeseries" --
+            ml_config["model_type"]
+        horizon: e.g. 4 -- ml_config["target"]["horizon"]
+    """
+    parts = []
+    if exchange:
+        parts.append(str(exchange))
+    if symbol:
+        parts.append(str(symbol))
+    if model_type:
+        parts.append(str(model_type))
+    if horizon is not None:
+        parts.append(f"h{horizon}")
+    parts.append(algorithm)
+    return "_".join(parts)
+
+
+def _build_run_summary(run_id: str, metadata: dict) -> dict:
+    """
+    Flat "what is this run" block written at the very TOP of
+    run_config.json, above the detailed data_prep/split/preprocessing/
+    model/evaluation sections. Everything in here is just read off of
+    those sections -- no new inputs needed -- it exists purely so the
+    run/algorithm/symbol/timeframe/dates don't require digging into
+    nested sections to find.
+    """
+    data_prep = metadata.get("data_prep", {}) or {}
+    data = data_prep.get("data", {}) or {}
+    target = data_prep.get("target", {}) or {}
+    model = metadata.get("model", {}) or {}
+
+    return {
+        "run_id": run_id,
+        "algorithm": model.get("algorithm"),
+        "model_kind": model.get("model_type"),      # regressor / classifier / deep_learning_regressor / etc.
+        "pipeline_type": data_prep.get("model_type"),  # regression / classification / timeseries
+        "symbol": data.get("symbol"),
+        "exchange": data.get("exchange"),
+        "timeframe": data.get("timeframe"),
+        "start_date": data.get("start_date"),
+        "end_date": data.get("end_date"),
+        "horizon": target.get("horizon"),
+    }
 
 
 def save_run(
@@ -98,7 +162,9 @@ def save_run(
             "model", "evaluation" -- each value is that stage's dict
             from the matching metadata.build_*_metadata() function.
             Written out as-is, merged under those same top-level keys
-            in one JSON file.
+            in one JSON file, with an extra "run_summary" key at the
+            top (see _build_run_summary()) pulling the
+            algorithm/symbol/timeframe/dates together in one flat spot.
         fit_objects: list from preprocessing_pipeline.run_preprocessing()
             (fitted scalers/transforms -- persisted here so inference can
             exactly replay the same preprocessing chain, per PDF heading
@@ -129,8 +195,9 @@ def save_run(
     os.makedirs(config_dir, exist_ok=True)
 
     config_path = os.path.join(config_dir, RUN_CONFIG_FILENAME)
-    run_config = {stage: metadata.get(stage, {}) for stage in
-                  ("data_prep", "split", "preprocessing", "model", "evaluation")}
+    run_config = {"run_summary": _build_run_summary(run_id, metadata)}
+    run_config.update({stage: metadata.get(stage, {}) for stage in
+                        ("data_prep", "split", "preprocessing", "model", "evaluation")})
     with open(config_path, "w") as f:
         json.dump(run_config, f, indent=2, default=str)
     logger.info(f"Config written: {config_path}")

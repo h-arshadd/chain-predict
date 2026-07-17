@@ -21,14 +21,24 @@ Usage (called once, at the top of a pipeline run):
     logger.info("Regression pipeline starting: run_id=...")
 
 This gives every subsequent logger.info()/logger.error() call in this
-process both a console line and a line in logs/{run_id}.log, until
-setup_logging() is called again with a different run_id.
+process both a console line and a line in ml/logs/{run_id}.log
+(anchored to the ml/ package dir, same as artifacts/ and models/,
+regardless of the current working directory), until setup_logging() is
+called again with a different run_id.
 """
 
 import logging
 import os
 
-LOG_DIR = "logs"
+# Anchored to the ml/ package directory (utils/ -> ml/), not to whatever
+# directory the process happens to be launched from -- same reasoning as
+# artifact_manager.py's ARTIFACTS_DIR/MODELS_DIR. A plain relative
+# string ("logs") resolves against the current working directory, so
+# running `python -m crypto_pipeline.ml.main` from the repo root instead
+# of ml/ would silently write logs/ into the repo root -- outside the ml
+# project entirely, next to (not inside) artifacts/ and models/.
+_ML_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOG_DIR = os.path.join(_ML_DIR, "logs")
 
 _console_configured = False
 
