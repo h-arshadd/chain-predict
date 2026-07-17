@@ -23,7 +23,7 @@ in (say) preprocessing never touches the data_prep or model builders:
                                       same as before)
     build_evaluation_metadata()   -- evaluation/ folder: train/val/test metrics
 
-artifact_manager.py writes each of these to its own file under
+artifact_manager.py merges all five into one run_config.json under
 artifacts/configs/{run_id}/; this module only assembles the dicts.
 """
 

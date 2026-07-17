@@ -155,7 +155,19 @@ def evaluate_model(
     stats_result = compute_stats(backtest_result, stats_config, plot_dir=plot_dir)
     trading_metrics = stats_result["metrics"]
 
-    logger.info(f"Trading strategy evaluation: {trading_metrics}")
+    # trading_metrics (== stats_result["metrics"]) is compute_stats()'s
+    # full quantstats output -- dozens of keys, several of them
+    # (rolling_sharpe, pct_rank, implied_volatility, remove_outliers,
+    # outliers, ...) are per-day series covering the whole backtest
+    # period, not scalars. Logging the dict directly here used to dump
+    # every one of those series to the log/terminal on every single
+    # algorithm run. Log a short, scalar-only summary instead, using
+    # the same key names _METRIC_NAME_MAP above already establishes as
+    # the supported/known-scalar ones -- anyone who wants the full dict
+    # still has it via this function's return value
+    # (result["trading_metrics"]) or stats_result itself.
+    metrics_summary = {k: trading_metrics.get(k) for k in _METRIC_NAME_MAP.values() if k in trading_metrics}
+    logger.info(f"Trading strategy evaluation: {metrics_summary}")
 
     return {
         "run_id": run_id,

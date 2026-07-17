@@ -13,11 +13,11 @@ Layout, one folder per trained run:
     artifacts/
       configs/
         {run_id}/
-          data_prep.yaml        <- metadata.build_data_prep_metadata()'s output
-          split.yaml             <- metadata.build_split_metadata()'s output
-          preprocessing.yaml     <- metadata.build_preprocessing_metadata()'s output
-          model.yaml              <- metadata.build_model_metadata()'s output
-          evaluation.yaml         <- metadata.build_evaluation_metadata()'s output
+          run_config.json         <- one file, all five
+                                      metadata.build_*_metadata() outputs
+                                      merged under top-level keys:
+                                      data_prep / split / preprocessing /
+                                      model / evaluation
 
     models/
       {run_id}/
@@ -26,13 +26,13 @@ Layout, one folder per trained run:
         model.pt                <- deep learning models (BaseNetwork/BaseClassifierNetwork)
         preprocessing.joblib     <- fitted scaler/transform objects (fit_objects)
 
-Each stage writes its own yaml rather than one combined config file:
-data_prep's config never touches the model's, so a run can be inspected
-stage by stage, and a new field in one stage never risks colliding with
-another. model_saver.py / model_loader.py own reading/writing
-model.joblib / model.pt; this file only decides WHERE things go and
-writes the config YAMLs, since config writing doesn't depend on which
-serialization format the model itself uses.
+One combined JSON per run instead of one file per stage: everything
+about the run (which coin/exchange/timeframe/dates it used, the split,
+the preprocessing steps, the model + hyperparams, the eval metrics) is
+readable at a glance in a single file. model_saver.py / model_loader.py
+own reading/writing model.joblib / model.pt; this file only decides
+WHERE things go and writes the config JSON, since config writing
+doesn't depend on which serialization format the model itself uses.
 
 run_id is a plain timestamp + algorithm slug by default (sortable,
 collision-resistant enough for a single-user pipeline) -- pass your own
@@ -40,29 +40,36 @@ if you want a specific name. The same run_id is used as the folder name
 under both artifacts/configs/ and models/, so the two stay linked.
 """
 
+import json
 import logging
 import os
 from datetime import datetime, timezone
 from typing import Optional
 
 import joblib
-import yaml
 
 logger = logging.getLogger(__name__)
 
-ARTIFACTS_DIR = "artifacts"
-MODELS_DIR = "models"
+# Anchored to the ml/ package directory (persistence/ -> ml/), not to
+# whatever directory the process happens to be launched from. Plain
+# relative strings ("artifacts", "models") resolve against the current
+# working directory, so running `python -m crypto_pipeline.ml.main`
+# from the repo root instead of ml/ silently wrote artifacts/models/
+# into the repo root -- outside the ml project entirely. Anchoring
+# here means every caller that imports these constants (main.py, and
+# pipeline/regression_pipeline.py / classification_pipeline.py /
+# timeseries_pipeline.py, which all default to these same constants)
+# gets ml/artifacts and ml/models regardless of CWD.
+_ML_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+ARTIFACTS_DIR = os.path.join(_ML_DIR, "artifacts")
+MODELS_DIR = os.path.join(_ML_DIR, "models")
 CONFIGS_SUBDIR = "configs"
 
-# Filenames for each per-stage config yaml, written under
-# configs/{run_id}/. Keys match the metadata dict passed into save_run().
-CONFIG_FILENAMES = {
-    "data_prep": "data_prep.yaml",
-    "split": "split.yaml",
-    "preprocessing": "preprocessing.yaml",
-    "model": "model.yaml",
-    "evaluation": "evaluation.yaml",
-}
+# Single combined config file, written under configs/{run_id}/. Its
+# top-level keys match the metadata dict passed into save_run() ("data_prep",
+# "split", "preprocessing", "model", "evaluation").
+RUN_CONFIG_FILENAME = "run_config.json"
 
 
 def make_run_id(algorithm: str) -> str:
@@ -80,16 +87,18 @@ def save_run(
     model_save_fn=None,
 ) -> dict:
     """
-    Write one complete run's artifacts to disk: one config yaml per
-    pipeline stage under {base_dir}/configs/{run_id}/, and the fitted
-    preprocessing objects + (if model_save_fn is given) the model itself
-    under a separate {models_dir}/{run_id}/.
+    Write one complete run's artifacts to disk: a single combined config
+    JSON under {base_dir}/configs/{run_id}/run_config.json, and the
+    fitted preprocessing objects + (if model_save_fn is given) the model
+    itself under a separate {models_dir}/{run_id}/.
 
     Args:
         run_id: folder name for this run, e.g. from make_run_id()
         metadata: dict with keys "data_prep", "split", "preprocessing",
             "model", "evaluation" -- each value is that stage's dict
             from the matching metadata.build_*_metadata() function.
+            Written out as-is, merged under those same top-level keys
+            in one JSON file.
         fit_objects: list from preprocessing_pipeline.run_preprocessing()
             (fitted scalers/transforms -- persisted here so inference can
             exactly replay the same preprocessing chain, per PDF heading
@@ -102,15 +111,15 @@ def save_run(
             BaseRegressor/BaseClassifier/BaseNetwork/BaseClassifierNetwork
             already exposes .save(path)). The correct file extension
             (.joblib / .pt / .darts) is chosen from metadata["model"]["serialization_format"].
-            If None, only the configs + preprocessing objects are written
+            If None, only the config + preprocessing objects are written
             (useful for a dry run, or if the caller wants to call
             model.save() itself afterward).
 
     Returns:
         dict with the paths written:
             run_dir: str (under models_dir -- model + preprocessing files)
-            config_dir: str (under base_dir -- config yamls)
-            config_paths: dict, one path per stage (same keys as CONFIG_FILENAMES)
+            config_dir: str (under base_dir -- config json)
+            config_path: str, path to run_config.json
             preprocessing_path: str
             model_path: str or None (None if model_save_fn was not given)
     """
@@ -119,14 +128,12 @@ def save_run(
     os.makedirs(run_dir, exist_ok=True)
     os.makedirs(config_dir, exist_ok=True)
 
-    config_paths = {}
-    for stage, filename in CONFIG_FILENAMES.items():
-        stage_metadata = metadata.get(stage, {})
-        stage_path = os.path.join(config_dir, filename)
-        with open(stage_path, "w") as f:
-            yaml.safe_dump(stage_metadata, f, sort_keys=False, default_flow_style=False)
-        config_paths[stage] = stage_path
-        logger.info(f"Config written: {stage_path}")
+    config_path = os.path.join(config_dir, RUN_CONFIG_FILENAME)
+    run_config = {stage: metadata.get(stage, {}) for stage in
+                  ("data_prep", "split", "preprocessing", "model", "evaluation")}
+    with open(config_path, "w") as f:
+        json.dump(run_config, f, indent=2, default=str)
+    logger.info(f"Config written: {config_path}")
 
     preprocessing_path = os.path.join(run_dir, "preprocessing.joblib")
     joblib.dump(fit_objects, preprocessing_path)
@@ -144,7 +151,7 @@ def save_run(
     return {
         "run_dir": run_dir,
         "config_dir": config_dir,
-        "config_paths": config_paths,
+        "config_path": config_path,
         "preprocessing_path": preprocessing_path,
         "model_path": model_path,
     }

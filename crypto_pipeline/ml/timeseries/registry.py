@@ -20,9 +20,13 @@ from crypto_pipeline.ml.timeseries.base_timeseries_model import BaseTimeseriesMo
 from crypto_pipeline.ml.timeseries.nbeats_model import NBEATSTimeseriesModel
 from crypto_pipeline.ml.timeseries.tcn_model import TCNTimeseriesModel
 
-# Note: both classes import cleanly even if darts isn't installed (see
-# base_timeseries_model.py's lazy-import handling) -- the ImportError
-# only fires once you actually try to build one of these models.
+# Note: every class here imports cleanly even if darts isn't installed
+# (see base_timeseries_model.py's lazy-import handling) -- the
+# ImportError only fires once you actually try to build one of these
+# models. lstm/gru are NOT here -- they live in ml/deep_learning/
+# (lstm.py, gru.py) and are selected via model_type: regression /
+# model_type: classification instead, same as mlp -- see
+# ml/deep_learning/registry.py.
 TS_MODELS: Dict[str, Type[BaseTimeseriesModel]] = {
     "nbeats": NBEATSTimeseriesModel,
     "tcn": TCNTimeseriesModel,
