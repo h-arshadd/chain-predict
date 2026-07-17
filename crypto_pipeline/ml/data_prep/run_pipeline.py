@@ -1,13 +1,15 @@
-# crypto_pipeline/ml/data_prep/main.py
+# crypto_pipeline/ml/data_prep/run_pipeline.py
 
 """
-main.py
--------
+run_pipeline.py
+---------------
 Data prep stage functions, called from ml/main.py's run_ml_pipeline().
-Not a standalone entry point any more -- there is only one entry point
-for the whole ML module (ml/main.py), driven by the single
-ml/config.yaml. This module just orchestrates the data preparation
-steps for regression and classification tasks.
+Renamed from main.py -> run_pipeline.py so it's not confused with
+ml/main.py (the ML module's actual entry point) -- this file is not an
+entry point itself; it has no __main__ block and isn't meant to be run
+directly. It just orchestrates the data preparation steps (market data,
+features, sentiment, target) for regression and classification tasks,
+one call at a time, from ml/pipeline/dataset_loader.py's load_dataset().
 """
 
 import logging
