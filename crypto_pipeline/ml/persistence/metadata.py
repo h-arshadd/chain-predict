@@ -124,6 +124,7 @@ def build_split_metadata(split_info: dict, row_counts: dict) -> dict:
 
     result = {
         "test_size": split_info.get("test_size"),
+        "train_size": split_info.get("train_size"),
         "train": {
             "start_date": _iso(split_info.get("train_start")),
             "end_date": _iso(split_info.get("train_end")),

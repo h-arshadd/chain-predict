@@ -108,9 +108,15 @@ output:
 # Time series -- chronological cutoff only, never shuffled/random.
 # test_size is the fraction of rows (by time order) held out for test,
 # taken from the END of the dataset. Everything before that cutoff is
-# train.
+# train -- test_size is the only value that actually drives the split.
+# train_size is optional and purely a readable label: if you set it,
+# it must add up to 1.0 with test_size (train_test_split.py checks
+# this and raises if they don't match) -- it doesn't change the split
+# itself, it's just there so the config states the train fraction
+# explicitly instead of leaving you to compute 1 - test_size yourself.
 split:
   test_size: 0.2
+  train_size: 0.8
 
 # Data Preprocessing stage (PDF heading 4).
 # Steps run in order, each one chained into the next -- e.g. the PDF's
@@ -118,6 +124,14 @@ split:
 # Every step's params are fit on the train split ONLY, then the same
 # fitted transform is applied to the test split (see preprocessing_pipeline.py).
 # Leave "steps" empty ([]) to pass features through unchanged.
+# Available methods (ml/preprocessing/scalers.py + stationarity.py):
+#   scalers: standard_scaler, minmax_scaler, robust_scaler, maxabs_scaler,
+#            quantile_transformer, power_transformer, normalizer,
+#            rolling_zscore, winsorization
+#   stationarity: fractional_differencing, simple_differencing
+# winsorization clips outliers to a fitted [lower_quantile, upper_quantile]
+# range (default 1st/99th percentile) -- fit on train only, same bounds
+# applied to test, same as the other scalers.
 # Model Training stage (PDF headings 5, 6 & 7).
 # algorithm must be a key in the registry that matches model_type above:
 #   model_type=regression     -> ml/regressors/registry.py's REGRESSORS
@@ -573,6 +587,10 @@ preprocessing:
         threshold: 1.0e-3
     - method: robust_scaler
       params: {}
+    # - method: winsorization
+    #   params:
+    #     lower_quantile: 0.01
+    #     upper_quantile: 0.99
 
 # Signal Generation stage (PDF heading 9).
 # Converts predictor.generate_predictions()'s output (or, for timeseries,

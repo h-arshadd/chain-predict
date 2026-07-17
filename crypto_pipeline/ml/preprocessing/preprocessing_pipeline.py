@@ -111,10 +111,15 @@ def run_preprocessing(train_df: pd.DataFrame, test_df: pd.DataFrame, feature_col
 
         # Re-apply the SAME fitted transform to test. Methods that persist
         # a fitted sklearn object under fit_info["_sklearn_object"] use it
-        # directly; purely backward-looking/causal methods (the
-        # stationarity methods, and the row-wise Normalizer) are simply
-        # re-run against test_out, since they have nothing data-driven to
-        # leak from train in the first place.
+        # directly; winsorization persists its fitted clip bounds under
+        # fit_info["lower_bounds"]/["upper_bounds"] instead of a sklearn
+        # object, so those are applied directly the same way (test must
+        # NEVER refit its own bounds -- that would leak test-set
+        # statistics into what's supposed to be a train-only fit).
+        # Purely backward-looking/causal methods (the stationarity
+        # methods, and the row-wise Normalizer) are the only ones simply
+        # re-run against test_out, since they have nothing data-driven
+        # to leak from train in the first place.
         if "_sklearn_object" in fit_info:
             fitted_scaler = fit_info["_sklearn_object"]
             transformed_test = pd.DataFrame(
@@ -122,6 +127,10 @@ def run_preprocessing(train_df: pd.DataFrame, test_df: pd.DataFrame, feature_col
                 columns=feature_columns,
                 index=test_out.index,
             )
+        elif "lower_bounds" in fit_info and "upper_bounds" in fit_info:
+            lower = pd.Series(fit_info["lower_bounds"])[feature_columns]
+            upper = pd.Series(fit_info["upper_bounds"])[feature_columns]
+            transformed_test = test_out[feature_columns].clip(lower=lower, upper=upper, axis=1)
         else:
             transformed_test, _ = transform_fn(test_out[feature_columns], **params)
 

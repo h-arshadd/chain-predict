@@ -64,6 +64,23 @@ def split_dataset(df: pd.DataFrame, ml_config: dict, timestamp_column: str = "da
     if not 0 < test_size < 1:
         raise ValueError(f"split.test_size must be between 0 and 1, got {test_size}")
 
+    # train_size is optional and purely a readable label in config -- it
+    # does not drive the split (test_size alone does, train = whatever's
+    # left). If it's set, it must actually add up with test_size so the
+    # config doesn't silently say something untrue (e.g. test_size=0.2,
+    # train_size=0.9 would be internally inconsistent).
+    train_size = split_config.get("train_size")
+    if train_size is not None:
+        if not 0 < train_size < 1:
+            raise ValueError(f"split.train_size must be between 0 and 1, got {train_size}")
+        if abs((train_size + test_size) - 1.0) > 1e-6:
+            raise ValueError(
+                f"split.train_size ({train_size}) + split.test_size ({test_size}) "
+                f"must add up to 1.0 -- they currently add up to {train_size + test_size}. "
+                f"train_size is just a label (test_size is what actually drives the split), "
+                f"but it must be consistent with test_size or remove it from config."
+            )
+
     n = len(df)
     n_test = int(round(n * test_size))
 
@@ -108,4 +125,5 @@ def split_dataset(df: pd.DataFrame, ml_config: dict, timestamp_column: str = "da
         "test_start": test_start,
         "test_end": test_end,
         "test_size": test_size,
+        "train_size": train_size if train_size is not None else round(1.0 - test_size, 10),
     }
