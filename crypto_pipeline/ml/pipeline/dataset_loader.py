@@ -6,49 +6,43 @@ dataset_loader.py
 Dataset Loading stage (PDF heading 1).
 
 Does NOT fetch from Postgres itself --
-crypto_pipeline.ml.data_prep.main.run_ml_pipeline() already does that
-(OHLCV + features + sentiment + target). This module just takes that
-output, validates it, and optionally writes a debug CSV for manual
+crypto_pipeline.ml.data_prep.main.run_data_prep_pipeline() already does
+that (OHLCV + features + sentiment + target). This module just takes
+that output, validates it, and optionally writes a debug CSV for manual
 inspection (never read back in by any pipeline step).
 
-exchange / symbol / model_type are read from ml/data_prep/config.yaml,
-not duplicated in ml/config.yaml, so there is one source of truth.
+Everything (exchange / symbol / model_type / output settings) is read
+from the single ml/config.yaml -- one config, one source of truth.
 """
 
 import logging
 import os
 
 import pandas as pd
-import yaml
 
-from crypto_pipeline.ml.data_prep.main import run_ml_pipeline
+from crypto_pipeline.ml.data_prep.main import run_data_prep_pipeline
 
 logger = logging.getLogger(__name__)
 
 
-def load_dataset(ml_config_path: str, data_prep_config_path: str) -> pd.DataFrame:
+def load_dataset(ml_config: dict) -> pd.DataFrame:
     """
     Run the data_prep pipeline and validate the resulting dataset.
 
     Args:
-        ml_config_path: path to ml/config.yaml (output/debug settings)
-        data_prep_config_path: path to ml/data_prep/config.yaml (passed
-            through to run_ml_pipeline, and read for exchange/symbol/model_type)
+        ml_config: ml/config.yaml dict (already loaded)
 
     Returns:
         pd.DataFrame: validated dataset, ready for feature selection.
     """
 
-    ml_config = _load_yaml(ml_config_path)
-    data_prep_config = _load_yaml(data_prep_config_path)
-
-    df = run_ml_pipeline(data_prep_config_path)
+    df = run_data_prep_pipeline(ml_config)
 
     _validate_dataset(df)
 
     output_config = ml_config.get("output", {})
     if output_config.get("save_debug_csv", False):
-        _save_debug_csv(df, data_prep_config, output_config)
+        _save_debug_csv(df, ml_config, output_config)
 
     logger.info(f"Dataset loaded and validated: {df.shape}")
     return df
@@ -143,15 +137,15 @@ def _validate_dataset(df: pd.DataFrame) -> None:
     logger.info("Dataset validation passed")
 
 
-def _save_debug_csv(df: pd.DataFrame, data_prep_config: dict, output_config: dict) -> None:
+def _save_debug_csv(df: pd.DataFrame, ml_config: dict, output_config: dict) -> None:
     """
     Save a debug-only CSV for manual inspection.
     Path: {base_dir}/{exchange}/{symbol}/{model_type}/dataset_{model_type}.csv
     """
 
-    exchange = data_prep_config["data"]["exchange"]
-    symbol = data_prep_config["data"]["symbol"]
-    model_type = data_prep_config["model_type"]
+    exchange = ml_config["data"]["exchange"]
+    symbol = ml_config["data"]["symbol"]
+    model_type = ml_config["model_type"]
 
     base_dir = output_config.get("base_dir", "outputs")
     out_dir = os.path.join(base_dir, exchange, symbol, model_type)
@@ -160,8 +154,3 @@ def _save_debug_csv(df: pd.DataFrame, data_prep_config: dict, output_config: dic
     out_path = os.path.join(out_dir, f"dataset_{model_type}.csv")
     df.to_csv(out_path, index=False)
     logger.info(f"Debug CSV saved to {out_path}")
-
-
-def _load_yaml(path: str) -> dict:
-    with open(path, "r") as f:
-        return yaml.safe_load(f)

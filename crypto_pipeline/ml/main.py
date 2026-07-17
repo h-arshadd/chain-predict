@@ -9,7 +9,7 @@ This didn't exist before: regression_pipeline.py / classification_pipeline.py
 / timeseries_pipeline.py each define a run_*_pipeline() function, but
 nothing in the codebase ever called them -- this file is that caller.
 
-Routing is automatic, driven by ml/data_prep/config.yaml's model_type,
+Routing is automatic, driven by ml/config.yaml's model_type,
 exactly the same field each pipeline file already gates on internally:
 
     model_type: regression     -> regressors/deep_learning regressors (mlp/lstm/gru)
@@ -37,7 +37,7 @@ one -- see "Which algorithms run" below.
 backtest/main.py fetches it: straight from Postgres via
 crypto_pipeline.utils.db_utils.get_candles_from_db(), using the same
 exchange/symbol/start_date/end_date already sitting in
-ml/data_prep/config.yaml's data: section. Nothing to pass in by hand --
+ml/config.yaml's data: section. Nothing to pass in by hand --
 if you want to run against different data, edit that config, not the
 call site.
 
@@ -138,12 +138,11 @@ def _load_yaml(path: str) -> dict:
 
 
 # Directory main.py itself lives in (crypto_pipeline/ml/) -- used so the
-# default config paths below resolve correctly regardless of which
+# default config path below resolves correctly regardless of which
 # directory the command is launched from (python -m crypto_pipeline.ml.main
 # from anywhere still finds crypto_pipeline/ml/config.yaml).
 _ML_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ML_CONFIG_PATH = os.path.join(_ML_DIR, "config.yaml")
-DEFAULT_DATA_PREP_CONFIG_PATH = os.path.join(_ML_DIR, "data_prep", "config.yaml")
 PIPELINE_OUT_DIR = os.path.join(_ML_DIR, "pipeline_out")
 
 
@@ -158,8 +157,8 @@ def _resolve_algorithms(model_type: str, ml_config: dict) -> list:
 
     ml_config["model"]["algorithms"] is a dict keyed by model_type --
     {"regression": [...], "classification": [...], "timeseries": [...]}
-    -- not a single flat list. This is deliberate: model_type
-    (ml/data_prep/config.yaml) can change independently of ml/config.yaml,
+    -- not a single flat list. This is deliberate: model_type can be
+    changed independently of which algorithms are configured for it,
     and a flat list would silently be the wrong algorithms (or raise a
     confusing "unknown algorithm" error) the moment you switch model_type
     without also hand-editing the list. Keying by model_type means every
@@ -184,7 +183,7 @@ def _resolve_algorithms(model_type: str, ml_config: dict) -> list:
             available = sorted(traditional.keys()) + sorted(deep_learning.keys())
         raise ValueError(
             f"ml/config.yaml's model.algorithms.{model_type} is not set (or is "
-            f"empty), but ml/data_prep/config.yaml's model_type is "
+            f"empty), but ml/config.yaml's model_type is "
             f"'{model_type}'. Nothing runs implicitly any more -- set "
             f"model.algorithms.{model_type} to an explicit list. Available for "
             f"'{model_type}': {available}"
@@ -193,24 +192,31 @@ def _resolve_algorithms(model_type: str, ml_config: dict) -> list:
     return list(explicit)
 
 
-def _params_for(algorithm: str, ml_config: dict) -> dict:
+def _params_for(algorithm: str, model_type: str, ml_config: dict) -> dict:
     """
-    Hyperparameters for one algorithm: ml_config["model"]["param_overrides"][algorithm]
-    if given, otherwise {} (the model class's own/sklearn's defaults apply).
+    Hyperparameters for one algorithm: ml_config["model"]["param_overrides"]
+    [model_type][algorithm] if given, otherwise {} (the model class's own/
+    sklearn's defaults apply). Nested by model_type (not a flat
+    {algorithm: {...}} dict) because several algorithm names are shared
+    between regression and classification (random_forest, extra_trees,
+    xgboost, lightgbm, catboost) and sklearn's own defaults for those
+    differ by task (e.g. RandomForestRegressor's default max_features is
+    1.0, RandomForestClassifier's is "sqrt") -- a flat dict couldn't hold
+    both at once.
     """
     overrides = ml_config.get("model", {}).get("param_overrides", {})
-    return overrides.get(algorithm, {}) or {}
+    return overrides.get(model_type, {}).get(algorithm, {}) or {}
 
 
-def _fetch_ohlcv_1m(data_prep_config: dict) -> pd.DataFrame:
+def _fetch_ohlcv_1m(ml_config: dict) -> pd.DataFrame:
     """
     Fetch 1-minute OHLCV straight from Postgres, same call pattern
     backtest/main.py's get_1m_data() uses -- exchange/symbol/start_date/
-    end_date come from ml/data_prep/config.yaml's data: section, so
-    there's nothing to pass in separately; edit that config to point at
+    end_date come from ml/config.yaml's data: section, so there's
+    nothing to pass in separately; edit that config to point at
     different data.
     """
-    data_config = data_prep_config["data"]
+    data_config = ml_config["data"]
     conn = get_db_connection()
     try:
         return get_candles_from_db(
@@ -226,7 +232,6 @@ def _fetch_ohlcv_1m(data_prep_config: dict) -> pd.DataFrame:
 
 def run_ml_pipeline(
     ml_config_path: str = DEFAULT_ML_CONFIG_PATH,
-    data_prep_config_path: str = DEFAULT_DATA_PREP_CONFIG_PATH,
     ohlcv_1m: pd.DataFrame = None,
     backtest_config_path: str = None,
     stats_config_path: str = None,
@@ -242,17 +247,17 @@ def run_ml_pipeline(
     pipeline_out_dir/{algorithm}/ along the way.
 
     Args:
-        ml_config_path: path to ml/config.yaml
-        data_prep_config_path: path to ml/data_prep/config.yaml -- its
-            model_type field decides regression vs classification vs
-            timeseries at every branching point below, and its data:
-            section (exchange/symbol/start_date/end_date) is what
-            ohlcv_1m is fetched with if not supplied directly.
+        ml_config_path: path to ml/config.yaml -- the single config
+            file. Its model_type field decides regression vs
+            classification vs timeseries at every branching point
+            below, and its data: section (exchange/symbol/start_date/
+            end_date) is what ohlcv_1m is fetched with if not supplied
+            directly.
         ohlcv_1m: 1-minute OHLCV DataFrame (datetime, open, high, low,
             close) covering the test period, needed for backtest
             execution (PDF heading 10). Optional -- if not given, it's
             fetched from Postgres the same way backtest/main.py does,
-            using data_prep_config's data: section.
+            using ml_config's data: section.
         backtest_config_path: path to backtest/config.yaml. Defaults to
             backtest.backtest.load_config()'s own default location.
         stats_config_path: path to stats/config.yaml. Defaults to
@@ -277,21 +282,20 @@ def run_ml_pipeline(
         others from running.
     """
     ml_config = _load_yaml(ml_config_path)
-    data_prep_config = _load_yaml(data_prep_config_path)
 
-    model_type = data_prep_config.get("model_type")
+    model_type = ml_config.get("model_type")
     if model_type not in ("regression", "classification", "timeseries"):
         raise ValueError(
-            f"Unknown model_type '{model_type}' in {data_prep_config_path}. "
+            f"Unknown model_type '{model_type}' in {ml_config_path}. "
             f"Expected one of: regression, classification, timeseries"
         )
 
     if ohlcv_1m is None:
-        ohlcv_1m = _fetch_ohlcv_1m(data_prep_config)
+        ohlcv_1m = _fetch_ohlcv_1m(ml_config)
     if ohlcv_1m.empty:
         raise ValueError(
             "No 1-minute OHLCV data returned for the exchange/symbol/date range in "
-            f"{data_prep_config_path}'s data: section -- nothing to backtest against."
+            f"{ml_config_path}'s data: section -- nothing to backtest against."
         )
 
     algorithms = _resolve_algorithms(model_type, ml_config)
@@ -301,9 +305,9 @@ def run_ml_pipeline(
     # load_dataset/select_features/split_dataset/run_preprocessing don't
     # depend on which algorithm trains on the result, so they run once,
     # not once per algorithm.
-    df = load_dataset(ml_config_path, data_prep_config_path)
+    df = load_dataset(ml_config)
 
-    selected = select_features(df, ml_config, data_prep_config)
+    selected = select_features(df, ml_config)
     feature_columns = selected["feature_columns"]
     target_column = selected["target_column"]
     timestamp_column = selected["timestamp_column"]
@@ -335,7 +339,6 @@ def run_ml_pipeline(
                 algorithm=algorithm,
                 model_type=model_type,
                 ml_config=ml_config,
-                data_prep_config=data_prep_config,
                 df=df,
                 train_df=train_df,
                 test_df=test_df,
@@ -368,7 +371,6 @@ def _run_one_algorithm(
     algorithm: str,
     model_type: str,
     ml_config: dict,
-    data_prep_config: dict,
     df: pd.DataFrame,
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
@@ -409,7 +411,7 @@ def _run_one_algorithm(
     # 01_dataset.csv + run_config.json's split/preprocessing sections.
     _dump("01_dataset.csv", df)
 
-    params = _params_for(algorithm, ml_config)
+    params = _params_for(algorithm, model_type, ml_config)
     y_test = None
     classes = None
 
@@ -482,7 +484,7 @@ def _run_one_algorithm(
         n = params.get("output_chunk_length")
         if not n:
             raise ValueError(
-                f"ml/config.yaml's model.param_overrides.{algorithm} must set output_chunk_length"
+                f"ml/config.yaml's model.param_overrides.timeseries.{algorithm} must set output_chunk_length"
             )
 
         train_df = train_df.copy()
@@ -551,7 +553,7 @@ def _run_one_algorithm(
     # ---- Heading 11: full model/experiment persistence ----------------
     metadata = {
         "data_prep": build_data_prep_metadata(
-            data_prep_config=data_prep_config,
+            ml_config=ml_config,
             row_counts=row_counts,
         ),
         "split": build_split_metadata(
@@ -612,15 +614,10 @@ def _parse_args():
     )
     parser.add_argument("--ml-config", default=DEFAULT_ML_CONFIG_PATH, help="Path to ml/config.yaml")
     parser.add_argument(
-        "--data-prep-config", default=DEFAULT_DATA_PREP_CONFIG_PATH,
-        help="Path to ml/data_prep/config.yaml (its model_type and data: fields decide "
-             "routing and what 1-minute data gets fetched)",
-    )
-    parser.add_argument(
         "--ohlcv-1m", default=None,
         help="Optional path to a CSV of 1-minute OHLCV (columns: datetime, open, high, low, "
              "close). If omitted (the default), it's fetched from Postgres using "
-             "data_prep_config's data: section, same as backtest/main.py.",
+             "ml_config's data: section, same as backtest/main.py.",
     )
     parser.add_argument("--backtest-config", default=None, help="Path to backtest/config.yaml")
     parser.add_argument("--stats-config", default=None, help="Path to stats/config.yaml")
@@ -645,7 +642,6 @@ if __name__ == "__main__":
 
     results = run_ml_pipeline(
         ml_config_path=args.ml_config,
-        data_prep_config_path=args.data_prep_config,
         ohlcv_1m=ohlcv_1m,
         backtest_config_path=args.backtest_config,
         stats_config_path=args.stats_config,

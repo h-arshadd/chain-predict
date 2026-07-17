@@ -3,15 +3,16 @@
 """
 main.py
 -------
-Entry point for the ML Module.
-Orchestrates configuration loading and the complete data preparation pipeline
-for regression and classification tasks.
+Data prep stage functions, called from ml/main.py's run_ml_pipeline().
+Not a standalone entry point any more -- there is only one entry point
+for the whole ML module (ml/main.py), driven by the single
+ml/config.yaml. This module just orchestrates the data preparation
+steps for regression and classification tasks.
 """
 
 import logging
 import pandas as pd
 
-from crypto_pipeline.ml.data_prep.ml_utils import load_config_yaml
 from crypto_pipeline.ml.data_prep.data_pipeline import collect_market_data
 from crypto_pipeline.ml.data_prep.feature_pipeline import engineer_features
 from crypto_pipeline.ml.data_prep.sentiment_pipeline import collect_sentiment_data
@@ -21,10 +22,10 @@ from crypto_pipeline.ml.data_prep.target_pipeline import generate_target
 logger = logging.getLogger(__name__)
 
 
-def run_ml_pipeline(config_path: str) -> pd.DataFrame:
+def run_data_prep_pipeline(config: dict) -> pd.DataFrame:
     """
-    Execute the complete ML data preparation pipeline.
-    
+    Execute the complete data preparation pipeline.
+
     Steps:
     1. Collect market data (if data.enabled) -- always fetches full OHLCV;
        calculate_ohlcv only controls whether raw OHLCV columns are kept
@@ -33,24 +34,21 @@ def run_ml_pipeline(config_path: str) -> pd.DataFrame:
     3. Collect sentiment data (if enabled)
     4. Generate prediction target (needs close/high/low from step 1)
     5. Drop raw OHLCV output columns if calculate_ohlcv is False
-    
+
     Args:
-        config_path: Path to ML module config YAML
-        
+        config: ml/config.yaml dict (already loaded)
+
     Returns:
         pd.DataFrame: Merged dataset ready for model training
     """
-    
-    config = load_config_yaml(config_path)
-    logger.info(f"Loaded config from {config_path}")
-    
+
     # Validate that at least one data source is enabled
     data_enabled = config.get("data", {}).get("enabled", False)
     features_enabled = config.get("features", {}).get("enabled", False)
-    
+
     if not data_enabled and not features_enabled:
         raise ValueError("At least one data source must be enabled: either data.enabled or features.enabled")
-    
+
     # Step 1: Market data collection. Always fetches full OHLCV when
     # enabled -- indicators, patterns, and target generation all need
     # real close/high/low/volume to compute from. calculate_ohlcv does
@@ -63,7 +61,7 @@ def run_ml_pipeline(config_path: str) -> pd.DataFrame:
     else:
         logger.warning("Market data collection disabled in config")
         df = pd.DataFrame()
-    
+
     # Step 2: Feature engineering
     if config.get("features", {}).get("enabled", False):
         logger.info("Engineering features...")
@@ -71,10 +69,10 @@ def run_ml_pipeline(config_path: str) -> pd.DataFrame:
         logger.info(f"Features engineered: {df.shape[1]} columns")
     else:
         logger.info("Features disabled. Using OHLCV data only.")
-    
+
     if df.empty:
         raise ValueError("No data collected after data and feature steps")
-    
+
     # Step 3: Sentiment collection
     if config.get("sentiment", {}).get("enabled", False):
         logger.info("Collecting sentiment data...")
@@ -82,7 +80,7 @@ def run_ml_pipeline(config_path: str) -> pd.DataFrame:
         logger.info(f"Sentiment data merged: {df.shape[1]} columns")
     else:
         logger.info("Sentiment collection disabled.")
-    
+
     # Step 4: Target generation
     logger.info("Generating prediction target...")
     df = generate_target(df, config)
@@ -112,27 +110,5 @@ def run_ml_pipeline(config_path: str) -> pd.DataFrame:
             logger.info(f"calculate_ohlcv=False: dropping raw OHLCV columns from output: {ohlcv_cols}")
             df = df.drop(columns=ohlcv_cols)
 
-    logger.info(f"ML pipeline completed successfully. Final shape: {df.shape}")
+    logger.info(f"Data prep pipeline completed successfully. Final shape: {df.shape}")
     return df
-
-
-if __name__ == "__main__":
-    import os
-
-    config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
-    config = load_config_yaml(config_path)
-    df = run_ml_pipeline(config_path)  # NaN dropping now happens inside run_ml_pipeline()
-
-    # Output path includes exchange/symbol/model_type so different
-    # exchanges (binance/bybit) and target types (regression/classification)
-    # never overwrite each other's dataset.csv
-    exchange = config["data"]["exchange"]
-    symbol = config["data"]["symbol"]
-    model_type = config["model_type"]
-
-    output_dir = os.path.join(os.path.dirname(__file__), "outputs", exchange, symbol, model_type)
-    os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, f"dataset_{model_type}.csv")
-    df.to_csv(output_path, index=False)
-    print(f"Output saved to {output_path}")
-    print(f"Final dataset shape: {df.shape} (rows, cols)")

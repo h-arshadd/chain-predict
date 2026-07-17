@@ -1,19 +1,65 @@
 # crypto_pipeline/ml/config.yaml
+#
+# Single config file for the whole ML module. Everything -- data
+# collection, feature engineering, sentiment, target generation, feature
+# selection, train/test split, preprocessing, model training, signal
+# generation, evaluation -- is controlled from here. There is only one
+# entry point (ml/main.py) and only one config file.
 
-# exchange, symbol, and model_type are NOT duplicated here --
-# they're read directly from ml/data_prep/config.yaml at runtime,
-# so there's only one place that can go out of sync.
+model_type: regression # regression | classification | timeseries
 
-output:
-  save_debug_csv: false
-  base_dir: outputs
+# ---------------------------------------------------------------------
+# Data Prep stages (market data, features, sentiment, target)
+# ---------------------------------------------------------------------
+
+data:
+  enabled: true
+  calculate_ohlcv: true  # Set to false to skip OHLCV calculation (use features only)
+  symbol: btc
+  exchange: binance
+  timeframe: 1h
+  start_date: "2024-01-01"
+  end_date: "2026-01-01"
 
 features:
+  enabled: true  # If true, add indicators + patterns. If false, use raw OHLCV only.
+  indicators:
+    EMA:
+      - parameters:
+          period: 20
+        aliases:
+          ema: ind_EMA_20
+      - parameters:
+          period: 50
+        aliases:
+          ema: ind_EMA_50
+    RSI:
+      - parameters:
+          period: 14
+        aliases:
+          value: ind_RSI_14
+    MACD:
+      - parameters:
+          fastperiod: 12
+          slowperiod: 26
+          signalperiod: 9
+        aliases:
+          macd: ind_MACD_12_26_9
+          signal: ind_MACD_SIGNAL_12_26_9
+          histogram: ind_MACD_HIST_12_26_9
+  patterns:
+    DOJI:
+      aliases:
+        pattern: pat_DOJI
+    ENGULFING:
+      aliases:
+        pattern: pat_ENGULFING
+
+  # --- Feature Selection stage (PDF heading 2) ---
+  # timestamp_column / target_column identify the dataset's timestamp and
+  # label columns for every downstream stage.
   timestamp_column: datetime
   target_column: target
-  # horizon is NOT set here -- it's read from ml/data_prep/config.yaml's
-  # target.horizon (see feature_selector.py), so there's only one place
-  # it can go out of sync.
 
   # Option A: explicit list (order preserved, wins if set)
   # feature_columns:
@@ -33,6 +79,31 @@ features:
     - close
     - volume
 
+sentiment:
+  enabled: false  # Set to false to skip sentiment collection
+  source:
+    - reddit
+  encoding: numerical  # numerical (-1/0/1) | onehot
+
+target:
+  # regression -> log return (future close vs current close)
+  # classification -> Triple Barrier Labeling: -1/0/1 based on whether price
+  # hits the upper (take-profit) or lower (stop-loss) barrier first within
+  # `horizon` candles. Neither hit within horizon -> 0.
+  horizon: 4
+  upper_threshold: 0.001   # % above entry to count as "up" (take-profit)
+  lower_threshold: -0.001  # % below entry to count as "down" (stop-loss)
+  filter_noise: true       # regression only
+  noise_threshold: 0.001   # regression only
+
+# ---------------------------------------------------------------------
+# ML stages (split, preprocessing, model, signals, evaluation)
+# ---------------------------------------------------------------------
+
+output:
+  save_debug_csv: false
+  base_dir: outputs
+
 # Train/Test Split stage (PDF heading 3).
 # Time series -- chronological cutoff only, never shuffled/random.
 # test_size is the fraction of rows (by time order) held out for test,
@@ -48,8 +119,7 @@ split:
 # fitted transform is applied to the test split (see preprocessing_pipeline.py).
 # Leave "steps" empty ([]) to pass features through unchanged.
 # Model Training stage (PDF headings 5, 6 & 7).
-# algorithm must be a key in the registry that matches data_prep's
-# model_type:
+# algorithm must be a key in the registry that matches model_type above:
 #   model_type=regression     -> ml/regressors/registry.py's REGRESSORS
 #                                 (linear_regression, ridge, lasso, elasticnet,
 #                                 random_forest, extra_trees, svr, xgboost,
@@ -76,17 +146,16 @@ split:
 # nothing here is validated/hardcoded per-algorithm, so any param that
 # estimator accepts can go in params. Only one model runs per run, chosen
 # by whichever of regression_pipeline.py / classification_pipeline.py /
-# timeseries_pipeline.py matches ml/data_prep/config.yaml's model_type
-# (see those files).
+# timeseries_pipeline.py matches model_type above (see those files).
 #
 # model.algorithms is a dict keyed by model_type, not a flat list --
 # {regression: [...], classification: [...], timeseries: [...]}. Keyed
-# this way on purpose: model_type (set in ml/data_prep/config.yaml) can
-# change independently of this file, and a flat list would silently be
-# the wrong algorithms (or error out confusingly) the moment you switch
-# model_type without also rewriting the list by hand. With a key per
-# model_type, all three are always ready -- switching model_type just
-# picks a different key below, nothing else to edit.
+# this way on purpose: model_type (above) can change independently, and
+# a flat list would silently be the wrong algorithms (or error out
+# confusingly) the moment you switch model_type without also rewriting
+# the list by hand. With a key per model_type, all three are always
+# ready -- switching model_type just picks a different key below,
+# nothing else to edit.
 #
 # model.algorithms.<current model_type> is REQUIRED and must be
 # non-empty -- it's the only thing that decides what trains this run.
@@ -114,17 +183,11 @@ split:
 #   timeseries     -> ml/timeseries/registry.py's TS_MODELS
 #                      (nbeats, tcn)
 #
-# Only the list matching ml/data_prep/config.yaml's current model_type
-# is used; the other two just sit here ready for next time you switch.
-# Edit any list to whatever subset you actually want -- e.g. leave mlp/
-# lstm/gru commented out if you don't want deep learning training
-# alongside sklearn models.
+# Only the list matching model_type above is used; the other two just
+# sit here ready for next time you switch. Edit any list to whatever
+# subset you actually want -- e.g. leave mlp/lstm/gru commented out if
+# you don't want deep learning training alongside sklearn models.
 #
-# param_overrides is optional and per-algorithm -- any algorithm not
-# listed here just uses its model class's own defaults (empty dict).
-# timeseries algorithms (nbeats/tcn) are the one exception: they
-# require output_chunk_length, so it must be set here for each one you
-# enable.
 model:
   algorithms:
     regression:
@@ -161,20 +224,299 @@ model:
       - nbeats
       - tcn
 
+# param_overrides is nested by model_type, then by algorithm --
+# param_overrides.<model_type>.<algorithm> -- NOT a flat {algorithm: {...}}
+# dict. This matters because several algorithm names are shared between
+# regression and classification (random_forest, extra_trees, xgboost,
+# lightgbm, catboost), and sklearn's own defaults for those differ by
+# task (e.g. RandomForestRegressor's default max_features is 1.0,
+# RandomForestClassifier's is "sqrt") -- a flat dict couldn't hold both
+# at once. Every algorithm below has EVERY one of its constructor's
+# tunable params spelled out explicitly, set to that library's own
+# default value -- nothing is left for sklearn/xgboost/lightgbm/catboost
+# to fill in silently. sklearn's values here were read directly from
+# each class's __init__ signature (sklearn 1.8). xgboost/lightgbm/
+# catboost aren't installed in this environment so their values below
+# are the well-documented standard defaults for the params people
+# actually tune, not introspected -- if you're on a very different
+# library version, worth a quick diff against that version's docs.
+# Any algorithm not listed here just uses its model class's own
+# defaults (empty dict) -- but since every enabled algorithm IS listed
+# here now, that fallback shouldn't trigger for anything you actually run.
+# timeseries algorithms (nbeats/tcn) additionally REQUIRE
+# output_chunk_length; there's no library default for that.
   param_overrides:
-    nbeats:
-      input_chunk_length: 48   # how many past steps the model looks at
-      output_chunk_length: 12  # how many future steps it predicts (= forecast horizon n)
-      n_epochs: 50
-      batch_size: 32
-      random_state: 42
-    tcn:
-      input_chunk_length: 48
-      output_chunk_length: 12
-      n_epochs: 50
-      batch_size: 32
-      random_state: 42
+    regression:
+      linear_regression:
+        fit_intercept: true
+        copy_X: true
+        tol: 1.0e-6
+        n_jobs: null
+        positive: false
+      ridge:
+        alpha: 1.0
+        fit_intercept: true
+        copy_X: true
+        max_iter: null
+        tol: 1.0e-4
+        solver: auto
+        positive: false
+        random_state: null
+      lasso:
+        alpha: 1.0
+        fit_intercept: true
+        precompute: false
+        copy_X: true
+        max_iter: 1000
+        tol: 1.0e-4
+        warm_start: false
+        positive: false
+        random_state: null
+        selection: cyclic
+      elasticnet:
+        alpha: 1.0
+        l1_ratio: 0.5
+        fit_intercept: true
+        precompute: false
+        max_iter: 1000
+        copy_X: true
+        tol: 1.0e-4
+        warm_start: false
+        positive: false
+        random_state: null
+        selection: cyclic
+      random_forest:
+        n_estimators: 100
+        criterion: squared_error
+        max_depth: null
+        min_samples_split: 2
+        min_samples_leaf: 1
+        min_weight_fraction_leaf: 0.0
+        max_features: 1.0
+        max_leaf_nodes: null
+        min_impurity_decrease: 0.0
+        bootstrap: true
+        oob_score: false
+        n_jobs: null
+        random_state: 42
+        verbose: 0
+        warm_start: false
+        ccp_alpha: 0.0
+        max_samples: null
+      extra_trees:
+        n_estimators: 100
+        criterion: squared_error
+        max_depth: null
+        min_samples_split: 2
+        min_samples_leaf: 1
+        min_weight_fraction_leaf: 0.0
+        max_features: 1.0
+        max_leaf_nodes: null
+        min_impurity_decrease: 0.0
+        bootstrap: false
+        oob_score: false
+        n_jobs: null
+        random_state: 42
+        verbose: 0
+        warm_start: false
+        ccp_alpha: 0.0
+        max_samples: null
+      svr:
+        kernel: rbf
+        degree: 3
+        gamma: scale
+        coef0: 0.0
+        tol: 1.0e-3
+        C: 1.0
+        epsilon: 0.1
+        shrinking: true
+        cache_size: 200
+        verbose: false
+        max_iter: -1
+      xgboost:
+        n_estimators: 100
+        max_depth: 6
+        learning_rate: 0.3
+        subsample: 1.0
+        colsample_bytree: 1.0
+        gamma: 0.0
+        min_child_weight: 1
+        reg_alpha: 0.0
+        reg_lambda: 1.0
+        objective: "reg:squarederror"
+        booster: gbtree
+        random_state: 42
+        n_jobs: null
+        verbosity: 1
+      lightgbm:
+        boosting_type: gbdt
+        num_leaves: 31
+        max_depth: -1
+        learning_rate: 0.1
+        n_estimators: 100
+        subsample: 1.0
+        colsample_bytree: 1.0
+        reg_alpha: 0.0
+        reg_lambda: 0.0
+        min_child_samples: 20
+        random_state: 42
+        n_jobs: null
+        verbose: -1
+      catboost:
+        iterations: 1000
+        learning_rate: null   # null = CatBoost picks it automatically from the data
+        depth: 6
+        l2_leaf_reg: 3.0
+        loss_function: RMSE
+        random_seed: 42
+        verbose: false
+        allow_writing_files: false
 
+    classification:
+      logistic_regression:
+        C: 1.0
+        dual: false
+        tol: 1.0e-4
+        fit_intercept: true
+        intercept_scaling: 1
+        class_weight: null
+        random_state: 42
+        solver: lbfgs
+        max_iter: 100
+        verbose: 0
+        warm_start: false
+        n_jobs: null
+      decision_tree:
+        criterion: gini
+        splitter: best
+        max_depth: null
+        min_samples_split: 2
+        min_samples_leaf: 1
+        min_weight_fraction_leaf: 0.0
+        max_features: null
+        random_state: 42
+        max_leaf_nodes: null
+        min_impurity_decrease: 0.0
+        class_weight: null
+        ccp_alpha: 0.0
+      random_forest:
+        n_estimators: 100
+        criterion: gini
+        max_depth: null
+        min_samples_split: 2
+        min_samples_leaf: 1
+        min_weight_fraction_leaf: 0.0
+        max_features: sqrt
+        max_leaf_nodes: null
+        min_impurity_decrease: 0.0
+        bootstrap: true
+        oob_score: false
+        n_jobs: null
+        random_state: 42
+        verbose: 0
+        warm_start: false
+        class_weight: null
+        ccp_alpha: 0.0
+        max_samples: null
+      extra_trees:
+        n_estimators: 100
+        criterion: gini
+        max_depth: null
+        min_samples_split: 2
+        min_samples_leaf: 1
+        min_weight_fraction_leaf: 0.0
+        max_features: sqrt
+        max_leaf_nodes: null
+        min_impurity_decrease: 0.0
+        bootstrap: false
+        oob_score: false
+        n_jobs: null
+        random_state: 42
+        verbose: 0
+        warm_start: false
+        class_weight: null
+        ccp_alpha: 0.0
+        max_samples: null
+      svm:
+        C: 1.0
+        kernel: rbf
+        degree: 3
+        gamma: scale
+        coef0: 0.0
+        shrinking: true
+        probability: true   # library default is false; this pipeline needs predict_proba()
+        tol: 1.0e-3
+        cache_size: 200
+        class_weight: null
+        verbose: false
+        max_iter: -1
+        decision_function_shape: ovr
+        break_ties: false
+        random_state: 42
+      knn:
+        n_neighbors: 5
+        weights: uniform
+        algorithm: auto
+        leaf_size: 30
+        p: 2
+        metric: minkowski
+        metric_params: null
+        n_jobs: null
+      naive_bayes:
+        priors: null
+        var_smoothing: 1.0e-9
+      xgboost:
+        n_estimators: 100
+        max_depth: 6
+        learning_rate: 0.3
+        subsample: 1.0
+        colsample_bytree: 1.0
+        gamma: 0.0
+        min_child_weight: 1
+        reg_alpha: 0.0
+        reg_lambda: 1.0
+        objective: "binary:logistic"   # switch to "multi:softprob" yourself for >2 classes
+        booster: gbtree
+        random_state: 42
+        n_jobs: null
+        verbosity: 1
+      lightgbm:
+        boosting_type: gbdt
+        num_leaves: 31
+        max_depth: -1
+        learning_rate: 0.1
+        n_estimators: 100
+        subsample: 1.0
+        colsample_bytree: 1.0
+        reg_alpha: 0.0
+        reg_lambda: 0.0
+        min_child_samples: 20
+        random_state: 42
+        n_jobs: null
+        verbose: -1
+      catboost:
+        iterations: 1000
+        learning_rate: null   # null = CatBoost picks it automatically from the data
+        depth: 6
+        l2_leaf_reg: 3.0
+        loss_function: Logloss   # switch to "MultiClass" yourself for >2 classes
+        random_seed: 42
+        verbose: false
+        allow_writing_files: false
+
+    timeseries:
+      nbeats:
+        input_chunk_length: 48   # how many past steps the model looks at
+        output_chunk_length: 12  # how many future steps it predicts (= forecast horizon n)
+        n_epochs: 50
+        batch_size: 32
+        random_state: 42
+      tcn:
+        input_chunk_length: 48
+        output_chunk_length: 12
+        n_epochs: 50
+        batch_size: 32
+        random_state: 42
   # TCN alternative -- swap the block above for this if algorithm: tcn
   # instead of nbeats. Both are Darts-backed and support past_covariates
   # natively (see ml/timeseries/tcn_model.py).
@@ -237,10 +579,10 @@ preprocessing:
 # predictor.generate_timeseries_predictions()'s forecast path) into
 # Buy/Sell/Hold labels (ml/signals/regression_signals.py,
 # classification_signals.py, or timeseries_signals.py, whichever matches
-# data_prep's model_type -- same routing pattern as the model section
-# above). Thresholds are the ONLY thing configurable here; the
-# Buy/Sell/Hold comparison logic itself lives in signal_utils.py and is
-# never touched by config.
+# model_type above -- same routing pattern as the model section above).
+# Thresholds are the ONLY thing configurable here; the Buy/Sell/Hold
+# comparison logic itself lives in signal_utils.py and is never touched
+# by config.
 signals:
   # Used by ml/signals/regression_signals.py.
   # predicted return > buy_threshold  -> Buy
@@ -252,8 +594,9 @@ signals:
 
   # Used by ml/signals/classification_signals.py.
   # bullish_class/bearish_class must match the actual label values in
-  # your target column -- data_prep's triple-barrier target encodes
-  # -1 (down) / 0 (neutral) / 1 (up), so 1/-1 are the defaults here.
+  # your target column -- the target section above's triple-barrier
+  # target encodes -1 (down) / 0 (neutral) / 1 (up), so 1/-1 are the
+  # defaults here.
   # bullish probability > bullish_threshold -> Buy
   # bearish probability > bearish_threshold -> Sell
   # otherwise                               -> Hold

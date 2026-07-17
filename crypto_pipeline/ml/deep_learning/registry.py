@@ -11,7 +11,7 @@ regression/classification pipeline never hardcodes "if algorithm ==
 build_dl_classifier(name, **params).
 
 mlp, lstm, and gru all live here, all selected via model_type:
-regression / model_type: classification (ml/data_prep/config.yaml),
+regression / model_type: classification (ml/config.yaml),
 same as any traditional regressor/classifier. Each row of the feature
 table is treated as a single timestep of length 1 going into
 lstm.py/gru.py's recurrent layer -- see those files' docstrings for the

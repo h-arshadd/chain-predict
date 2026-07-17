@@ -18,7 +18,7 @@ signal_utils.get_thresholds(), never hardcoded here.
 
 Label convention: this project's target_pipeline (data_prep) encodes
 triple-barrier labels as -1 (bearish) / 0 (neutral) / 1 (bullish) --
-see ml/data_prep/config.yaml's target section. bullish_class /
+see ml/config.yaml's target section. bullish_class /
 bearish_class default to 1 / -1 accordingly, but are config-driven
 (not hardcoded) so a differently-labeled dataset still works.
 """
