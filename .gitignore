@@ -25,3 +25,11 @@ logs/
 
 # Generated outputs from plot_indicators.py
 indicator_charts/
+
+# ML: generated outputs, never commit
+ml/artifacts/
+ml/pipeline_out/
+ml/outputs/
+ml/logs/*.log
+ml/**/__pycache__/
+ml/**/*.pyc

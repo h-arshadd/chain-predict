@@ -215,8 +215,8 @@ model:
       - xgboost
       - lightgbm
       - catboost
-      # - mlp    # uncomment to include the deep learning regressor in this run
-      # - lstm   # uncomment to include the deep learning regressor in this run
+      - mlp    # deep learning regressor -- enabled
+      - lstm   # deep learning regressor -- enabled
       # - gru    # uncomment to include the deep learning regressor in this run
 
     classification:
@@ -230,7 +230,7 @@ model:
       - xgboost
       - lightgbm
       - catboost
-      # - mlp    # uncomment to include the deep learning classifier in this run
+      - mlp    # deep learning classifier -- enabled
       # - lstm   # uncomment to include the deep learning classifier in this run
       # - gru    # uncomment to include the deep learning classifier in this run
 
@@ -385,6 +385,57 @@ model:
         random_seed: 42
         verbose: false
         allow_writing_files: false
+      # Deep learning regressors (ml/deep_learning/registry.py's
+      # DL_REGRESSORS). Every key below is REQUIRED -- base_network.py,
+      # lstm.py, and gru.py raise if any of these is missing, same as
+      # every sklearn-style regressor above having every param spelled
+      # out. hidden_units is a per-layer list for mlp, but a single int
+      # (hidden_size) for lstm/gru -- see lstm.py/gru.py's docstrings.
+      mlp:
+        hidden_layers: 2
+        hidden_units: 64
+        activation: relu
+        dropout: 0.2
+        batch_norm: false
+        optimizer: adam
+        learning_rate: 0.001
+        scheduler: reduce_on_plateau
+        scheduler_params:
+          patience: 5
+        batch_size: 32
+        epochs: 50
+        early_stopping_patience: 10
+        random_seed: 42
+      lstm:
+        hidden_layers: 2
+        hidden_units: 64
+        activation: relu
+        dropout: 0.2
+        batch_norm: false
+        optimizer: adam
+        learning_rate: 0.001
+        scheduler: reduce_on_plateau
+        scheduler_params:
+          patience: 5
+        batch_size: 32
+        epochs: 50
+        early_stopping_patience: 10
+        random_seed: 42
+      gru:
+        hidden_layers: 2
+        hidden_units: 64
+        activation: relu
+        dropout: 0.2
+        batch_norm: false
+        optimizer: adam
+        learning_rate: 0.001
+        scheduler: reduce_on_plateau
+        scheduler_params:
+          patience: 5
+        batch_size: 32
+        epochs: 50
+        early_stopping_patience: 10
+        random_seed: 42
 
     classification:
       logistic_regression:
@@ -517,6 +568,54 @@ model:
         random_seed: 42
         verbose: false
         allow_writing_files: false
+      # Deep learning classifiers (ml/deep_learning/registry.py's
+      # DL_CLASSIFIERS). Every key below is REQUIRED, same as regression's
+      # mlp/lstm/gru block above -- see that block's comment.
+      mlp:
+        hidden_layers: 2
+        hidden_units: 64
+        activation: relu
+        dropout: 0.2
+        batch_norm: false
+        optimizer: adam
+        learning_rate: 0.001
+        scheduler: reduce_on_plateau
+        scheduler_params:
+          patience: 5
+        batch_size: 32
+        epochs: 50
+        early_stopping_patience: 10
+        random_seed: 42
+      lstm:
+        hidden_layers: 2
+        hidden_units: 64
+        activation: relu
+        dropout: 0.2
+        batch_norm: false
+        optimizer: adam
+        learning_rate: 0.001
+        scheduler: reduce_on_plateau
+        scheduler_params:
+          patience: 5
+        batch_size: 32
+        epochs: 50
+        early_stopping_patience: 10
+        random_seed: 42
+      gru:
+        hidden_layers: 2
+        hidden_units: 64
+        activation: relu
+        dropout: 0.2
+        batch_norm: false
+        optimizer: adam
+        learning_rate: 0.001
+        scheduler: reduce_on_plateau
+        scheduler_params:
+          patience: 5
+        batch_size: 32
+        epochs: 50
+        early_stopping_patience: 10
+        random_seed: 42
 
     timeseries:
       nbeats:
@@ -531,53 +630,11 @@ model:
         n_epochs: 50
         batch_size: 32
         random_state: 42
-  # TCN alternative -- swap the block above for this if algorithm: tcn
-  # instead of nbeats. Both are Darts-backed and support past_covariates
-  # natively (see ml/timeseries/tcn_model.py).
-  # algorithm: tcn
-  # params:
-  #   input_chunk_length: 48
-  #   output_chunk_length: 12
-  #   kernel_size: 3
-  #   num_filters: 32
-  #   dilation_base: 2
-  #   num_layers: null
-  #   dropout: 0.2
-  #   n_epochs: 50
-  #   batch_size: 32
-  #   random_state: 42
-
-  # Traditional regressor example (ml/regressors/registry.py) -- use if
-  # model_type: regression instead of timeseries.
-  # algorithm: random_forest
-  # params:
-  #   n_estimators: 200
-  #   max_depth: 8
-  #   random_state: 42
-
-  # Deep learning example (ml/deep_learning/registry.py) -- swap the
-  # block above for this if algorithm is "mlp", "lstm", or "gru" instead
-  # of a traditional sklearn-style algorithm. All keys are read by
-  # base_network.py's BaseNetwork/BaseClassifierNetwork; see that file's
-  # docstring for the full list. hidden_units is a per-layer list for
-  # mlp, but a single int (hidden_size) for lstm/gru -- see
-  # ml/deep_learning/lstm.py / gru.py's docstrings.
-  # algorithm: mlp  # or: lstm, gru
-  # params:
-  #   hidden_layers: 2
-  #   hidden_units: 64
-  #   activation: relu
-  #   dropout: 0.2
-  #   batch_norm: false
-  #   optimizer: adam
-  #   learning_rate: 0.001
-  #   scheduler: reduce_on_plateau
-  #   scheduler_params:
-  #     patience: 5
-  #   batch_size: 32
-  #   epochs: 50
-  #   early_stopping_patience: 10
-  #   random_seed: 42
+  # TCN alternative -- swap the block above for this if you want algorithm
+  # tcn instead of nbeats. Both are Darts-backed and support
+  # past_covariates natively (see ml/timeseries/tcn_model.py). To use it,
+  # add a "tcn:" key here (as a sibling of "nbeats:" above) with its own
+  # params -- see ml/timeseries/tcn_model.py's docstring for the full list.
 
 preprocessing:
   steps:
