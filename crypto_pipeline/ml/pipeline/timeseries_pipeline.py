@@ -12,9 +12,8 @@ regression_pipeline.py / classification_pipeline.py, adapted for
 Darts' TimeSeries input and forecast-path output.
 
 Routing is the same as the other two pipelines: driven by
-ml/data_prep/config.yaml's model_type -- run_timeseries_pipeline()
-reads data_prep_config["model_type"] and raises immediately if it isn't
-"timeseries".
+ml/config.yaml's model_type -- run_timeseries_pipeline() reads
+ml_config["model_type"] and raises immediately if it isn't "timeseries".
 
 Key differences from regression/classification, all because Darts
 models don't take flat (X, y) rows:
@@ -51,7 +50,7 @@ model_loader.load_run(run_id) for inference.
 
 Evaluation (heading 10) needs 1-minute OHLCV for the test period plus
 backtest/config.yaml + stats/config.yaml, same pattern as
-ml_config_path/data_prep_config_path, not hardcoded.
+ml_config_path, not hardcoded.
 
 Logging (heading 12): setup_logging() is called once, at the very top,
 before dataset loading starts. The whole body runs inside a try/except
@@ -88,7 +87,6 @@ logger = logging.getLogger(__name__)
 
 def run_timeseries_pipeline(
     ml_config_path: str,
-    data_prep_config_path: str,
     ohlcv_1m: pd.DataFrame,
     backtest_config_path: str = None,
     stats_config_path: str = None,
@@ -101,8 +99,9 @@ def run_timeseries_pipeline(
     signal generation, evaluation, and persistence.
 
     Args:
-        ml_config_path: path to ml/config.yaml
-        data_prep_config_path: path to ml/data_prep/config.yaml
+        ml_config_path: path to ml/config.yaml (single config file --
+            controls data prep, features, split, preprocessing, model,
+            signals, and evaluation)
         ohlcv_1m: 1-minute OHLCV DataFrame covering the test period,
             passed straight through to evaluator.evaluate_model() for
             backtest execution. Same as regression/classification_pipeline.
@@ -137,7 +136,6 @@ def run_timeseries_pipeline(
     """
 
     ml_config = _load_yaml(ml_config_path)
-    data_prep_config = _load_yaml(data_prep_config_path)
 
     algorithm_for_run_id = ml_config.get("model", {}).get("algorithm", "unknown")
     resolved_run_id = run_id or make_run_id(algorithm_for_run_id)
@@ -145,20 +143,20 @@ def run_timeseries_pipeline(
     logger.info(f"Timeseries pipeline starting: run_id={resolved_run_id}, log file={log_path}")
 
     try:
-        model_type = data_prep_config.get("model_type")
+        model_type = ml_config.get("model_type")
         if model_type != "timeseries":
             raise ValueError(
-                f"run_timeseries_pipeline() requires data_prep_config['model_type'] == "
+                f"run_timeseries_pipeline() requires ml_config['model_type'] == "
                 f"'timeseries', got '{model_type}'. Use regression_pipeline.py or "
                 f"classification_pipeline.py instead -- model_type is set once in "
-                f"ml/data_prep/config.yaml and can't be overridden here."
+                f"ml/config.yaml and can't be overridden here."
             )
 
         # Headings 1-2: load, select features. train_test_split.split_dataset()
         # is reused unchanged -- chronological split doesn't care what
         # shape the model eventually wants the data in.
-        df = load_dataset(ml_config_path, data_prep_config_path)
-        selected = select_features(df, ml_config, data_prep_config)
+        df = load_dataset(ml_config)
+        selected = select_features(df, ml_config)
         feature_columns = selected["feature_columns"]
         target_column = selected["target_column"]
         timestamp_column = selected["timestamp_column"]
@@ -266,7 +264,7 @@ def run_timeseries_pipeline(
         # same as regression/classification_pipeline.
         metadata = {
             "data_prep": build_data_prep_metadata(
-                data_prep_config=data_prep_config,
+                ml_config=ml_config,
                 row_counts=row_counts,
             ),
             "split": build_split_metadata(

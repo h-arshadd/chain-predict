@@ -13,11 +13,11 @@ models, or ml/deep_learning/registry.py for mlp/lstm/gru).
 
 Mirrors regression_pipeline.py exactly, including the routing rule --
 see that file's module docstring for the full rationale. Short version:
-ml/data_prep/config.yaml's model_type decides regression vs classification
-once, at the source (it controls which target target_pipeline.py
-generates), so this pipeline reads that same field and refuses to run
-against a non-classification dataset rather than taking a separate
-switch that could disagree with it.
+ml/config.yaml's model_type decides regression vs classification once,
+at the source (it controls which target target_pipeline.py generates),
+so this pipeline reads that same field and refuses to run against a
+non-classification dataset rather than taking a separate switch that
+could disagree with it.
 
 algorithm routing (traditional vs deep learning): model.algorithm is
 looked up in ml/classifiers/registry.py's CLASSIFIERS first; if it's
@@ -38,8 +38,7 @@ Evaluation (heading 10) needs 1-minute OHLCV for the test period plus
 backtest/config.yaml + stats/config.yaml, since ml/evaluation/evaluator.py
 invokes the real Backtesting and Statistics modules directly -- these
 are function args here (ohlcv_1m/backtest_config_path/
-stats_config_path), same pattern as ml_config_path/data_prep_config_path,
-not hardcoded.
+stats_config_path), same pattern as ml_config_path, not hardcoded.
 
 Logging (heading 12): setup_logging() is called once, at the very top,
 before dataset loading starts -- every stage below already logs through
@@ -81,7 +80,6 @@ logger = logging.getLogger(__name__)
 
 def run_classification_pipeline(
     ml_config_path: str,
-    data_prep_config_path: str,
     ohlcv_1m: pd.DataFrame,
     backtest_config_path: str = None,
     stats_config_path: str = None,
@@ -94,8 +92,9 @@ def run_classification_pipeline(
     prediction, signal generation, evaluation, and persistence.
 
     Args:
-        ml_config_path: path to ml/config.yaml
-        data_prep_config_path: path to ml/data_prep/config.yaml
+        ml_config_path: path to ml/config.yaml (single config file --
+            controls data prep, features, split, preprocessing, model,
+            signals, and evaluation)
         ohlcv_1m: 1-minute OHLCV DataFrame (datetime, open, high, low,
             close) covering the test period -- passed straight through
             to evaluator.evaluate_model() for backtest execution. Not
@@ -149,7 +148,6 @@ def run_classification_pipeline(
     """
 
     ml_config = _load_yaml(ml_config_path)
-    data_prep_config = _load_yaml(data_prep_config_path)
 
     # Heading 12: centralized logging, configured once per run before any
     # other stage does anything -- same pattern as regression_pipeline.py.
@@ -162,19 +160,19 @@ def run_classification_pipeline(
     logger.info(f"Classification pipeline starting: run_id={resolved_run_id}, log file={log_path}")
 
     try:
-        model_type = data_prep_config.get("model_type")
+        model_type = ml_config.get("model_type")
         if model_type != "classification":
             raise ValueError(
-                f"run_classification_pipeline() requires data_prep_config['model_type'] == "
+                f"run_classification_pipeline() requires ml_config['model_type'] == "
                 f"'classification', got '{model_type}'. Use regression_pipeline.py for "
                 f"a regression dataset instead -- model_type is set once in "
-                f"ml/data_prep/config.yaml and drives which target was generated, so it "
+                f"ml/config.yaml and drives which target was generated, so it "
                 f"can't be overridden here."
             )
 
         # Headings 1-4: load, select features, split, preprocess.
-        df = load_dataset(ml_config_path, data_prep_config_path)
-        selected = select_features(df, ml_config, data_prep_config)
+        df = load_dataset(ml_config)
+        selected = select_features(df, ml_config)
         feature_columns = selected["feature_columns"]
         target_column = selected["target_column"]
 
@@ -267,8 +265,8 @@ def run_classification_pipeline(
         )
 
         # Heading 11: full model/experiment persistence. Each pipeline
-        # stage gets its own config dict -- data_prep's config never
-        # touches the model's, so a run can be inspected stage by stage.
+        # stage gets its own config dict, all sourced from the same
+        # ml_config, so a run can still be inspected stage by stage.
         # test_metrics comes straight from this run's own evaluation,
         # not re-derived. classes comes from the trained model itself
         # (model.classes_, per heading 6/7's required classifier
@@ -282,7 +280,7 @@ def run_classification_pipeline(
         # of the traditional one later.
         metadata = {
             "data_prep": build_data_prep_metadata(
-                data_prep_config=data_prep_config,
+                ml_config=ml_config,
                 row_counts=row_counts,
             ),
             "split": build_split_metadata(

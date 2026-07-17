@@ -1,0 +1,54 @@
+dataset_name: binance_btc_1h
+model_type: regression
+data:
+  symbol: btc
+  exchange: binance
+  timeframe: 1h
+  start_date: '2024-01-01'
+  end_date: '2026-01-01'
+  calculate_ohlcv: true
+features:
+  enabled: true
+  indicators:
+    EMA:
+    - parameters:
+        period: 20
+      aliases:
+        ema: ind_EMA_20
+    - parameters:
+        period: 50
+      aliases:
+        ema: ind_EMA_50
+    RSI:
+    - parameters:
+        period: 14
+      aliases:
+        value: ind_RSI_14
+    MACD:
+    - parameters:
+        fastperiod: 12
+        slowperiod: 26
+        signalperiod: 9
+      aliases:
+        macd: ind_MACD_12_26_9
+        signal: ind_MACD_SIGNAL_12_26_9
+        histogram: ind_MACD_HIST_12_26_9
+  patterns:
+    DOJI:
+      aliases:
+        pattern: pat_DOJI
+    ENGULFING:
+      aliases:
+        pattern: pat_ENGULFING
+sentiment:
+  enabled: false
+  source:
+  - reddit
+  encoding: numerical
+target:
+  horizon: 4
+  upper_threshold: 0.001
+  lower_threshold: -0.001
+  filter_noise: true
+  noise_threshold: 0.001
+total_rows: 15087

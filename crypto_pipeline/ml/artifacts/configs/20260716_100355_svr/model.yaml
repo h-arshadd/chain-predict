@@ -1,0 +1,5 @@
+model_type: regressor
+algorithm: svr
+hyperparameters: {}
+random_seed: null
+serialization_format: joblib

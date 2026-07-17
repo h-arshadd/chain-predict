@@ -20,10 +20,13 @@ class CatBoostRegressorModel(BaseRegressor):
             raise ImportError(
                 "algorithm='catboost' requires the catboost package: pip install catboost"
             ) from e
-        # CatBoost is noisy (prints training iterations) by default --
-        # keep it quiet unless the caller explicitly asked for verbosity.
-        params = {"verbose": False, **self.hyperparams}
-        self.model = CatBoostRegressor(**params)
+        # No params are injected here -- every hyperparam (including
+        # verbose, allow_writing_files, etc.) comes straight from
+        # ml/config.yaml's model.params, same as every other model in
+        # this package. CatBoost is noisy and writes a catboost_info/
+        # directory by default; set verbose: false / allow_writing_files:
+        # false in config yourself if you don't want that.
+        self.model = CatBoostRegressor(**self.hyperparams)
         self.model.fit(X_train.values, y_train.values)
         return self
 

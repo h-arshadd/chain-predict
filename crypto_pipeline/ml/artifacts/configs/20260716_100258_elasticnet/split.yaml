@@ -1,0 +1,11 @@
+test_size: 0.2
+train:
+  start_date: '2024-01-03T02:00:00'
+  end_date: '2025-08-05T11:00:00'
+  rows: 11998
+  dropped_rows: 72
+test:
+  start_date: '2025-08-05T12:00:00'
+  end_date: '2025-12-31T19:00:00'
+  rows: 2945
+  dropped_rows: 72

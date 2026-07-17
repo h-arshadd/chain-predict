@@ -1,0 +1,19 @@
+model_type: deep_learning_regressor
+algorithm: mlp
+architecture:
+  hidden_layers: null
+  hidden_units: null
+  activation: null
+  dropout: null
+  batch_norm: null
+training:
+  optimizer: null
+  learning_rate: null
+  scheduler: null
+  scheduler_params: null
+  batch_size: null
+  epochs: null
+  early_stopping_patience: null
+  loss: null
+random_seed: null
+serialization_format: pytorch_checkpoint

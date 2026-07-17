@@ -11,8 +11,8 @@ One yaml per pipeline stage, instead of a single combined file -- each
 stage's builder only knows about that stage's own inputs, so a new field
 in (say) preprocessing never touches the data_prep or model builders:
 
-    build_data_prep_metadata()    -- data_prep/ folder: data/features/
-                                      sentiment/target config, dataset info
+    build_data_prep_metadata()    -- data/features/sentiment/target
+                                      config (from ml/config.yaml), dataset info
     build_split_metadata()        -- train_test_split.py: train/test date
                                       ranges, row counts, test_size
     build_preprocessing_metadata() -- preprocessing/ folder: configured
@@ -36,22 +36,22 @@ import pandas as pd
 # ----------------------------------------------------------------------
 # data_prep/ -- dataset + feature engineering + sentiment + target config
 # ----------------------------------------------------------------------
-def build_data_prep_metadata(data_prep_config: dict, row_counts: dict) -> dict:
+def build_data_prep_metadata(ml_config: dict, row_counts: dict) -> dict:
     """
-    Everything that came out of the data_prep/ folder: what data was
-    pulled (symbol/exchange/timeframe/date range), how features were
-    engineered (indicators/patterns), sentiment config, and target
-    generation config (horizon/thresholds) -- data_prep/config.yaml
-    verbatim plus the resulting row count.
+    Everything that drove data prep: what data was pulled
+    (symbol/exchange/timeframe/date range), how features were engineered
+    (indicators/patterns), sentiment config, and target generation
+    config (horizon/thresholds) -- read straight from ml/config.yaml
+    plus the resulting row count.
 
     Args:
-        data_prep_config: ml/data_prep/config.yaml dict
+        ml_config: ml/config.yaml dict
         row_counts: dict from the pipeline, uses "total_rows"
 
     Returns:
         dict to be written to artifacts/configs/{run_id}/data_prep.yaml
     """
-    data_cfg = data_prep_config.get("data", {})
+    data_cfg = ml_config.get("data", {})
     symbol = data_cfg.get("symbol")
     exchange = data_cfg.get("exchange")
     timeframe = data_cfg.get("timeframe")
@@ -65,7 +65,7 @@ def build_data_prep_metadata(data_prep_config: dict, row_counts: dict) -> dict:
         # (base_dir/exchange/symbol/model_type/), so this is recognizable
         # rather than inventing a new convention.
         "dataset_name": "_".join(str(p) for p in (exchange, symbol, timeframe) if p),
-        "model_type": data_prep_config.get("model_type"),
+        "model_type": ml_config.get("model_type"),
         "data": {
             "symbol": symbol,
             "exchange": exchange,
@@ -74,9 +74,9 @@ def build_data_prep_metadata(data_prep_config: dict, row_counts: dict) -> dict:
             "end_date": end_date,
             "calculate_ohlcv": data_cfg.get("calculate_ohlcv"),
         },
-        "features": data_prep_config.get("features", {}),
-        "sentiment": data_prep_config.get("sentiment", {}),
-        "target": data_prep_config.get("target", {}),
+        "features": ml_config.get("features", {}),
+        "sentiment": ml_config.get("sentiment", {}),
+        "target": ml_config.get("target", {}),
         "total_rows": row_counts.get("total_rows"),
     }
 
