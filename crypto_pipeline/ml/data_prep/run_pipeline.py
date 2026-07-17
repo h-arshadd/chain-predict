@@ -105,12 +105,38 @@ def run_data_prep_pipeline(config: dict) -> pd.DataFrame:
     # feeding indicators/patterns (step 2) and the target (step 4) --
     # calculate_ohlcv=False means "don't include raw price columns in
     # the dataset", not "don't fetch/use OHLCV at all".
+    #
+    # Exception: any OHLCV column explicitly requested as a model input
+    # via features.feature_columns / features.feature_columns_extra is
+    # kept even when calculate_ohlcv=False. Without this, an explicit
+    # request for e.g. "close" as a feature would get silently pulled
+    # out from under feature_selector.py by this step, then
+    # feature_selector.py would raise a "not found in dataset" error
+    # over a column the user explicitly asked to keep -- calculate_ohlcv
+    # is meant to control the OUTPUT's raw-OHLCV columns as a group, not
+    # override an explicit per-column feature request.
     calculate_ohlcv = config.get("data", {}).get("calculate_ohlcv", True)
     if not calculate_ohlcv:
-        ohlcv_cols = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
+        features_config = config.get("features", {})
+        requested_columns = set(features_config.get("feature_columns") or [])
+        requested_columns |= set(features_config.get("feature_columns_extra") or [])
+
+        ohlcv_cols = [
+            c for c in ["open", "high", "low", "close", "volume"]
+            if c in df.columns and c not in requested_columns
+        ]
+        kept_cols = [
+            c for c in ["open", "high", "low", "close", "volume"]
+            if c in df.columns and c in requested_columns
+        ]
         if ohlcv_cols:
             logger.info(f"calculate_ohlcv=False: dropping raw OHLCV columns from output: {ohlcv_cols}")
             df = df.drop(columns=ohlcv_cols)
+        if kept_cols:
+            logger.info(
+                f"calculate_ohlcv=False: keeping {kept_cols} -- explicitly requested as "
+                f"feature_columns/feature_columns_extra in config"
+            )
 
     logger.info(f"Data prep pipeline completed successfully. Final shape: {df.shape}")
     return df
