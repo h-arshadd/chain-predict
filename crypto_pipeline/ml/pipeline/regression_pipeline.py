@@ -70,6 +70,7 @@ from crypto_pipeline.ml.regressors.registry import REGRESSORS, build_regressor
 from crypto_pipeline.ml.deep_learning.registry import DL_REGRESSORS, build_dl_regressor
 from crypto_pipeline.ml.signals.regression_signals import generate_regression_signals
 from crypto_pipeline.ml.evaluation.evaluator import evaluate_model
+from crypto_pipeline.ml.evaluation.regression_metrics import compute_regression_metrics
 from crypto_pipeline.backtest.backtest import load_config as load_backtest_config
 from crypto_pipeline.ml.persistence.metadata import (
     build_data_prep_metadata,
@@ -135,6 +136,12 @@ def run_regression_pipeline(
             evaluation: dict from evaluator.evaluate_model() (PDF heading
                 10) -- ml_metrics (MAE/MSE/RMSE), trading_metrics (every
                 quantstats metric), trade_summary, backtest_result
+            val_metrics: dict from compute_regression_metrics() on the
+                validation split (MAE/MSE/RMSE), or None if split.val_size
+                wasn't set in ml/config.yaml. For mlp/lstm/gru this is the
+                same signal that already drove early stopping during
+                training; for traditional models it's purely a reported
+                number, since they don't take a validation set during training.
             run_id: str, this run's identifier (as used for artifacts/ and logs/)
             artifact_paths: dict from artifact_manager.save_run() --
                 run_dir/config_path/preprocessing_path/model_path (PDF
@@ -142,6 +149,8 @@ def run_regression_pipeline(
                 objects, all persisted and reloadable via
                 model_loader.load_run(run_id))
             y_test: pd.Series, true target values for test_df (for scoring)
+            y_val: pd.Series or None, true target values for val_df (None
+                if split.val_size wasn't set in ml/config.yaml)
             feature_columns: list[str], order used for training/inference
             split_info: dict from train_test_split.split_dataset() (train/test
                 date ranges etc, per PDF heading 3's record-keeping requirement)
@@ -186,17 +195,22 @@ def run_regression_pipeline(
         split_info = split_dataset(df, ml_config, timestamp_column=selected["timestamp_column"])
 
         preprocessed = run_preprocessing(
-            split_info["train_df"], split_info["test_df"], feature_columns, ml_config
+            split_info["train_df"], split_info["test_df"], feature_columns, ml_config,
+            val_df=split_info["val_df"],
         )
         train_df = preprocessed["train_df"]
+        val_df = preprocessed["val_df"]  # None if split.val_size wasn't set in config
         test_df = preprocessed["test_df"]
+        has_val = val_df is not None
 
         # Row-count bookkeeping for metadata.build_data_prep_metadata()
         # and build_split_metadata() (heading 11 + your lead's "total
         # rows, training rows from where to where, everything possible"
         # requirement) -- captured here since this is the one place both
-        # the pre-split total and the post-drop train/test counts are
-        # all in scope together.
+        # the pre-split total and the post-drop train/val/test counts are
+        # all in scope together. val_rows/dropped_rows_val are only added
+        # when a validation split actually exists, so build_split_metadata()
+        # doesn't write an empty "validation" section for train/test-only runs.
         row_counts = {
             "total_rows": len(df),
             "train_rows": len(train_df),
@@ -204,10 +218,14 @@ def run_regression_pipeline(
             "dropped_rows_train": preprocessed["dropped_rows"]["train"],
             "dropped_rows_test": preprocessed["dropped_rows"]["test"],
         }
+        if has_val:
+            row_counts["val_rows"] = len(val_df)
+            row_counts["dropped_rows_val"] = preprocessed["dropped_rows"]["val"]
         logger.info(f"Row counts: {row_counts}")
 
         X_train, y_train = train_df[feature_columns], train_df[target_column]
         X_test, y_test = test_df[feature_columns], test_df[target_column]
+        X_val, y_val = (val_df[feature_columns], val_df[target_column]) if has_val else (None, None)
 
         # Heading 5/7: model training. Which algorithm + hyperparams is
         # entirely config-driven -- this function contains no
@@ -226,17 +244,35 @@ def run_regression_pipeline(
             model_kind = "regressor"
             logger.info(f"Training regressor: algorithm={algorithm}, params={params}")
             model = build_regressor(algorithm, **params)
+            # Traditional regressors (sklearn/xgboost/etc wrappers) only
+            # expose train(X_train, y_train) today -- the validation split
+            # still exists and is still reported below, it just isn't fed
+            # into training for these algorithms.
+            model.train(X_train, y_train)
         elif algorithm in DL_REGRESSORS:
             model_kind = "deep_learning_regressor"
             logger.info(f"Training deep learning regressor: algorithm={algorithm}, params={params}")
             model = build_dl_regressor(algorithm, **params)
+            # X_val/y_val (None if split.val_size wasn't set) drive early
+            # stopping and ReduceLROnPlateau inside base_network.py/
+            # trainer.py -- without them the model just trains for the
+            # full configured epoch count with no early stopping signal.
+            model.train(X_train, y_train, X_val, y_val)
         else:
             raise ValueError(
                 f"Unknown regression algorithm '{algorithm}'. "
                 f"Available traditional: {sorted(REGRESSORS.keys())}, "
                 f"deep learning: {sorted(DL_REGRESSORS.keys())}"
             )
-        model.train(X_train, y_train)
+
+        # Validation metrics (reported only -- for mlp/lstm/gru this is
+        # the same signal that already drove early stopping above; for
+        # traditional models it's purely a reported number).
+        val_metrics = None
+        if has_val:
+            val_predictions = model.predict(X_val)
+            val_metrics = compute_regression_metrics(y_val.to_numpy(), val_predictions)
+            logger.info(f"Validation metrics: {val_metrics}")
 
         # Heading 8: standardized prediction format (shared with classification,
         # traditional models, and deep learning models alike).
@@ -299,8 +335,20 @@ def run_regression_pipeline(
                 algorithm=algorithm,
                 hyperparams=params,
             ),
+            # build_evaluation_metadata() takes ml_metrics/trading_metrics
+            # separately (pre-existing bug fixed here: this used to call it
+            # with a `test_metrics=` kwarg the function doesn't accept,
+            # which would raise on every run). val_metrics has no
+            # dedicated slot in build_evaluation_metadata() yet, so it's
+            # folded into ml_metrics under a "val_" prefix -- reported
+            # alongside test's ml_metrics without disturbing the existing
+            # mae/mse/rmse keys test already uses.
             "evaluation": build_evaluation_metadata(
-                test_metrics={**evaluation["ml_metrics"], **evaluation["trading_metrics"]},
+                ml_metrics={
+                    **evaluation["ml_metrics"],
+                    **({f"val_{k}": v for k, v in val_metrics.items()} if has_val else {}),
+                },
+                trading_metrics=evaluation["trading_metrics"],
             ),
         }
         artifact_paths = save_run(
@@ -317,9 +365,11 @@ def run_regression_pipeline(
             "prediction_result": prediction_result,
             "signals": signals,
             "evaluation": evaluation,
+            "val_metrics": val_metrics,  # None if split.val_size wasn't set in config
             "run_id": resolved_run_id,
             "artifact_paths": artifact_paths,
             "y_test": y_test,
+            "y_val": y_val,  # None if split.val_size wasn't set in config
             "feature_columns": feature_columns,
             "split_info": split_info,
             "fit_objects": preprocessed["fit_objects"],
