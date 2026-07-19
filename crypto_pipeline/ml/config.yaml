@@ -6,7 +6,7 @@
 # generation, evaluation -- is controlled from here. There is only one
 # entry point (ml/main.py) and only one config file.
 
-model_type: classification # regression | classification | timeseries
+model_type: regression # regression | classification | timeseries
 
 # ---------------------------------------------------------------------
 # Data Prep stages (market data, features, sentiment, target)
@@ -104,19 +104,30 @@ output:
   save_debug_csv: false
   base_dir: outputs
 
-# Train/Test Split stage (PDF heading 3).
+# Train/Val/Test Split stage (PDF heading 3).
 # Time series -- chronological cutoff only, never shuffled/random.
 # test_size is the fraction of rows (by time order) held out for test,
-# taken from the END of the dataset. Everything before that cutoff is
-# train -- test_size is the only value that actually drives the split.
-# train_size is optional and purely a readable label: if you set it,
-# it must add up to 1.0 with test_size (train_test_split.py checks
-# this and raises if they don't match) -- it doesn't change the split
-# itself, it's just there so the config states the train fraction
-# explicitly instead of leaving you to compute 1 - test_size yourself.
+# taken from the END of the dataset. val_size (optional) is the fraction
+# held out for validation, taken from the rows immediately BEFORE test --
+# so the chronological order is always train -> val -> test, and val
+# never sees anything more recent than test. Everything before the val
+# cutoff (or the test cutoff, if val_size is 0) is train.
+# val_size is used for early stopping / model-selection during training
+# (e.g. mlp/lstm/gru pick their best epoch by validation loss) -- it is
+# NEVER touched by preprocessing fitting or used for the final reported
+# metrics, those still come from test only. Set val_size to 0 (or omit
+# it) to disable the validation split entirely and go back to plain
+# train/test.
+# train_size is optional and purely a readable label: if you set it, it
+# must add up to 1.0 with test_size + val_size (train_test_split.py
+# checks this and raises if they don't match) -- it doesn't change the
+# split itself, it's just there so the config states the train fraction
+# explicitly instead of leaving you to compute 1 - test_size - val_size
+# yourself.
 split:
   test_size: 0.2
-  train_size: 0.8
+  val_size: 0.1
+  train_size: 0.7
 
 # Data Preprocessing stage (PDF heading 4).
 # Steps run in order, each one chained into the next -- e.g. the PDF's

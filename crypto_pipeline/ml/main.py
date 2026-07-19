@@ -99,6 +99,8 @@ from crypto_pipeline.ml.signals.timeseries_signals import generate_timeseries_si
 from crypto_pipeline.ml.signals.signal_utils import signal_counts
 
 from crypto_pipeline.ml.evaluation.evaluator import evaluate_model
+from crypto_pipeline.ml.evaluation.classification_metrics import compute_classification_metrics
+from crypto_pipeline.ml.evaluation.regression_metrics import compute_regression_metrics
 from crypto_pipeline.backtest.backtest import load_config as load_backtest_config
 from crypto_pipeline.utils.db_utils import get_db_connection, get_candles_from_db
 from crypto_pipeline.ml.persistence.metadata import (
@@ -345,9 +347,11 @@ def run_ml_pipeline(
     split_info = split_dataset(df, ml_config, timestamp_column=timestamp_column)
 
     preprocessed = run_preprocessing(
-        split_info["train_df"], split_info["test_df"], feature_columns, ml_config
+        split_info["train_df"], split_info["test_df"], feature_columns, ml_config,
+        val_df=split_info["val_df"],
     )
     train_df = preprocessed["train_df"]
+    val_df = preprocessed["val_df"]  # None if split.val_size wasn't set in config
     test_df = preprocessed["test_df"]
 
     row_counts = {
@@ -357,6 +361,9 @@ def run_ml_pipeline(
         "dropped_rows_train": preprocessed["dropped_rows"]["train"],
         "dropped_rows_test": preprocessed["dropped_rows"]["test"],
     }
+    if val_df is not None:
+        row_counts["val_rows"] = len(val_df)
+        row_counts["dropped_rows_val"] = preprocessed["dropped_rows"]["val"]
     logger.info(f"Row counts: {row_counts}")
 
     # How many rows fall into each target class (e.g. -1/0/1 for the
@@ -384,6 +391,7 @@ def run_ml_pipeline(
                 ml_config=ml_config,
                 df=df,
                 train_df=train_df,
+                val_df=val_df,
                 test_df=test_df,
                 preprocessed=preprocessed,
                 split_info=split_info,
@@ -417,6 +425,7 @@ def _run_one_algorithm(
     ml_config: dict,
     df: pd.DataFrame,
     train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
     test_df: pd.DataFrame,
     preprocessed: dict,
     split_info: dict,
@@ -466,25 +475,36 @@ def _run_one_algorithm(
     params = _params_for(algorithm, model_type, ml_config)
     y_test = None
     classes = None
+    val_metrics = None
+    y_val = None
+    has_val = val_df is not None
 
     # ---- Headings 5-7: model training (branches by model_type) -------
     if model_type == "regression":
         X_train, y_train = train_df[feature_columns], train_df[target_column]
         X_test, y_test = test_df[feature_columns], test_df[target_column]
+        X_val, y_val = (val_df[feature_columns], val_df[target_column]) if has_val else (None, None)
 
         if algorithm in REGRESSORS:
             model_kind = "regressor"
             model = build_regressor(algorithm, **params)
+            model.train(X_train, y_train)
         elif algorithm in DL_REGRESSORS:
             model_kind = "deep_learning_regressor"
             model = build_dl_regressor(algorithm, **params)
+            # X_val/y_val (None if split.val_size wasn't set) drive early
+            # stopping and ReduceLROnPlateau inside base_network.py/trainer.py.
+            model.train(X_train, y_train, X_val, y_val)
         else:
             raise ValueError(
                 f"Unknown regression algorithm '{algorithm}'. "
                 f"Available traditional: {sorted(REGRESSORS.keys())}, "
                 f"deep learning: {sorted(DL_REGRESSORS.keys())}"
             )
-        model.train(X_train, y_train)
+
+        if has_val:
+            val_metrics = compute_regression_metrics(y_val.to_numpy(), model.predict(X_val))
+            logger.info(f"[{algorithm}] Validation metrics: {val_metrics}")
 
         prediction_result = generate_predictions(model, X_test, task_type="regression")
         signals = generate_regression_signals(prediction_result, ml_config)
@@ -499,20 +519,28 @@ def _run_one_algorithm(
     elif model_type == "classification":
         X_train, y_train = train_df[feature_columns], train_df[target_column]
         X_test, y_test = test_df[feature_columns], test_df[target_column]
+        X_val, y_val = (val_df[feature_columns], val_df[target_column]) if has_val else (None, None)
 
         if algorithm in CLASSIFIERS:
             model_kind = "classifier"
             model = build_classifier(algorithm, **params)
+            model.train(X_train, y_train)
         elif algorithm in DL_CLASSIFIERS:
             model_kind = "deep_learning_classifier"
             model = build_dl_classifier(algorithm, **params)
+            # X_val/y_val (None if split.val_size wasn't set) drive early
+            # stopping and ReduceLROnPlateau inside base_network.py/trainer.py.
+            model.train(X_train, y_train, X_val, y_val)
         else:
             raise ValueError(
                 f"Unknown classification algorithm '{algorithm}'. "
                 f"Available traditional: {sorted(CLASSIFIERS.keys())}, "
                 f"deep learning: {sorted(DL_CLASSIFIERS.keys())}"
             )
-        model.train(X_train, y_train)
+
+        if has_val:
+            val_metrics = compute_classification_metrics(y_val.to_numpy(), model.predict(X_val))
+            logger.info(f"[{algorithm}] Validation metrics: {val_metrics}")
 
         prediction_result = generate_predictions(model, X_test, task_type="classification")
         signals = generate_classification_signals(prediction_result, ml_config)
@@ -606,6 +634,14 @@ def _run_one_algorithm(
     _dump("07_metrics.csv", pd.DataFrame([metrics_row]))
     _dump("07_trade_ledger.csv", evaluation["backtest_result"]["trade_ledger"])
 
+    # 08_val_metrics.csv -- only written when a validation split exists
+    # (split.val_size > 0 in config). For mlp/lstm/gru this is the same
+    # signal that already drove early stopping during training above;
+    # for traditional models it's purely a reported number, since they
+    # don't take a validation set during training.
+    if val_metrics is not None:
+        _dump("08_val_metrics.csv", pd.DataFrame([val_metrics]))
+
     # ---- Heading 11: full model/experiment persistence ----------------
     metadata = {
         "data_prep": build_data_prep_metadata(
@@ -632,7 +668,10 @@ def _run_one_algorithm(
             classes=classes,
         ),
         "evaluation": build_evaluation_metadata(
-            ml_metrics=evaluation["ml_metrics"],
+            ml_metrics={
+                **evaluation["ml_metrics"],
+                **({f"val_{k}": v for k, v in val_metrics.items()} if val_metrics is not None else {}),
+            },
             trading_metrics=evaluation["trading_metrics"],
             trade_summary=evaluation["trade_summary"],
             signal_counts=algo_signal_counts,
@@ -653,6 +692,7 @@ def _run_one_algorithm(
         "prediction_result": prediction_result,
         "signals": signals,
         "evaluation": evaluation,
+        "val_metrics": val_metrics,  # None if split.val_size wasn't set in config
         "run_id": resolved_run_id,
         "artifact_paths": artifact_paths,
         "feature_columns": feature_columns,
@@ -662,6 +702,7 @@ def _run_one_algorithm(
     if model_type in ("regression", "classification"):
         result.update({
             "y_test": y_test,
+            "y_val": y_val,  # None if split.val_size wasn't set in config
             "split_info": split_info,
             "fit_objects": preprocessed["fit_objects"],
         })
