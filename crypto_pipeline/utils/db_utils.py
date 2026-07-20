@@ -963,7 +963,7 @@ def save_simulator_stats(conn, exchange, symbol, strategy_name, time_horizon, st
         strategy_name,
         time_horizon,
         stats_dict.get("total_trades"),
-        *[stats_dict.get(m) for m in metric_cols],
+        *[_round4(stats_dict.get(m)) for m in metric_cols],
     )
 
     insert_cols = sql.SQL(", ").join(sql.Identifier(c) for c in all_cols) + sql.SQL(", updated_at")
