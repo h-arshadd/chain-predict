@@ -290,15 +290,15 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
             # already reflects every trade ever closed for this
             # (exchange, symbol, strategy), so this is just that minus
             # where the account started -- no extra running state needed.
-            closed_trade["cumulative_pnl"] = closed_trade["balance"] - config["initial_balance"]
+            closed_trade["cumulative_pnl"] = round(closed_trade["balance"] - config["initial_balance"], 4)
             closed_trades.append(closed_trade)
 
         last_candle_time = candle["datetime"]
 
     conn = get_db_connection()
     try:
-        cumulative_pnl = balance - config["initial_balance"]
-        save_simulator_state(conn, exchange, symbol, strategy_name, time_horizon, last_candle_time, balance, position, cumulative_pnl)
+        cumulative_pnl = round(balance - config["initial_balance"], 4)
+        save_simulator_state(conn, exchange, symbol, strategy_name, time_horizon, last_candle_time, round(balance, 4), position, cumulative_pnl)
         trade_ledger = pd.DataFrame(closed_trades)
         append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
     finally:
