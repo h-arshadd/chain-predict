@@ -348,11 +348,32 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
 
     Schema: simulator.{exchange}_{symbol}_{strategy_name}_state
     Single-row table: last processed candle timestamp, running balance,
-    and the open position's fields (all NULL if flat).
+    and the open position's fields (all NULL if flat). This is the
+    Simulator Module spec's "Position Table" -- it represents the current
+    execution state (at most one open position, per Version 1), separate
+    from the Trade Ledger's permanent history.
 
     Returns a dict with keys: last_processed, balance, position (dict or
     None). position dict has: direction, entry_time, entry_price,
-    quantity, take_profit, stop_loss.
+    quantity, take_profit, stop_loss, status (always "open" when position
+    is not None -- the PDF's Position Table lists Status as a column;
+    since this table only ever holds zero or one row, "open" is the only
+    status a present row can have -- there's nothing to store for "flat",
+    that's just no position at all, i.e. position=None).
+
+    No separate trade_id column: entry_time already uniquely identifies
+    this trade (a strategy can only have one open position at a time), and
+    is the same value used as the PRIMARY KEY on simulator.*_trades once
+    this position closes and lands in the Trade Ledger -- see
+    append_simulator_trades. Keeping one field instead of two avoids ever
+    having them drift apart.
+
+    "id" here is a normal auto-incrementing PRIMARY KEY, unrelated to
+    trade identity -- it exists purely so this single-row table (which
+    must still have a row even when flat, i.e. entry_time IS NULL) has
+    something to upsert against in save_simulator_state. entry_time can't
+    serve as this table's PK the way it does on the trades table, because
+    it's NULL whenever there's no open position.
     """
     cursor = conn.cursor()
     safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
@@ -362,6 +383,7 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
 
     cursor.execute(sql.SQL("""
         CREATE TABLE IF NOT EXISTS {schema}.{table} (
+            id              SERIAL PRIMARY KEY,
             last_processed  TIMESTAMP,
             balance         DOUBLE PRECISION NOT NULL,
             direction       TEXT,
@@ -369,7 +391,8 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
             entry_price     DOUBLE PRECISION,
             quantity        DOUBLE PRECISION,
             take_profit     DOUBLE PRECISION,
-            stop_loss       DOUBLE PRECISION
+            stop_loss       DOUBLE PRECISION,
+            status          TEXT
         )
     """).format(
         schema=sql.Identifier("simulator"),
@@ -377,7 +400,10 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
     ))
     conn.commit()
 
-    cursor.execute(sql.SQL("SELECT * FROM {schema}.{table} LIMIT 1").format(
+    cursor.execute(sql.SQL(
+        "SELECT last_processed, balance, direction, entry_time, "
+        "entry_price, quantity, take_profit, stop_loss, status FROM {schema}.{table} LIMIT 1"
+    ).format(
         schema=sql.Identifier("simulator"),
         table=sql.Identifier(table_name)
     ))
@@ -388,7 +414,7 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
         return None
 
     columns = ["last_processed", "balance", "direction", "entry_time",
-               "entry_price", "quantity", "take_profit", "stop_loss"]
+               "entry_price", "quantity", "take_profit", "stop_loss", "status"]
     values = dict(zip(columns, row))
 
     position = None
@@ -400,6 +426,7 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
             "quantity": values["quantity"],
             "take_profit": values["take_profit"],
             "stop_loss": values["stop_loss"],
+            "status": values["status"] or "open",
         }
 
     return {
@@ -413,9 +440,19 @@ def save_simulator_state(conn, exchange, symbol, strategy_name, last_processed, 
     """
     Overwrite the simulator's saved state for this exchange+symbol+strategy.
     Called at the end of every run so the next scheduled run resumes from
-    here. position=None is stored as all-NULL (flat).
+    here. position=None is stored as all-NULL (flat) -- including status.
 
     Schema: simulator.{exchange}_{symbol}_{strategy_name}_state
+
+    This is a genuine UPSERT (INSERT ... ON CONFLICT (id) DO UPDATE), not
+    DELETE-then-INSERT. The table only ever holds exactly one row, so an
+    UPDATE-in-place is strictly correct here and avoids doing two
+    statements (plus MVCC bloat from a dead row) every single scheduler
+    tick, for every strategy/pair, even on ticks where nothing changed.
+    "id" is a normal auto-incrementing PRIMARY KEY (SERIAL) -- the table
+    is only ever written to via this function, which always targets id=1,
+    so it stays a true singleton in practice even though nothing stops a
+    second row from existing structurally.
     """
     cursor = conn.cursor()
     safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
@@ -425,6 +462,7 @@ def save_simulator_state(conn, exchange, symbol, strategy_name, last_processed, 
 
     cursor.execute(sql.SQL("""
         CREATE TABLE IF NOT EXISTS {schema}.{table} (
+            id              SERIAL PRIMARY KEY,
             last_processed  TIMESTAMP,
             balance         DOUBLE PRECISION NOT NULL,
             direction       TEXT,
@@ -432,27 +470,17 @@ def save_simulator_state(conn, exchange, symbol, strategy_name, last_processed, 
             entry_price     DOUBLE PRECISION,
             quantity        DOUBLE PRECISION,
             take_profit     DOUBLE PRECISION,
-            stop_loss       DOUBLE PRECISION
+            stop_loss       DOUBLE PRECISION,
+            status          TEXT
         )
     """).format(
         schema=sql.Identifier("simulator"),
         table=sql.Identifier(table_name)
     ))
-
-    cursor.execute(sql.SQL("DELETE FROM {schema}.{table}").format(
-        schema=sql.Identifier("simulator"),
-        table=sql.Identifier(table_name)
-    ))
+    conn.commit()
 
     position = position or {}
-    cursor.execute(sql.SQL("""
-        INSERT INTO {schema}.{table}
-            (last_processed, balance, direction, entry_time, entry_price, quantity, take_profit, stop_loss)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-    """).format(
-        schema=sql.Identifier("simulator"),
-        table=sql.Identifier(table_name)
-    ), (
+    values = (
         last_processed,
         balance,
         position.get("direction"),
@@ -461,7 +489,28 @@ def save_simulator_state(conn, exchange, symbol, strategy_name, last_processed, 
         position.get("quantity"),
         position.get("take_profit"),
         position.get("stop_loss"),
-    ))
+        position.get("status") if position else None,
+    )
+
+    cursor.execute(sql.SQL("""
+        INSERT INTO {schema}.{table}
+            (id, last_processed, balance, direction, entry_time,
+             entry_price, quantity, take_profit, stop_loss, status)
+        VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (id) DO UPDATE SET
+            last_processed = EXCLUDED.last_processed,
+            balance        = EXCLUDED.balance,
+            direction      = EXCLUDED.direction,
+            entry_time     = EXCLUDED.entry_time,
+            entry_price    = EXCLUDED.entry_price,
+            quantity       = EXCLUDED.quantity,
+            take_profit    = EXCLUDED.take_profit,
+            stop_loss      = EXCLUDED.stop_loss,
+            status         = EXCLUDED.status
+    """).format(
+        schema=sql.Identifier("simulator"),
+        table=sql.Identifier(table_name)
+    ), values)
 
     conn.commit()
     cursor.close()
@@ -483,6 +532,19 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
     entry_time, exit_time, entry_price, exit_price, quantity, gross_pnl,
     commission, slippage, net_pnl, exit_reason, balance_after_trade).
     Does nothing if trade_ledger is empty.
+
+    entry_time is this table's PRIMARY KEY -- it's the PDF's "Trade ID"
+    column: a strategy can only ever have one open position at a time
+    (max_open_positions=1, enforced in simulator.py's step_candle), so
+    entry_time is already a unique identifier for a trade within this
+    strategy's own table, and it's assigned the moment the position opens
+    (Step 3 of the spec) rather than only once it closes -- so the same
+    value identifies the trade on both the Position Table (while open,
+    see get_simulator_state) and the Trade Ledger (once closed, here).
+    If entry_time is ever duplicated (would mean two trades opened on the
+    exact same candle for the same strategy -- shouldn't happen given
+    max_open_positions=1), the COPY below fails loudly on the PK
+    violation rather than silently overwriting a row.
     """
     if trade_ledger.empty:
         return
@@ -494,9 +556,10 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS simulator"))
 
     column_defs = sql.SQL(", ").join(
-        sql.SQL("{col} {pg_type}").format(
+        sql.SQL("{col} {pg_type}{pk}").format(
             col=sql.Identifier(col),
-            pg_type=sql.SQL(_pg_type_for(trade_ledger[col]))
+            pg_type=sql.SQL(_pg_type_for(trade_ledger[col])),
+            pk=sql.SQL(" PRIMARY KEY" if col == "entry_time" else "")
         )
         for col in trade_ledger.columns
     )
@@ -506,7 +569,6 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
         table=sql.Identifier(table_name),
         column_defs=column_defs
     ))
-
     conn.commit()
     cursor.close()
 
