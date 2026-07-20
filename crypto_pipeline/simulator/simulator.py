@@ -86,14 +86,19 @@ def _open_position(candle, direction, balance, config, take_profit_pct, stop_los
     # entry_price started out that way. Cast everything at this single
     # return point so a position dict is guaranteed to hold plain Python
     # types, however it was constructed above.
+    #
+    # round(..., 4) alongside every float(...) cast here: DB values were
+    # coming out with long floating-point tails, so every numeric field
+    # written to simulator.positions / simulator.*_trades is rounded to
+    # 4 decimal places at the same point it's cast to plain Python float.
     return {
         "direction": "long" if direction == 1 else "short",
         "entry_time": candle["datetime"],
-        "entry_price": entry_price,
-        "quantity": quantity,
-        "take_profit": float(take_profit),
-        "stop_loss": float(stop_loss),
-        "current_price": entry_price,
+        "entry_price": round(entry_price, 4),
+        "quantity": round(quantity, 4),
+        "take_profit": round(float(take_profit), 4),
+        "stop_loss": round(float(stop_loss), 4),
+        "current_price": round(entry_price, 4),
         "unrealized_pnl": 0.0,
         "leaning": _leaning(entry_price, take_profit, stop_loss),
         "status": "open",
@@ -161,6 +166,10 @@ def _close_position(position, exit_price, exit_time, exit_reason, balance, confi
     # path insert_signals/insert_trades/append_simulator_trades use --
     # cannot adapt numpy scalar types.
     #
+    # round(..., 4) alongside every float(...) cast here, same reasoning
+    # as _open_position -- every numeric column in the Trade Ledger gets
+    # rounded to 4 decimal places at this single point.
+    #
     # Trade Ledger column names: entry_date_time/exit_date_time (not
     # entry_time/exit_time) and balance (not balance_after_trade) -- see
     # db_utils.py's append_simulator_trades/get_simulator_summary/
@@ -170,15 +179,15 @@ def _close_position(position, exit_price, exit_time, exit_reason, balance, confi
         "direction": position["direction"],
         "entry_date_time": position["entry_time"],
         "exit_date_time": exit_time,
-        "entry_price": float(entry_price),
-        "exit_price": float(exit_price),
-        "quantity": float(quantity),
-        "gross_pnl": float(gross_pnl),
-        "commission": float(total_commission),
-        "slippage": float(total_slippage),
-        "net_pnl": float(net_pnl),
+        "entry_price": round(float(entry_price), 4),
+        "exit_price": round(float(exit_price), 4),
+        "quantity": round(float(quantity), 4),
+        "gross_pnl": round(float(gross_pnl), 4),
+        "commission": round(float(total_commission), 4),
+        "slippage": round(float(total_slippage), 4),
+        "net_pnl": round(float(net_pnl), 4),
         "exit_reason": exit_reason,
-        "balance": new_balance,
+        "balance": round(new_balance, 4),
     }
     return trade, new_balance
 
@@ -232,11 +241,11 @@ def step_candle(candle, signal, position, balance, config, take_profit_pct, stop
     if position is not None:
         direction = 1 if position["direction"] == "long" else -1
         close_price = float(candle["close"])
-        position["current_price"] = close_price
+        position["current_price"] = round(close_price, 4)
         if direction == 1:
-            position["unrealized_pnl"] = (close_price - position["entry_price"]) * position["quantity"]
+            position["unrealized_pnl"] = round((close_price - position["entry_price"]) * position["quantity"], 4)
         else:
-            position["unrealized_pnl"] = (position["entry_price"] - close_price) * position["quantity"]
+            position["unrealized_pnl"] = round((position["entry_price"] - close_price) * position["quantity"], 4)
         position["leaning"] = _leaning(close_price, position["take_profit"], position["stop_loss"])
 
         # Step 5: TP / SL
