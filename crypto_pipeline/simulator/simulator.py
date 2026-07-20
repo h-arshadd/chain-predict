@@ -81,8 +81,9 @@ def _check_exit(position, candle):
     """
     Step 5: Check Exit Conditions against the current candle's high/low.
     Returns (exit_price, exit_reason) or (None, None) if no exit triggered
-    by price this candle. Opposite-signal and reversal exits are handled
-    separately in step_candle(), since those depend on the signal, not price.
+    by price this candle. Opposite-signal (direction-change) exits are
+    handled separately in step_candle(), since those depend on the
+    signal, not price.
     """
     direction = 1 if position["direction"] == "long" else -1
     high, low = candle["high"], candle["low"]
@@ -173,11 +174,11 @@ def step_candle(candle, signal, position, balance, config):
 
     Direction-change rule: if a position is open and a new signal arrives
     pointing the OPPOSITE way, the old position is closed immediately
-    (exit_reason "reversal") EVEN IF neither TP nor SL has been hit yet,
-    and a new position is opened in the new direction on this same candle.
-    If the new signal points the SAME way as the open position, nothing
-    changes -- the existing trade is simply left running (no re-entry, no
-    resizing, no double-counting).
+    (exit_reason "direction_change") EVEN IF neither TP nor SL has been
+    hit yet, and a new position is opened in the new direction on this
+    same candle. If the new signal points the SAME way as the open
+    position, nothing changes -- the existing trade is simply left
+    running (no re-entry, no resizing, no double-counting).
 
     Returns
     -------
@@ -205,16 +206,17 @@ def step_candle(candle, signal, position, balance, config):
 
         # Direction-change rule: if TP/SL wasn't hit but a new signal points
         # the opposite way from the open position, close here at this
-        # candle's close and record it as "reversal" -- the flip itself is
-        # what closed it, whether or not the position was about to hit its
-        # levels anyway (TP/SL not being hit doesn't matter; the direction
-        # change still forces the close). A same-direction signal is a
-        # no-op: the existing trade just keeps running untouched.
+        # candle's close and record it as "direction_change" -- the flip
+        # itself is what closed it, whether or not the position was about
+        # to hit its levels anyway (TP/SL not being hit doesn't matter;
+        # the direction change still forces the close). A same-direction
+        # signal is a no-op: the existing trade just keeps running
+        # untouched.
         if exit_price is None and signal != 0:
             current_direction = 1 if position["direction"] == "long" else -1
             if signal == -current_direction:
                 exit_price = candle["close"]
-                exit_reason = "reversal"
+                exit_reason = "direction_change"
             else:
                 signal = 0
 
@@ -225,12 +227,12 @@ def step_candle(candle, signal, position, balance, config):
             )
             position = None
             # signal keeps its value here (still the opposite-direction
-            # signal that caused the reversal) so Step 3 below can
+            # signal that caused the direction change) so Step 3 below can
             # immediately open the new position on this same candle.
 
     # Step 3: Open Position (only if flat -- Version 1: max_open_positions = 1)
     # Runs both for a normal flat-market entry AND right after a same-candle
-    # reversal close above.
+    # direction-change close above.
     if position is None and signal != 0:
         if signal == 1 and not allow_long:
             signal = 0

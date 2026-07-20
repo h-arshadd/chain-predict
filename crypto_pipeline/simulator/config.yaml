@@ -9,13 +9,17 @@
 # Every (exchange, symbol, strategy) combination gets its own Position
 # Table + Trade Ledger, so add/remove a coin or exchange just by editing
 # these two lists -- nothing in main.py needs to change.
+#
+# Currently narrowed to binance/btc only (fast to iterate on while
+# testing) -- add exchanges/coins back here whenever you want the full
+# matrix again, e.g.:
+#   exchanges: [binance, bybit]
+#   symbols:   [doge, sol, btc, eth, ada, ltc, mina, sui]
 exchanges:
   - binance
-  - bybit
 
 symbols:
   - btc
-
 
 # ------------------------------------------------------------
 # Data Range
