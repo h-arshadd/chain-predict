@@ -216,7 +216,7 @@ def build_model_metadata(
 
     Args:
         model_kind: "regressor" | "classifier" | "deep_learning_regressor"
-            | "deep_learning_classifier" | "timeseries"
+            | "deep_learning_classifier" | "timeseries" | "timeseries_classifier"
         algorithm: str, e.g. "random_forest", "xgboost", "lstm"
         hyperparams: dict -- the model's COMPLETE effective parameter
             set (for sklearn-style models: model.model.get_params(),
@@ -297,7 +297,7 @@ def _deep_learning_classifier_model_info(algorithm: str, hyperparams: dict, clas
 
 
 def _timeseries_model_info(algorithm: str, hyperparams: dict, classes: Optional[np.ndarray]) -> dict:
-    """Darts-backed timeseries model (ml/timeseries/*, e.g. NBEATSModel, TCNModel) -- no classes, uses Darts' own checkpoint format."""
+    """Darts-backed timeseries REGRESSION model (ml/timeseries/*, TS_REGRESSORS -- NBEATSModel, TCNModel, StatsForecastAutoARIMA) -- no classes, uses Darts' own checkpoint format."""
     return {
         "model_type": "timeseries",
         "algorithm": algorithm,
@@ -305,6 +305,22 @@ def _timeseries_model_info(algorithm: str, hyperparams: dict, classes: Optional[
         "output_chunk_length": hyperparams.get("output_chunk_length"),
         "hyperparameters": hyperparams,
         "random_seed": hyperparams.get("random_state"),
+        "serialization_format": "darts_checkpoint",
+    }
+
+
+def _timeseries_classifier_model_info(algorithm: str, hyperparams: dict, classes: Optional[np.ndarray]) -> dict:
+    """Darts-backed timeseries CLASSIFICATION model (ml/timeseries/*, TS_CLASSIFIERS -- e.g. SKLearnClassifierModel) -- lags-based, not chunk-based, includes the class label set."""
+    return {
+        "model_type": "timeseries_classifier",
+        "algorithm": algorithm,
+        "lags": hyperparams.get("lags"),
+        "lags_past_covariates": hyperparams.get("lags_past_covariates"),
+        "lags_future_covariates": hyperparams.get("lags_future_covariates"),
+        "output_chunk_length": hyperparams.get("output_chunk_length"),
+        "hyperparameters": hyperparams,
+        "random_seed": hyperparams.get("random_state"),
+        "classes": classes.tolist() if classes is not None else None,
         "serialization_format": "darts_checkpoint",
     }
 
@@ -340,6 +356,7 @@ _MODEL_INFO_BUILDERS = {
     "deep_learning_regressor": _deep_learning_regressor_model_info,
     "deep_learning_classifier": _deep_learning_classifier_model_info,
     "timeseries": _timeseries_model_info,
+    "timeseries_classifier": _timeseries_classifier_model_info,
 }
 
 

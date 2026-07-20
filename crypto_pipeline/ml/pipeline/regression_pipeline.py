@@ -69,8 +69,8 @@ from crypto_pipeline.ml.preprocessing.preprocessing_pipeline import run_preproce
 from crypto_pipeline.ml.regressors.registry import REGRESSORS, build_regressor
 from crypto_pipeline.ml.deep_learning.registry import DL_REGRESSORS, build_dl_regressor
 from crypto_pipeline.ml.signals.regression_signals import generate_regression_signals
+from crypto_pipeline.ml.signals.signal_utils import signal_counts as _signal_counts
 from crypto_pipeline.ml.evaluation.evaluator import evaluate_model
-from crypto_pipeline.ml.evaluation.regression_metrics import compute_regression_metrics
 from crypto_pipeline.backtest.backtest import load_config as load_backtest_config
 from crypto_pipeline.ml.persistence.metadata import (
     build_data_prep_metadata,
@@ -136,12 +136,6 @@ def run_regression_pipeline(
             evaluation: dict from evaluator.evaluate_model() (PDF heading
                 10) -- ml_metrics (MAE/MSE/RMSE), trading_metrics (every
                 quantstats metric), trade_summary, backtest_result
-            val_metrics: dict from compute_regression_metrics() on the
-                validation split (MAE/MSE/RMSE), or None if split.val_size
-                wasn't set in ml/config.yaml. For mlp/lstm/gru this is the
-                same signal that already drove early stopping during
-                training; for traditional models it's purely a reported
-                number, since they don't take a validation set during training.
             run_id: str, this run's identifier (as used for artifacts/ and logs/)
             artifact_paths: dict from artifact_manager.save_run() --
                 run_dir/config_path/preprocessing_path/model_path (PDF
@@ -149,8 +143,6 @@ def run_regression_pipeline(
                 objects, all persisted and reloadable via
                 model_loader.load_run(run_id))
             y_test: pd.Series, true target values for test_df (for scoring)
-            y_val: pd.Series or None, true target values for val_df (None
-                if split.val_size wasn't set in ml/config.yaml)
             feature_columns: list[str], order used for training/inference
             split_info: dict from train_test_split.split_dataset() (train/test
                 date ranges etc, per PDF heading 3's record-keeping requirement)
@@ -162,70 +154,184 @@ def run_regression_pipeline(
 
     ml_config = _load_yaml(ml_config_path)
 
-    # Heading 12: centralized logging, configured once per run before any
-    # other stage does anything -- dataset loading is the very next line,
-    # and heading 12 explicitly lists "Dataset loading" as something that
-    # should be logged. run_id is resolved here (not later, alongside
-    # heading 11's persistence step) specifically so the SAME id names
-    # this run's log file (logs/{run_id}.log), its artifacts
-    # (artifacts/configs/{run_id}.yaml), and everything else about the
-    # run -- one identifier, one place to look for everything.
-    algorithm_for_run_id = ml_config.get("model", {}).get("algorithm", "unknown")
-    resolved_run_id = run_id or make_run_id(algorithm_for_run_id)
+    model_type = ml_config.get("model_type")
+    if model_type != "regression":
+        raise ValueError(
+            f"run_regression_pipeline() requires ml_config['model_type'] == "
+            f"'regression', got '{model_type}'. Use classification_pipeline.py for "
+            f"a classification dataset instead -- model_type is set once in "
+            f"ml/config.yaml and drives which target was generated, so it "
+            f"can't be overridden here."
+        )
+
+    # Headings 1-4: load, select features, split, preprocess. Standalone
+    # callers of this function need this done once, here -- callers that
+    # already have this data (e.g. main.py training several algorithms
+    # against the SAME dataset) should call run_regression_algorithm()
+    # directly instead of going through this loader.
+    df = load_dataset(ml_config)
+    selected = select_features(df, ml_config)
+    feature_columns = selected["feature_columns"]
+    target_column = selected["target_column"]
+    timestamp_column = selected["timestamp_column"]
+
+    split_info = split_dataset(df, ml_config, timestamp_column=timestamp_column)
+
+    preprocessed = run_preprocessing(
+        split_info["train_df"], split_info["test_df"], feature_columns, ml_config,
+        val_df=split_info.get("val_df"),
+    )
+    # split_info["val_df"] was raw/untransformed -- replace it with the
+    # preprocessed version so the val_df read further down (X_val/y_val)
+    # sees val data transformed the same way as train_df/test_df.
+    split_info["val_df"] = preprocessed["val_df"]
+
+    row_counts = {
+        "total_rows": len(df),
+        "train_rows": len(preprocessed["train_df"]),
+        "test_rows": len(preprocessed["test_df"]),
+        "dropped_rows_train": preprocessed["dropped_rows"]["train"],
+        "dropped_rows_test": preprocessed["dropped_rows"]["test"],
+    }
+
+    model_config = ml_config.get("model", {})
+    algorithm = model_config.get("algorithm")
+    if not algorithm:
+        raise ValueError("ml/config.yaml must set model.algorithm (e.g. 'random_forest')")
+    params = model_config.get("params", {}) or {}
+
+    return run_regression_algorithm(
+        algorithm=algorithm,
+        params=params,
+        ml_config=ml_config,
+        train_df=preprocessed["train_df"],
+        test_df=preprocessed["test_df"],
+        feature_columns=feature_columns,
+        target_column=target_column,
+        timestamp_column=timestamp_column,
+        split_info=split_info,
+        fit_objects=preprocessed["fit_objects"],
+        row_counts=row_counts,
+        ohlcv_1m=ohlcv_1m,
+        backtest_config_path=backtest_config_path,
+        stats_config_path=stats_config_path,
+        plot_dir=plot_dir,
+        artifacts_dir=artifacts_dir,
+        run_id=run_id,
+    )
+
+
+def run_regression_algorithm(
+    algorithm: str,
+    params: dict,
+    ml_config: dict,
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    feature_columns: list,
+    target_column: str,
+    timestamp_column: str,
+    split_info: dict,
+    fit_objects: list,
+    row_counts: dict,
+    ohlcv_1m: pd.DataFrame,
+    backtest_config_path: str = None,
+    stats_config_path: str = None,
+    backtest_config: dict = None,
+    stats_config: dict = None,
+    plot_dir: str = None,
+    artifacts_dir: str = ARTIFACTS_DIR,
+    models_dir: str = None,
+    run_id: str = None,
+    target_counts: dict = None,
+    requested_hyperparams: dict = None,
+    effective_hyperparams_fn=None,
+) -> dict:
+    """
+    Train + predict + signal + evaluate + persist ONE regression
+    algorithm, given data that's already been loaded/split/preprocessed
+    (headings 1-4) by the caller.
+
+    This is the part of run_regression_pipeline() (headings 5-11) that
+    doesn't care where train_df/test_df came from -- pulled out into its
+    own function so a caller training several algorithms against the
+    SAME dataset (e.g. main.py's run_ml_pipeline(), one call per
+    algorithm in ml_config["model"]["algorithms"]) doesn't have to
+    reload/re-split/re-preprocess the dataset once per algorithm just to
+    reach this logic. run_regression_pipeline() itself is a thin wrapper
+    around this: it does headings 1-4 once, then calls this.
+
+    Args:
+        algorithm: str, e.g. "random_forest" -- looked up in
+            ml/regressors/registry.py first, then
+            ml/deep_learning/registry.py.
+        params: dict, hyperparameters passed to the model constructor.
+        ml_config: the loaded ml/config.yaml dict (for
+            build_data_prep_metadata() and preprocessing metadata).
+        train_df / test_df: preprocessed train/test DataFrames (output
+            of preprocessing_pipeline.run_preprocessing()).
+        feature_columns / target_column / timestamp_column: str/list,
+            from preprocessing.feature_selector.select_features().
+        split_info: dict from train_test_split.split_dataset().
+        fit_objects: list from run_preprocessing() (fitted scalers, for
+            persistence).
+        row_counts: dict (total_rows/train_rows/test_rows/dropped_rows_*),
+            for metadata.
+        ohlcv_1m: 1-minute OHLCV DataFrame for backtest execution.
+        backtest_config_path / stats_config_path: as in
+            run_regression_pipeline().
+        plot_dir: optional quantstats plot directory.
+        artifacts_dir: root artifacts/ folder.
+        models_dir: root models/ folder, forwarded to
+            artifact_manager.save_run() -- defaults to save_run()'s own
+            default if not given.
+        run_id: this run's identifier. Defaults to
+            make_run_id(algorithm) if not given.
+        target_counts: optional dict, passed straight through to
+            build_data_prep_metadata() -- callers with a classification-
+            style target distribution to record can pass it here (this
+            function's own default of None is fine for regression,
+            whose target is continuous). Present here only so a caller
+            like main.py doesn't need to call save_run() a second time
+            just to attach one more field.
+        requested_hyperparams: optional dict, the subset of params
+            explicitly configured (as opposed to `params`, which may
+            already include library defaults) -- passed to
+            build_model_metadata() as "configured_overrides". Defaults
+            to `params` if not given.
+        effective_hyperparams_fn: optional callable(model, params) -> dict,
+            called with the fitted model and the requested params AFTER
+            training, to compute the model's COMPLETE effective
+            parameter set (e.g. a fitted sklearn estimator's
+            get_params()) for build_model_metadata()'s "hyperparameters"
+            field. A callback rather than a plain dict because the
+            effective params aren't knowable until after model.train()
+            runs inside this function. Defaults to `params` as-is if not
+            given.
+
+    Returns:
+        Same dict shape as run_regression_pipeline() -- see its
+        docstring for the key list.
+    """
+    resolved_run_id = run_id or make_run_id(algorithm)
     log_path = setup_logging(run_id=resolved_run_id)
     logger.info(f"Regression pipeline starting: run_id={resolved_run_id}, log file={log_path}")
 
     try:
-        model_type = ml_config.get("model_type")
-        if model_type != "regression":
-            raise ValueError(
-                f"run_regression_pipeline() requires ml_config['model_type'] == "
-                f"'regression', got '{model_type}'. Use classification_pipeline.py for "
-                f"a classification dataset instead -- model_type is set once in "
-                f"ml/config.yaml and drives which target was generated, so it "
-                f"can't be overridden here."
-            )
-
-        # Headings 1-4: load, select features, split, preprocess.
-        df = load_dataset(ml_config)
-        selected = select_features(df, ml_config)
-        feature_columns = selected["feature_columns"]
-        target_column = selected["target_column"]
-
-        split_info = split_dataset(df, ml_config, timestamp_column=selected["timestamp_column"])
-
-        preprocessed = run_preprocessing(
-            split_info["train_df"], split_info["test_df"], feature_columns, ml_config,
-            val_df=split_info["val_df"],
-        )
-        train_df = preprocessed["train_df"]
-        val_df = preprocessed["val_df"]  # None if split.val_size wasn't set in config
-        test_df = preprocessed["test_df"]
-        has_val = val_df is not None
-
-        # Row-count bookkeeping for metadata.build_data_prep_metadata()
-        # and build_split_metadata() (heading 11 + your lead's "total
-        # rows, training rows from where to where, everything possible"
-        # requirement) -- captured here since this is the one place both
-        # the pre-split total and the post-drop train/val/test counts are
-        # all in scope together. val_rows/dropped_rows_val are only added
-        # when a validation split actually exists, so build_split_metadata()
-        # doesn't write an empty "validation" section for train/test-only runs.
-        row_counts = {
-            "total_rows": len(df),
-            "train_rows": len(train_df),
-            "test_rows": len(test_df),
-            "dropped_rows_train": preprocessed["dropped_rows"]["train"],
-            "dropped_rows_test": preprocessed["dropped_rows"]["test"],
-        }
-        if has_val:
-            row_counts["val_rows"] = len(val_df)
-            row_counts["dropped_rows_val"] = preprocessed["dropped_rows"]["val"]
         logger.info(f"Row counts: {row_counts}")
 
         X_train, y_train = train_df[feature_columns], train_df[target_column]
         X_test, y_test = test_df[feature_columns], test_df[target_column]
-        X_val, y_val = (val_df[feature_columns], val_df[target_column]) if has_val else (None, None)
+
+        # val_df (chronologically between train and test) is only
+        # present when ml/config.yaml's split.val_size > 0 -- see
+        # train_test_split.split_dataset(). None otherwise, same as it
+        # always was, so this is fully backward compatible with a
+        # val_size-less config.
+        val_df = split_info.get("val_df")
+        if val_df is not None:
+            X_val, y_val = val_df[feature_columns], val_df[target_column]
+        else:
+            X_val, y_val = None, None
 
         # Heading 5/7: model training. Which algorithm + hyperparams is
         # entirely config-driven -- this function contains no
@@ -234,29 +340,22 @@ def run_regression_pipeline(
         # whichever matches decides model_kind, but both expose the same
         # train()/predict()/save() interface, so nothing below this
         # block branches on which kind it is.
-        model_config = ml_config.get("model", {})
-        algorithm = model_config.get("algorithm")
-        if not algorithm:
-            raise ValueError("ml/config.yaml must set model.algorithm (e.g. 'random_forest')")
-        params = model_config.get("params", {}) or {}
-
         if algorithm in REGRESSORS:
             model_kind = "regressor"
             logger.info(f"Training regressor: algorithm={algorithm}, params={params}")
             model = build_regressor(algorithm, **params)
-            # Traditional regressors (sklearn/xgboost/etc wrappers) only
-            # expose train(X_train, y_train) today -- the validation split
-            # still exists and is still reported below, it just isn't fed
-            # into training for these algorithms.
+            # Traditional sklearn-style regressors' train() only takes
+            # (X_train, y_train) -- no validation-set concept (no
+            # epochs/early stopping), so X_val/y_val are never passed here.
             model.train(X_train, y_train)
         elif algorithm in DL_REGRESSORS:
             model_kind = "deep_learning_regressor"
             logger.info(f"Training deep learning regressor: algorithm={algorithm}, params={params}")
             model = build_dl_regressor(algorithm, **params)
-            # X_val/y_val (None if split.val_size wasn't set) drive early
-            # stopping and ReduceLROnPlateau inside base_network.py/
-            # trainer.py -- without them the model just trains for the
-            # full configured epoch count with no early stopping signal.
+            # X_val/y_val (None if no split.val_size configured) drive
+            # early stopping + ReduceLROnPlateau inside
+            # deep_learning/trainer.py's train_network() -- see
+            # deep_learning/base_network.py's train().
             model.train(X_train, y_train, X_val, y_val)
         else:
             raise ValueError(
@@ -264,15 +363,6 @@ def run_regression_pipeline(
                 f"Available traditional: {sorted(REGRESSORS.keys())}, "
                 f"deep learning: {sorted(DL_REGRESSORS.keys())}"
             )
-
-        # Validation metrics (reported only -- for mlp/lstm/gru this is
-        # the same signal that already drove early stopping above; for
-        # traditional models it's purely a reported number).
-        val_metrics = None
-        if has_val:
-            val_predictions = model.predict(X_val)
-            val_metrics = compute_regression_metrics(y_val.to_numpy(), val_predictions)
-            logger.info(f"Validation metrics: {val_metrics}")
 
         # Heading 8: standardized prediction format (shared with classification,
         # traditional models, and deep learning models alike).
@@ -291,18 +381,30 @@ def run_regression_pipeline(
         # Heading 10: evaluate the trained model -- ML metrics (reported only,
         # never used for selection) plus a real backtest + stats run on the
         # generated signals.
-        backtest_config = load_backtest_config(backtest_config_path)
-        stats_config = _load_yaml(stats_config_path) if stats_config_path else _default_stats_config()
+        # Use a pre-loaded config dict if the caller has one (e.g.
+        # main.py loads these ONCE outside its per-algorithm loop and
+        # passes the same dict into every algorithm's call here, rather
+        # than this function re-reading the same YAML file off disk once
+        # per algorithm) -- otherwise load from the given path, same as
+        # a standalone caller of run_regression_pipeline()/
+        # run_classification_pipeline() would.
+        resolved_backtest_config = (
+            backtest_config if backtest_config is not None else load_backtest_config(backtest_config_path)
+        )
+        resolved_stats_config = (
+            stats_config if stats_config is not None else
+            (_load_yaml(stats_config_path) if stats_config_path else _default_stats_config())
+        )
 
         evaluation = evaluate_model(
             task_type="regression",
             y_true=y_test.to_numpy(),
             y_pred=prediction_result["predictions"],
             signals=signals,
-            signal_timestamps=test_df[selected["timestamp_column"]],
+            signal_timestamps=test_df[timestamp_column],
             ohlcv_1m=ohlcv_1m,
-            backtest_config=backtest_config,
-            stats_config=stats_config,
+            backtest_config=resolved_backtest_config,
+            stats_config=resolved_stats_config,
             plot_dir=plot_dir,
             run_id=algorithm,
         )
@@ -318,6 +420,7 @@ def run_regression_pipeline(
             "data_prep": build_data_prep_metadata(
                 ml_config=ml_config,
                 row_counts=row_counts,
+                target_counts=target_counts,
             ),
             "split": build_split_metadata(
                 split_info=split_info,
@@ -326,38 +429,33 @@ def run_regression_pipeline(
             "preprocessing": build_preprocessing_metadata(
                 feature_columns=feature_columns,
                 target_column=target_column,
-                timestamp_column=selected["timestamp_column"],
+                timestamp_column=timestamp_column,
                 preprocessing_config=ml_config.get("preprocessing", {}),
-                fit_objects=preprocessed["fit_objects"],
+                fit_objects=fit_objects,
             ),
             "model": build_model_metadata(
                 model_kind=model_kind,
                 algorithm=algorithm,
-                hyperparams=params,
+                hyperparams=effective_hyperparams_fn(model, params) if effective_hyperparams_fn is not None else params,
+                requested_hyperparams=requested_hyperparams if requested_hyperparams is not None else params,
             ),
-            # build_evaluation_metadata() takes ml_metrics/trading_metrics
-            # separately (pre-existing bug fixed here: this used to call it
-            # with a `test_metrics=` kwarg the function doesn't accept,
-            # which would raise on every run). val_metrics has no
-            # dedicated slot in build_evaluation_metadata() yet, so it's
-            # folded into ml_metrics under a "val_" prefix -- reported
-            # alongside test's ml_metrics without disturbing the existing
-            # mae/mse/rmse keys test already uses.
             "evaluation": build_evaluation_metadata(
-                ml_metrics={
-                    **evaluation["ml_metrics"],
-                    **({f"val_{k}": v for k, v in val_metrics.items()} if has_val else {}),
-                },
+                ml_metrics=evaluation["ml_metrics"],
                 trading_metrics=evaluation["trading_metrics"],
+                trade_summary=evaluation["trade_summary"],
+                signal_counts=_signal_counts(signals),
             ),
         }
-        artifact_paths = save_run(
+        save_run_kwargs = dict(
             run_id=resolved_run_id,
             metadata=metadata,
-            fit_objects=preprocessed["fit_objects"],
+            fit_objects=fit_objects,
             base_dir=artifacts_dir,
             model_save_fn=model.save,
         )
+        if models_dir is not None:
+            save_run_kwargs["models_dir"] = models_dir
+        artifact_paths = save_run(**save_run_kwargs)
         logger.info(f"Run persisted: run_id={resolved_run_id}, artifacts at {artifact_paths['run_dir']}")
 
         return {
@@ -365,14 +463,12 @@ def run_regression_pipeline(
             "prediction_result": prediction_result,
             "signals": signals,
             "evaluation": evaluation,
-            "val_metrics": val_metrics,  # None if split.val_size wasn't set in config
             "run_id": resolved_run_id,
             "artifact_paths": artifact_paths,
             "y_test": y_test,
-            "y_val": y_val,  # None if split.val_size wasn't set in config
             "feature_columns": feature_columns,
             "split_info": split_info,
-            "fit_objects": preprocessed["fit_objects"],
+            "fit_objects": fit_objects,
             "algorithm": algorithm,
             "model_kind": model_kind,
         }

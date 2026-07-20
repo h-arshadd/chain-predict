@@ -111,11 +111,18 @@ def run_preprocessing(
     val_initial_rows = len(val_out) if has_val else 0
     test_initial_rows = len(test_out)
 
-    def _apply_fitted(source_df: pd.DataFrame, fit_info: dict, transform_fn: Callable, params: dict) -> pd.DataFrame:
+    def _apply_fitted(source_df: pd.DataFrame, fit_info: dict, transform_fn: Callable, params: dict, preceding_df: pd.DataFrame) -> pd.DataFrame:
         """
         Re-apply an already-fitted (on train only) transform to some
         other split (val or test) -- shared so val and test go through
         the exact same logic and can never accidentally diverge.
+
+        preceding_df: whichever split comes immediately before
+            source_df in time (train_out for val, or val_out for test
+            when a val split exists -- otherwise train_out for test
+            too) -- only used to seed differencing's warm-up window
+            (see the weight_length/order branch below); ignored by
+            every other branch.
         """
         if "_sklearn_object" in fit_info:
             fitted_scaler = fit_info["_sklearn_object"]
@@ -128,10 +135,43 @@ def run_preprocessing(
             lower = pd.Series(fit_info["lower_bounds"])[feature_columns]
             upper = pd.Series(fit_info["upper_bounds"])[feature_columns]
             return source_df[feature_columns].clip(lower=lower, upper=upper, axis=1)
+        elif "weight_length" in fit_info or "order" in fit_info:
+            # Fractional/simple differencing (stationarity.py) -- purely
+            # backward-looking, but each call independently computes its
+            # own leading warm-up window (weight_length-1 rows for
+            # fractional, `order` rows for simple) from whatever
+            # DataFrame it's given. Calling it on val/test ALONE would
+            # produce a warm-up window with no real history behind it,
+            # generating a fresh block of leading NaNs inside val/test
+            # that then get dropped -- leaving an actual GAP in the time
+            # index right at the split boundary once everything is
+            # concatenated back together (this is exactly what broke
+            # ml/timeseries/*: Darts' TimeSeries requires a regular,
+            # gap-free time index, and silently produced one with a hole
+            # in it here). Fixed by prepending preceding_df's tail
+            # (enough rows to cover the warm-up window -- train's tail
+            # for val, or val's tail for test when val exists, since
+            # that's the segment chronologically adjacent to source_df)
+            # as real history, transforming that combined frame, then
+            # slicing the prepended rows back off -- source_df's own
+            # first rows end up computed from real preceding values
+            # instead of restarting cold, so no gap, and nothing here
+            # leaks any FITTED (data-driven) train statistic since these
+            # methods have none -- only raw feature values are reused.
+            warmup = fit_info.get("weight_length", fit_info.get("order", 1) + 1) - 1
+            warmup = max(warmup, 0)
+            if warmup == 0:
+                transformed, _ = transform_fn(source_df[feature_columns], **params)
+                return transformed
+            history = preceding_df[feature_columns].iloc[-warmup:]
+            combined = pd.concat([history, source_df[feature_columns]])
+            transformed, _ = transform_fn(combined, **params)
+            return transformed.iloc[warmup:].set_axis(source_df.index)
         else:
-            # Purely backward-looking/causal methods (the stationarity
-            # methods, and the row-wise Normalizer) have nothing
-            # data-driven to leak from train, so they're just re-run.
+            # Purely backward-looking/causal methods with no separate
+            # warm-up window (row-wise Normalizer, rolling_zscore) have
+            # nothing data-driven to leak from train and don't create a
+            # leading gap, so they're just re-run directly.
             transformed, _ = transform_fn(source_df[feature_columns], **params)
             return transformed
 
@@ -159,9 +199,13 @@ def run_preprocessing(
         # Re-apply the SAME fitted transform to val (if present) and
         # test -- neither ever refits its own params (that would leak
         # val/test-set statistics into what's supposed to be a
-        # train-only fit).
-        transformed_test = _apply_fitted(test_out, fit_info, transform_fn, params)
-        transformed_val = _apply_fitted(val_out, fit_info, transform_fn, params) if has_val else None
+        # train-only fit). preceding_df is whichever split sits
+        # immediately before in time, used only to seed differencing's
+        # warm-up window (see _apply_fitted) -- test's preceding split
+        # is val when val exists (train -> val -> test), else train.
+        transformed_val = _apply_fitted(val_out, fit_info, transform_fn, params, preceding_df=train_out) if has_val else None
+        test_preceding = val_out if has_val else train_out
+        transformed_test = _apply_fitted(test_out, fit_info, transform_fn, params, preceding_df=test_preceding)
 
         train_out = train_out.drop(columns=feature_columns)
         train_out = pd.concat([train_out, transformed_train], axis=1)[train_df.columns]

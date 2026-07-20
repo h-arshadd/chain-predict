@@ -6,7 +6,7 @@
 # generation, evaluation -- is controlled from here. There is only one
 # entry point (ml/main.py) and only one config file.
 
-model_type: regression # regression | classification | timeseries
+model_type: timeseries  # regression | classification | timeseries
 
 # ---------------------------------------------------------------------
 # Data Prep stages (market data, features, sentiment, target)
@@ -90,6 +90,7 @@ target:
   # classification -> Triple Barrier Labeling: -1/0/1 based on whether price
   # hits the upper (take-profit) or lower (stop-loss) barrier first within
   # `horizon` candles. Neither hit within horizon -> 0.
+  timeseries_task: regression
   horizon: 4
   upper_threshold: 0.001   # % above entry to count as "up" (take-profit)
   lower_threshold: -0.001  # % below entry to count as "down" (stop-loss)
@@ -104,26 +105,16 @@ output:
   save_debug_csv: false
   base_dir: outputs
 
-# Train/Val/Test Split stage (PDF heading 3).
+# Train/Test Split stage (PDF heading 3).
 # Time series -- chronological cutoff only, never shuffled/random.
 # test_size is the fraction of rows (by time order) held out for test,
-# taken from the END of the dataset. val_size (optional) is the fraction
-# held out for validation, taken from the rows immediately BEFORE test --
-# so the chronological order is always train -> val -> test, and val
-# never sees anything more recent than test. Everything before the val
-# cutoff (or the test cutoff, if val_size is 0) is train.
-# val_size is used for early stopping / model-selection during training
-# (e.g. mlp/lstm/gru pick their best epoch by validation loss) -- it is
-# NEVER touched by preprocessing fitting or used for the final reported
-# metrics, those still come from test only. Set val_size to 0 (or omit
-# it) to disable the validation split entirely and go back to plain
-# train/test.
-# train_size is optional and purely a readable label: if you set it, it
-# must add up to 1.0 with test_size + val_size (train_test_split.py
-# checks this and raises if they don't match) -- it doesn't change the
-# split itself, it's just there so the config states the train fraction
-# explicitly instead of leaving you to compute 1 - test_size - val_size
-# yourself.
+# taken from the END of the dataset. Everything before that cutoff is
+# train -- test_size is the only value that actually drives the split.
+# train_size is optional and purely a readable label: if you set it,
+# it must add up to 1.0 with test_size (train_test_split.py checks
+# this and raises if they don't match) -- it doesn't change the split
+# itself, it's just there so the config states the train fraction
+# explicitly instead of leaving you to compute 1 - test_size yourself.
 split:
   test_size: 0.2
   val_size: 0.1
@@ -159,14 +150,17 @@ split:
 #                              -> or ml/deep_learning/registry.py's DL_CLASSIFIERS
 #                                 (mlp, lstm, gru) if using a deep learning
 #                                 model instead
-#   model_type=timeseries     -> ml/timeseries/registry.py's TS_MODELS
-#                                 (nbeats, tcn) -- Darts-backed, every model
-#                                 in this family forecasts the target series
-#                                 n steps ahead (not a per-row
-#                                 regression/classification prediction).
-#                                 Requires input_chunk_length and
-#                                 output_chunk_length in params (every
-#                                 Darts model in this family needs both).
+#   model_type=timeseries     -> ml/timeseries/registry.py's TS_REGRESSORS
+#                                 (nbeats, tcn, statsforecast) for a raw
+#                                 price forecast, or TS_CLASSIFIERS
+#                                 (sklearn_classifier) for a discrete
+#                                 -1/0/1 label forecast -- Darts-backed,
+#                                 every model in this family forecasts n
+#                                 steps ahead directly (not a per-row
+#                                 prediction). nbeats/tcn require
+#                                 input_chunk_length + output_chunk_length;
+#                                 statsforecast/sklearn_classifier don't
+#                                 (see each model's own docstring).
 # params are forwarded as-is to the underlying estimator's constructor --
 # nothing here is validated/hardcoded per-algorithm, so any param that
 # estimator accepts can go in params. Only one model runs per run, chosen
@@ -205,8 +199,9 @@ split:
 #                      lightgbm, catboost)
 #                      + ml/deep_learning/registry.py's DL_CLASSIFIERS
 #                      (mlp, lstm, gru)
-#   timeseries     -> ml/timeseries/registry.py's TS_MODELS
-#                      (nbeats, tcn)
+#   timeseries     -> ml/timeseries/registry.py's TS_REGRESSORS
+#                      (nbeats, tcn, statsforecast) + TS_CLASSIFIERS
+#                      (sklearn_classifier)
 #
 # Only the list matching model_type above is used; the other two just
 # sit here ready for next time you switch. Edit any list to whatever
@@ -246,8 +241,10 @@ model:
       # - gru    # uncomment to include the deep learning classifier in this run
 
     timeseries:
-      - nbeats
-      - tcn
+     # - nbeats
+    #- tcn
+      - statsforecast     # regression -- forecasts the raw close price (StatsForecastAutoARIMA)
+      # - sklearn_classifier  # classification -- forecasts a -1/0/1 label directly (uncomment to include)
 
 # param_overrides is nested by model_type, then by algorithm --
 # param_overrides.<model_type>.<algorithm> -- NOT a flat {algorithm: {...}}
@@ -630,23 +627,87 @@ model:
         random_seed: 42
 
     timeseries:
+      # forecast_mode / historical_forecasts are pipeline-level knobs
+      # (popped off before the Darts constructor is built), same for
+      # every algorithm below -- see ml/pipeline/timeseries_pipeline.py
+      # and ml/pipeline/predictor.py's generate_timeseries_historical_predictions().
+      #   forecast_mode: anchored    -- one forecast path from end of train (default)
+      #   forecast_mode: historical  -- walk-forward across train+test
+      # historical_forecasts (only used when forecast_mode: historical):
+      #   forecast_horizon: 1, stride: 1          -> one-step forecasting
+      #   train_length: N, retrain: true/false    -> fixed window forecasting
+      #
+      # scale_target (nbeats/tcn only -- see ml/timeseries/base_timeseries_model.py):
+      # these two train on the raw close price directly (not run through
+      # preprocessing.steps, which only touches covariates) -- for a
+      # large-magnitude series like a crypto close price, an unscaled
+      # target makes the loss curve unreadable (e.g. train_loss ~1e8-1e10)
+      # and can hurt gradient conditioning. scale_target: true fits a
+      # MinMax scaler on the target (train-only) and transparently
+      # inverse-transforms every forecast back to real price space --
+      # nothing downstream (signals/evaluation/CSVs) ever sees a scaled
+      # value. Recommended on; set to false to train on the raw price
+      # unscaled (the original behavior).
       nbeats:
+        scale_target: true
         input_chunk_length: 48   # how many past steps the model looks at
-        output_chunk_length: 12  # how many future steps it predicts (= forecast horizon n)
-        n_epochs: 50
+        output_chunk_length: 1   # how many future steps it predicts (= forecast horizon n)
+        n_epochs: 2
         batch_size: 32
         random_state: 42
+        forecast_mode: anchored
+        historical_forecasts:
+          forecast_horizon: 1
+          stride: 1
+          retrain: false
+          # train_length: 500   # uncomment for fixed-window forecasting
+
       tcn:
+        scale_target: true
         input_chunk_length: 48
-        output_chunk_length: 12
-        n_epochs: 50
+        output_chunk_length: 1
+        n_epochs: 2
         batch_size: 32
         random_state: 42
-  # TCN alternative -- swap the block above for this if you want algorithm
-  # tcn instead of nbeats. Both are Darts-backed and support
-  # past_covariates natively (see ml/timeseries/tcn_model.py). To use it,
-  # add a "tcn:" key here (as a sibling of "nbeats:" above) with its own
-  # params -- see ml/timeseries/tcn_model.py's docstring for the full list.
+        forecast_mode: anchored
+        historical_forecasts:
+          forecast_horizon: 1
+          stride: 1
+          retrain: false
+
+      # AutoARIMA (ml/timeseries/statsforecast_model.py) -- local
+      # statistical model, no input_chunk_length/output_chunk_length
+      # (Auto-ARIMA has no such notion; n is a predict()-time argument
+      # only, still 1 here to match this project's forecast horizon).
+      # Runs univariate -- no past_covariates/future_covariates -- see
+      # that file's docstring. No scale_target here -- Auto-ARIMA is a
+      # classical statistical model, not deep learning, and isn't
+      # sensitive to target scale the way a neural network's loss is.
+      statsforecast:
+        output_chunk_length: 1  # forecast horizon n, read by the pipeline (not a real ARIMA param)
+        season_length: 1        # no seasonality by default; set e.g. 24 for hourly data w/ daily seasonality
+        forecast_mode: anchored
+        historical_forecasts:
+          forecast_horizon: 1
+          stride: 1
+          retrain: true   # cheap to refit -- statistical model, no training epochs
+
+      # SKLearnClassifierModel (ml/timeseries/sklearn_classifier_model.py)
+      # -- genuine classification forecaster, predicts the -1/0/1
+      # triple-barrier label directly. Lags-based (not chunk-based):
+      # lags/lags_past_covariates/lags_future_covariates instead of
+      # input_chunk_length. model: swap in a different sklearn-like
+      # classifier here without writing a new file (see that file's docstring).
+      sklearn_classifier:
+        lags: 48                    # how many past target steps to look back
+        lags_past_covariates: 48    # how many past covariate steps to look back
+        output_chunk_length: 1      # how many future steps it predicts
+        random_state: 42
+        forecast_mode: anchored
+        historical_forecasts:
+          forecast_horizon: 1
+          stride: 1
+          retrain: false
 
 preprocessing:
   steps:
@@ -660,6 +721,16 @@ preprocessing:
     #   params:
     #     lower_quantile: 0.01
     #     upper_quantile: 0.99
+
+# Forecast Post-Processing stage (PDF heading 13), timeseries only
+# (ml/timeseries/postprocessing.py). Missing-forecast handling
+# (ffill/interpolate) is always applied automatically if a forecast
+# contains NaN -- nothing to configure for that. Smoothing is opt-in,
+# regression forecasters only (a smoothed class label makes no sense).
+postprocessing:
+  smoothing:
+    enabled: false
+    window: 3
 
 # Signal Generation stage (PDF heading 9).
 # Converts predictor.generate_predictions()'s output (or, for timeseries,
@@ -679,7 +750,10 @@ signals:
     buy_threshold: 0.002
     sell_threshold: -0.002
 
-  # Used by ml/signals/classification_signals.py.
+  # Used by ml/signals/classification_signals.py, AND by
+  # ml/signals/timeseries_signals.py for the timeseries CLASSIFICATION
+  # forecaster (sklearn_classifier) -- same bullish/bearish-threshold
+  # shape either way, so one section covers both.
   # bullish_class/bearish_class must match the actual label values in
   # your target column -- the target section above's triple-barrier
   # target encodes -1 (down) / 0 (neutral) / 1 (up), so 1/-1 are the
@@ -693,8 +767,9 @@ signals:
     bullish_threshold: 0.6
     bearish_threshold: 0.6
 
-  # Used by ml/signals/timeseries_signals.py. A timeseries model
-  # forecasts a whole path (n steps ahead), not one return/probability
+  # Used by ml/signals/timeseries_signals.py for the timeseries
+  # REGRESSION forecasters (nbeats/tcn/statsforecast). A timeseries
+  # regressor forecasts a whole path (n steps ahead), not one return
   # per row -- this is thresholded on the % change from the last known
   # close to the FINAL forecasted step (see timeseries_signals.py).
   # predicted % change > buy_threshold  -> Buy

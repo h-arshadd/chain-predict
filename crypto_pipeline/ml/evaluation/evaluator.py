@@ -78,10 +78,15 @@ def evaluate_model(
     Run both evaluation stages for one trained model.
 
     Args:
-        task_type: "regression", "classification", or "timeseries" --
-            picks which ML metrics module runs (timeseries reuses
+        task_type: "regression", "classification", "timeseries_regression",
+            or "timeseries_classification" -- picks which ML metrics
+            module runs (timeseries_regression reuses
             compute_regression_metrics(), since a price forecast's
-            error is the same MAE/RMSE/etc shape as a return prediction's).
+            error is the same MAE/RMSE/etc shape as a return
+            prediction's; timeseries_classification reuses
+            compute_classification_metrics() the same way. "timeseries"
+            is still accepted as an alias for "timeseries_regression",
+            for compatibility with any external caller still using it.)
         y_true: true target values/labels for the test set.
         y_pred: predicted values/labels for the test set (e.g.
             prediction_result["predictions"] from predictor.py).
@@ -124,14 +129,25 @@ def evaluate_model(
         ml_metrics = compute_regression_metrics(y_true, y_pred)
     elif task_type == "classification":
         ml_metrics = compute_classification_metrics(y_true, y_pred)
-    elif task_type == "timeseries":
+    elif task_type in ("timeseries", "timeseries_regression"):
         # A price forecast's error (y_true/y_pred both close prices,
         # same length as the forecast horizon) is the same MAE/RMSE/etc
         # shape as a regression return prediction's -- no separate
-        # timeseries metrics module needed.
+        # timeseries metrics module needed. "timeseries" (old name) is
+        # kept as an accepted alias so any external caller still using
+        # it doesn't break.
         ml_metrics = compute_regression_metrics(y_true, y_pred)
+    elif task_type == "timeseries_classification":
+        # A timeseries classifier's forecasted label vs actual label is
+        # the same accuracy/precision/recall shape as a row-wise
+        # classifier's -- reuses compute_classification_metrics()
+        # directly, same reasoning as the regression case above.
+        ml_metrics = compute_classification_metrics(y_true, y_pred)
     else:
-        raise ValueError(f"task_type must be 'regression', 'classification', or 'timeseries', got '{task_type}'")
+        raise ValueError(
+            f"task_type must be 'regression', 'classification', 'timeseries_regression', "
+            f"or 'timeseries_classification', got '{task_type}'"
+        )
 
     logger.info(f"ML evaluation ({task_type}): {ml_metrics}")
 
