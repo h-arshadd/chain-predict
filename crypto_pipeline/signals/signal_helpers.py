@@ -98,8 +98,19 @@ def calculate_indicators(df: pd.DataFrame, indicator_config: dict) -> pd.DataFra
 
             if isinstance(result, dict):
                 for key, alias in aliases.items():
-                    if key in result:
-                        data[alias] = result[key]
+                    if key not in result:
+                        raise KeyError(
+                            f"Indicator '{indicator_name}' config has alias "
+                            f"'{key}: {alias}', but the indicator function's "
+                            f"result only has these keys: {sorted(result.keys())}. "
+                            f"Fix the alias key in this strategy's config (or "
+                            f"in signals/config.yaml) to match one of those, "
+                            f"otherwise '{alias}' is never created as a column -- "
+                            f"any condition referencing it then silently compares "
+                            f"the literal string '{alias}' instead of real data "
+                            f"and crashes with a str/int TypeError."
+                        )
+                    data[alias] = result[key]
             else:
                 data[next(iter(aliases.values()))] = result
 

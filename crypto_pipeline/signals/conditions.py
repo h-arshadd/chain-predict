@@ -42,7 +42,7 @@ def apply_persist(condition: pd.Series, bars: int) -> pd.Series:
     means no persistence.
     """
 
-    condition = condition.fillna(False).astype(bool)
+    condition = condition.fillna(False).infer_objects(copy=False).astype(bool)
 
     if bars <= 0:
         return condition
@@ -75,8 +75,52 @@ def resolve_operand(df: pd.DataFrame, operand):
         if operand in df.columns:
             return df[operand]
 
+        # A string operand that isn't a real column is almost always a
+        # typo'd/missing column reference (e.g. an indicator alias that
+        # was never created -- see calculate_indicators' KeyError for the
+        # usual root cause), not an intentional string constant -- this
+        # config format has no legitimate use for comparing against a
+        # literal string. Raise here with the actual operand name rather
+        # than silently falling through to "return operand" (the literal
+        # string), which previously surfaced many conditions later as an
+        # opaque "'>' not supported between instances of 'str' and 'int'"
+        # with no indication of which column was missing.
+        if operand not in ("open", "high", "low", "close", "volume"):
+            raise KeyError(
+                f"Condition references '{operand}', but that column doesn't "
+                f"exist in the indicator DataFrame. Available columns: "
+                f"{sorted(df.columns)}. Check this strategy's 'left'/'right' "
+                f"values and its indicator aliases for a typo or a missing "
+                f"indicator block."
+            )
+
     # Return constant (number, boolean, etc)
     return operand
+
+
+def _coerce_numeric(value):
+    """
+    Coerce a resolved operand to a numeric dtype before it's fed into a
+    numeric comparison operator (>, >=, <, <=).
+
+    Some indicator columns can come back as object dtype -- e.g. a warm-up
+    period filled with None/NaN placeholders from the underlying talib
+    wrapper, or a mix of numeric and non-numeric values -- and pandas
+    raises "'>' not supported between instances of 'str' and 'int'" the
+    moment that object-dtype Series meets an int/float on the other side
+    of the comparison. That's a crash for the *entire* run (every
+    exchange/symbol/strategy after it in the loop), not just a bad row.
+
+    Coercing here turns anything that isn't actually numeric into NaN
+    instead (via pd.to_numeric(errors="coerce")), so the comparison
+    produces NaN/False for that row -- exactly what apply_persist's
+    fillna(False) and evaluate_conditions' fillna(False) already assume --
+    rather than blowing up the whole pipeline over one warm-up row or one
+    bad indicator value.
+    """
+    if isinstance(value, pd.Series) and value.dtype == object:
+        return pd.to_numeric(value, errors="coerce")
+    return value
 
 
 # ==========================================================
@@ -101,16 +145,16 @@ def evaluate_operator(
     # -------------------------------
 
     if operator == ">":
-        return left_value > right_value
+        return _coerce_numeric(left_value) > _coerce_numeric(right_value)
 
     if operator == ">=":
-        return left_value >= right_value
+        return _coerce_numeric(left_value) >= _coerce_numeric(right_value)
 
     if operator == "<":
-        return left_value < right_value
+        return _coerce_numeric(left_value) < _coerce_numeric(right_value)
 
     if operator == "<=":
-        return left_value <= right_value
+        return _coerce_numeric(left_value) <= _coerce_numeric(right_value)
 
     if operator == "==":
         return left_value == right_value
@@ -234,6 +278,7 @@ def evaluate_conditions(
             result[f"long_cond_{idx}"] = (
                 series
                 .fillna(False)
+                .infer_objects(copy=False)
                 .astype(bool)
             )
 
@@ -275,6 +320,7 @@ def evaluate_conditions(
             result[f"short_cond_{idx}"] = (
                 series
                 .fillna(False)
+                .infer_objects(copy=False)
                 .astype(bool)
             )
 
