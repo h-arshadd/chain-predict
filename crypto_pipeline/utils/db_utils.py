@@ -53,6 +53,46 @@ def _pg_type_for(series):
     return "TEXT"  # fallback for anything unexpected (e.g. object dtype)
 
 
+def _round4(value):
+    """
+    Round a single numeric value to 4 decimal places before it goes into
+    Postgres. Leaves None, strings, bools, datetimes, and anything else
+    non-numeric untouched. Used at the simulator's write points (state/
+    positions, trade ledger, stats) so every float landing in the DB is
+    consistently rounded, not just whichever ones happened to get a
+    round() call at the source.
+    """
+    if value is None:
+        return value
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        try:
+            if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
+                return value  # NaN/inf -- leave as-is, not a rounding concern
+            return round(float(value), 4)
+        except (TypeError, ValueError):
+            return value
+    return value
+
+
+def _round4_df(df, exclude_cols=()):
+    """
+    Return a copy of df with every numeric (float) column rounded to 4
+    decimal places. Integer/bool/datetime/object columns are left alone.
+    exclude_cols: column names to skip (e.g. trade_id, which is already
+    a plain int and never needs rounding).
+    """
+    import numpy as np
+    df = df.copy()
+    for col in df.columns:
+        if col in exclude_cols:
+            continue
+        if pd.api.types.is_float_dtype(df[col].dtype):
+            df[col] = df[col].round(4)
+    return df
+
+
 def _copy_dataframe(conn, df, schema, table):
     """
     Shared COPY helper used by insert_signals/insert_trades: bulk-load every
@@ -815,19 +855,29 @@ def build_equity_curve_from_ledger(conn, exchange, symbol, strategy_name, initia
 
 def save_simulator_stats(conn, exchange, symbol, strategy_name, stats_dict):
     """
-    Save one row of headline performance stats for this
-    exchange+symbol+strategy combo into simulator.stats -- ONE shared
-    table for every combo (same pattern as simulator.positions), one row
-    per (exchange, symbol, strategy_name), upserted in place each run.
+    Save one row of ALL performance stats for this exchange+symbol+
+    strategy combo into simulator.stats -- ONE shared table for every
+    combo (same pattern as simulator.positions), one row per
+    (exchange, symbol, strategy_name), upserted in place each run.
 
     stats_dict: the "metrics" dict from
-    crypto_pipeline.stats.calculator.compute_stats(), or any dict with a
-    subset of the columns below -- missing keys are stored as NULL.
-    Callers typically only pass through the same headline metrics
-    stats_runner.py already treats as "most important":
-    sharpe, sortino, calmar, max_drawdown, cagr, profit_factor, win_rate,
-    recovery_factor, risk_of_ruin -- plus total_trades for convenience,
-    ten columns total.
+    crypto_pipeline.stats.calculator.compute_stats(), which itself
+    dynamically discovers and computes every quantstats.stats metric
+    (55+ as of this quantstats version -- sharpe, sortino, calmar,
+    max_drawdown, cagr, profit_factor, win_rate, kelly_criterion, var,
+    cvar, ulcer_index, ... everything metrics.py's discover_metrics()
+    finds), plus "total_trades" added by the caller. Every key in
+    stats_dict becomes its own column -- nothing is filtered down to a
+    "headline" subset anymore, so a metric excluded via stats/config.yaml's
+    exclude_metrics (or dropped in a future quantstats version) just
+    means one less column next time the table's shape is checked, not a
+    missing value in an otherwise-fixed schema.
+
+    Columns are derived from stats_dict's own keys (quantstats' own
+    function names -- a fixed, trusted vocabulary, not arbitrary user
+    input) via ADD COLUMN IF NOT EXISTS, so the table grows to fit
+    whatever metrics.py actually discovers rather than needing a
+    hardcoded column list kept in sync by hand.
 
     This is a genuine UPSERT (INSERT ... ON CONFLICT DO UPDATE), matched
     on (exchange, symbol, strategy_name) -- each combo gets exactly one
@@ -838,6 +888,9 @@ def save_simulator_stats(conn, exchange, symbol, strategy_name, stats_dict):
 
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS simulator"))
 
+    # Base table: identity columns + total_trades + bookkeeping only.
+    # Every metric column is added on demand below, so this function
+    # works whether stats_dict has 9 keys or 55+.
     cursor.execute(sql.SQL("""
         CREATE TABLE IF NOT EXISTS {schema}.stats (
             id              SERIAL PRIMARY KEY,
@@ -845,15 +898,6 @@ def save_simulator_stats(conn, exchange, symbol, strategy_name, stats_dict):
             symbol          TEXT NOT NULL,
             strategy_name   TEXT NOT NULL,
             total_trades    INTEGER,
-            sharpe          DOUBLE PRECISION,
-            sortino         DOUBLE PRECISION,
-            calmar          DOUBLE PRECISION,
-            max_drawdown    DOUBLE PRECISION,
-            cagr            DOUBLE PRECISION,
-            profit_factor   DOUBLE PRECISION,
-            win_rate        DOUBLE PRECISION,
-            recovery_factor DOUBLE PRECISION,
-            risk_of_ruin    DOUBLE PRECISION,
             updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
             UNIQUE (exchange, symbol, strategy_name)
         )
@@ -882,10 +926,25 @@ def save_simulator_stats(conn, exchange, symbol, strategy_name, stats_dict):
     """))
     conn.commit()
 
-    metric_cols = [
-        "sharpe", "sortino", "calmar", "max_drawdown", "cagr",
-        "profit_factor", "win_rate", "recovery_factor", "risk_of_ruin",
-    ]
+    # Reserved/base column names -- never treated as a metric column even
+    # if a metric somehow shared the name (defensive, shouldn't happen
+    # with quantstats' actual function names).
+    _RESERVED = {"id", "exchange", "symbol", "strategy_name", "total_trades", "updated_at"}
+    metric_cols = [k for k in stats_dict.keys() if k not in _RESERVED]
+
+    # Every metric value is a plain float (or None) from quantstats --
+    # add any column that isn't there yet. Safe to run every call;
+    # IF NOT EXISTS makes it a no-op once the column already exists.
+    for col in metric_cols:
+        cursor.execute(sql.SQL(
+            "ALTER TABLE {schema}.stats ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION"
+        ).format(
+            schema=sql.Identifier("simulator"),
+            col=sql.Identifier(col)
+        ))
+    conn.commit()
+
+    all_cols = ["exchange", "symbol", "strategy_name", "total_trades"] + metric_cols
     values = (
         exchange,
         symbol,
@@ -894,28 +953,28 @@ def save_simulator_stats(conn, exchange, symbol, strategy_name, stats_dict):
         *[stats_dict.get(m) for m in metric_cols],
     )
 
+    insert_cols = sql.SQL(", ").join(sql.Identifier(c) for c in all_cols) + sql.SQL(", updated_at")
+    placeholders = sql.SQL(", ").join(sql.Placeholder() for _ in all_cols) + sql.SQL(", NOW()")
+    update_set = sql.SQL(", ").join(
+        sql.SQL("{col} = EXCLUDED.{col}").format(col=sql.Identifier(c))
+        for c in (["total_trades"] + metric_cols)
+    ) + sql.SQL(", updated_at = NOW()")
+
     cursor.execute(sql.SQL("""
-        INSERT INTO {schema}.stats
-            (exchange, symbol, strategy_name, total_trades,
-             sharpe, sortino, calmar, max_drawdown, cagr,
-             profit_factor, win_rate, recovery_factor, risk_of_ruin, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+        INSERT INTO {schema}.stats ({insert_cols})
+        VALUES ({placeholders})
         ON CONFLICT (exchange, symbol, strategy_name) DO UPDATE SET
-            total_trades    = EXCLUDED.total_trades,
-            sharpe          = EXCLUDED.sharpe,
-            sortino         = EXCLUDED.sortino,
-            calmar          = EXCLUDED.calmar,
-            max_drawdown    = EXCLUDED.max_drawdown,
-            cagr            = EXCLUDED.cagr,
-            profit_factor   = EXCLUDED.profit_factor,
-            win_rate        = EXCLUDED.win_rate,
-            recovery_factor = EXCLUDED.recovery_factor,
-            risk_of_ruin    = EXCLUDED.risk_of_ruin,
-            updated_at      = NOW()
+            {update_set}
     """).format(
-        schema=sql.Identifier("simulator")
+        schema=sql.Identifier("simulator"),
+        insert_cols=insert_cols,
+        placeholders=placeholders,
+        update_set=update_set,
     ), values)
 
     conn.commit()
     cursor.close()
-    logger.info(f"Saved simulator stats: simulator.stats ({exchange}/{symbol}/{strategy_name})")
+    logger.info(
+        f"Saved simulator stats ({len(metric_cols)} metric column(s)): "
+        f"simulator.stats ({exchange}/{symbol}/{strategy_name})"
+    )
