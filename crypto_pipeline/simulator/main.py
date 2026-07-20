@@ -28,9 +28,10 @@ way run_pipeline.bat drives the data pipelines. Each run:
           regardless of time horizon -- see simulator.py's step_candle().
        e. Saves state back to the DB, appends any newly-closed trades to
           the running Trade Ledger table (its own Position Table + Trade
-          Ledger per strategy, per exchange, per symbol), and writes a CSV
-          of the full ledger for convenience (CSV is for humans to look at
-          only -- modules keep passing DataFrames to each other).
+          Ledger per strategy, per exchange, per symbol). The DB is the
+          only source of truth -- no CSV is written; query
+          simulator.{exchange}_{symbol}_{strategy}_trades directly to
+          inspect a strategy's ledger.
 
 Execution settings (initial_balance, position_size, commission, slippage,
 allow_long, allow_short, take_profit, stop_loss, max_open_positions) come
@@ -66,7 +67,6 @@ from crypto_pipeline.utils.db_utils import (
 # crypto_pipeline/ -- then straight into signals/strategies/ (flat layout:
 # crypto_pipeline/signals/ and crypto_pipeline/simulator/ are siblings).
 STRATEGIES_DIR = Path(__file__).parent.parent / "signals" / "strategies"
-OUTPUT_DIR = Path(__file__).parent / "output"
 
 
 def load_strategies(strategies_dir=None):
@@ -266,9 +266,6 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
     finally:
         conn.close()
 
-    if closed_trades:
-        write_csv(exchange, symbol, strategy_name, trade_ledger)
-
     print(
         f"{exchange} {symbol} ({strategy_name}, {time_horizon}): processed {len(ohlcv_1m)} candle(s), "
         f"{len(closed_trades)} trade(s) closed, balance {balance:.2f}, "
@@ -295,20 +292,6 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
         )
 
     return len(ohlcv_1m)
-
-
-def write_csv(exchange, symbol, strategy_name, new_trades):
-    """
-    Append newly-closed trades to this strategy's CSV. CSV is for human
-    viewing only -- the DB (simulator.*_trades table) is the source of
-    truth passed between modules.
-    """
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    safe_strategy_name = "".join(c if c.isalnum() else "_" for c in strategy_name)
-    csv_path = OUTPUT_DIR / f"{exchange}_{symbol}_{safe_strategy_name}_trades.csv"
-
-    write_header = not csv_path.exists()
-    new_trades.to_csv(csv_path, mode="a", header=write_header, index=False)
 
 
 if __name__ == "__main__":
