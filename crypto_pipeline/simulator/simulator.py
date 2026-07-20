@@ -160,10 +160,16 @@ def _close_position(position, exit_price, exit_time, exit_reason, balance, confi
     # break save_simulator_state()'s raw INSERT, which -- unlike the COPY
     # path insert_signals/insert_trades/append_simulator_trades use --
     # cannot adapt numpy scalar types.
+    #
+    # Trade Ledger column names: entry_date_time/exit_date_time (not
+    # entry_time/exit_time) and balance (not balance_after_trade) -- see
+    # db_utils.py's append_simulator_trades/get_simulator_summary/
+    # build_equity_curve_from_ledger, which read these exact column names
+    # back out of the DB.
     trade = {
         "direction": position["direction"],
-        "entry_time": position["entry_time"],
-        "exit_time": exit_time,
+        "entry_date_time": position["entry_time"],
+        "exit_date_time": exit_time,
         "entry_price": float(entry_price),
         "exit_price": float(exit_price),
         "quantity": float(quantity),
@@ -172,7 +178,7 @@ def _close_position(position, exit_price, exit_time, exit_reason, balance, confi
         "slippage": float(total_slippage),
         "net_pnl": float(net_pnl),
         "exit_reason": exit_reason,
-        "balance_after_trade": new_balance,
+        "balance": new_balance,
     }
     return trade, new_balance
 

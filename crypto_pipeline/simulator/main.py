@@ -286,11 +286,11 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
             #
             # Same column backtest.py's ledger has: running P&L since this
             # strategy's very first trade (not just this run's batch), so
-            # it's correct across resumed runs too. balance_after_trade
+            # it's correct across resumed runs too. balance
             # already reflects every trade ever closed for this
             # (exchange, symbol, strategy), so this is just that minus
             # where the account started -- no extra running state needed.
-            closed_trade["cumulative_pnl"] = closed_trade["balance_after_trade"] - config["initial_balance"]
+            closed_trade["cumulative_pnl"] = closed_trade["balance"] - config["initial_balance"]
             closed_trades.append(closed_trade)
 
         last_candle_time = candle["datetime"]
