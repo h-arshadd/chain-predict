@@ -440,7 +440,10 @@ def save_simulator_state(conn, exchange, symbol, strategy_name, last_processed, 
     """
     Overwrite the simulator's saved state for this exchange+symbol+strategy.
     Called at the end of every run so the next scheduled run resumes from
-    here. position=None is stored as all-NULL (flat) -- including status.
+    here. position=None is stored with status="closed" and every other
+    position field (direction, entry_time, entry_price, quantity,
+    take_profit, stop_loss) left NULL -- there is no trade to describe, so
+    only status gets an explicit value.
 
     Schema: simulator.{exchange}_{symbol}_{strategy_name}_state
 
@@ -489,7 +492,7 @@ def save_simulator_state(conn, exchange, symbol, strategy_name, last_processed, 
         position.get("quantity"),
         position.get("take_profit"),
         position.get("stop_loss"),
-        position.get("status") if position else None,
+        position.get("status") if position else "closed",
     )
 
     cursor.execute(sql.SQL("""
