@@ -558,9 +558,24 @@ def get_simulator_summary(conn, exchange, symbol, strategy_name):
     safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
     trades_table = f"{exchange}_{symbol}_{safe_strategy_name}_trades"
 
-    cursor.execute(sql.SQL(
-        "SELECT to_regclass(%s)"
-    ), (f"simulator.{trades_table}",))
+    # to_regclass() takes a plain string that Postgres parses like any
+    # other identifier reference: unquoted, it folds to lowercase before
+    # the catalog lookup. But the table was created via sql.Identifier(),
+    # which always emits a double-quoted, case-preserved identifier (e.g.
+    # CREATE TABLE simulator."binance_btc_RSI_14_reversal_trades"). Any
+    # strategy_name with uppercase letters (RSI_14_reversal,
+    # SMA_20_price_cross, ...) then has a table to_regclass can never
+    # find -- table_exists comes back False even though the table exists
+    # and is full of rows, so the summary silently falls into the
+    # "never run" branch and reports 0 trades / 0 PnL forever.
+    #
+    # Fix: render the qualified name through sql.Identifier + as_string()
+    # the same way CREATE TABLE did, so the quoting matches and
+    # to_regclass looks up the exact case-preserved name.
+    qualified_name = sql.SQL(".").join(
+        [sql.Identifier("simulator"), sql.Identifier(trades_table)]
+    ).as_string(conn)
+    cursor.execute(sql.SQL("SELECT to_regclass(%s)"), (qualified_name,))
     table_exists = cursor.fetchone()[0] is not None
 
     if not table_exists:

@@ -8,6 +8,17 @@ containing one boolean column for each condition.
 import pandas as pd
 import numpy as np
 
+# pandas' own fix for the "Downcasting object dtype arrays on .fillna,
+# .ffill, .bfill is deprecated" FutureWarning: opt in to the future
+# behavior (fillna no longer silently downcasts object dtype) rather than
+# trying to call .infer_objects() after the fact -- the warning fires
+# inside .fillna() itself, so nothing chained after it can suppress it.
+# Safe to set unconditionally: every .fillna(False) in this file is
+# immediately followed by .astype(bool) anyway, so we always wanted the
+# downcast to happen -- this just stops pandas from warning about doing
+# the thing we already explicitly ask for two lines later.
+pd.set_option("future.no_silent_downcasting", True)
+
 
 # ==========================================================
 # Cross Operators
