@@ -298,7 +298,7 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
     conn = get_db_connection()
     try:
         cumulative_pnl = balance - config["initial_balance"]
-        save_simulator_state(conn, exchange, symbol, strategy_name, last_candle_time, balance, position, cumulative_pnl)
+        save_simulator_state(conn, exchange, symbol, strategy_name, time_horizon, last_candle_time, balance, position, cumulative_pnl)
         trade_ledger = pd.DataFrame(closed_trades)
         append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
     finally:
@@ -360,7 +360,7 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
 
             conn = get_db_connection()
             try:
-                save_simulator_stats(conn, exchange, symbol, strategy_name, stats_row)
+                save_simulator_stats(conn, exchange, symbol, strategy_name, time_horizon, stats_row)
             finally:
                 conn.close()
 
