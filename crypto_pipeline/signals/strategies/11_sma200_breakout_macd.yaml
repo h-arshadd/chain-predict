@@ -1,0 +1,55 @@
+# ============================================================================
+# STRATEGY 11: SMA 200 Breakout + MACD Histogram Confirmation
+# ============================================================================
+
+strategy_name: "sma200_breakout_macd_confirm"
+
+time_horizon: "4h"
+
+SMA:
+  - inputs:
+      - close
+    parameters:
+      timeperiod: 200
+    aliases:
+      sma: ind_sma_200
+
+MACD:
+  - inputs:
+      - close
+    parameters:
+      fast: 12
+      slow: 26
+      signal: 9
+    aliases:
+      macd: ind_MACD_12_26_9
+      signal: ind_MACD_SIGNAL_12_26_9
+      histogram: ind_MACD_HIST_12_26_9
+
+strategy:
+
+  long:
+    rule: AND
+    conditions:
+      - left: close
+        operator: cross_above
+        right: ind_sma_200
+        persist_bars: 0
+
+      - left: ind_MACD_HIST_12_26_9
+        operator: ">"
+        right: 0
+        persist_bars: 0
+
+  short:
+    rule: AND
+    conditions:
+      - left: close
+        operator: cross_below
+        right: ind_sma_200
+        persist_bars: 0
+
+      - left: ind_MACD_HIST_12_26_9
+        operator: "<"
+        right: 0
+        persist_bars: 0

@@ -1,0 +1,33 @@
+# ============================================================================
+# STRATEGY 10: RSI 21 Swing (wider bands, longer horizon)
+# ============================================================================
+
+strategy_name: "rsi_21_swing"
+
+time_horizon: "6h"
+
+RSI:
+  - inputs:
+      - close
+    parameters:
+      period: 21
+    aliases:
+      rsi: ind_RSI_21
+
+strategy:
+
+  long:
+    rule: AND
+    conditions:
+      - left: ind_RSI_21
+        operator: "<"
+        right: 35
+        persist_bars: 2
+
+  short:
+    rule: AND
+    conditions:
+      - left: ind_RSI_21
+        operator: ">"
+        right: 65
+        persist_bars: 2

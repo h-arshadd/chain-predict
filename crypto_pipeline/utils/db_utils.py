@@ -332,3 +332,183 @@ def insert_trades(conn, exchange, symbol, trade_ledger):
         return
 
     _copy_dataframe(conn, trade_ledger, "backtest", table_name)
+
+# ============================================================
+# The functions below are new additions for the Simulator Module.
+# Append them to the end of the existing crypto_pipeline/utils/db_utils.py
+# (they use the same helpers -- sql, _pg_type_for, _copy_dataframe -- 
+# already defined earlier in that file).
+# ============================================================
+
+
+def get_simulator_state(conn, exchange, symbol, strategy_name):
+    """
+    Return the simulator's saved state for this exchange+symbol+strategy,
+    or None if it has never run before.
+
+    Schema: simulator.{exchange}_{symbol}_{strategy_name}_state
+    Single-row table: last processed candle timestamp, running balance,
+    and the open position's fields (all NULL if flat).
+
+    Returns a dict with keys: last_processed, balance, position (dict or
+    None). position dict has: direction, entry_time, entry_price,
+    quantity, take_profit, stop_loss.
+    """
+    cursor = conn.cursor()
+    safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
+    table_name = f"{exchange}_{symbol}_{safe_strategy_name}_state"
+
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS simulator"))
+
+    cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {schema}.{table} (
+            last_processed  TIMESTAMP,
+            balance         DOUBLE PRECISION NOT NULL,
+            direction       TEXT,
+            entry_time      TIMESTAMP,
+            entry_price     DOUBLE PRECISION,
+            quantity        DOUBLE PRECISION,
+            take_profit     DOUBLE PRECISION,
+            stop_loss       DOUBLE PRECISION
+        )
+    """).format(
+        schema=sql.Identifier("simulator"),
+        table=sql.Identifier(table_name)
+    ))
+    conn.commit()
+
+    cursor.execute(sql.SQL("SELECT * FROM {schema}.{table} LIMIT 1").format(
+        schema=sql.Identifier("simulator"),
+        table=sql.Identifier(table_name)
+    ))
+    row = cursor.fetchone()
+    cursor.close()
+
+    if row is None:
+        return None
+
+    columns = ["last_processed", "balance", "direction", "entry_time",
+               "entry_price", "quantity", "take_profit", "stop_loss"]
+    values = dict(zip(columns, row))
+
+    position = None
+    if values["direction"] is not None:
+        position = {
+            "direction": values["direction"],
+            "entry_time": values["entry_time"],
+            "entry_price": values["entry_price"],
+            "quantity": values["quantity"],
+            "take_profit": values["take_profit"],
+            "stop_loss": values["stop_loss"],
+        }
+
+    return {
+        "last_processed": values["last_processed"],
+        "balance": values["balance"],
+        "position": position,
+    }
+
+
+def save_simulator_state(conn, exchange, symbol, strategy_name, last_processed, balance, position):
+    """
+    Overwrite the simulator's saved state for this exchange+symbol+strategy.
+    Called at the end of every run so the next scheduled run resumes from
+    here. position=None is stored as all-NULL (flat).
+
+    Schema: simulator.{exchange}_{symbol}_{strategy_name}_state
+    """
+    cursor = conn.cursor()
+    safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
+    table_name = f"{exchange}_{symbol}_{safe_strategy_name}_state"
+
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS simulator"))
+
+    cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {schema}.{table} (
+            last_processed  TIMESTAMP,
+            balance         DOUBLE PRECISION NOT NULL,
+            direction       TEXT,
+            entry_time      TIMESTAMP,
+            entry_price     DOUBLE PRECISION,
+            quantity        DOUBLE PRECISION,
+            take_profit     DOUBLE PRECISION,
+            stop_loss       DOUBLE PRECISION
+        )
+    """).format(
+        schema=sql.Identifier("simulator"),
+        table=sql.Identifier(table_name)
+    ))
+
+    cursor.execute(sql.SQL("DELETE FROM {schema}.{table}").format(
+        schema=sql.Identifier("simulator"),
+        table=sql.Identifier(table_name)
+    ))
+
+    position = position or {}
+    cursor.execute(sql.SQL("""
+        INSERT INTO {schema}.{table}
+            (last_processed, balance, direction, entry_time, entry_price, quantity, take_profit, stop_loss)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+    """).format(
+        schema=sql.Identifier("simulator"),
+        table=sql.Identifier(table_name)
+    ), (
+        last_processed,
+        balance,
+        position.get("direction"),
+        position.get("entry_time"),
+        position.get("entry_price"),
+        position.get("quantity"),
+        position.get("take_profit"),
+        position.get("stop_loss"),
+    ))
+
+    conn.commit()
+    cursor.close()
+    logger.info(f"Saved simulator state: simulator.{table_name}")
+
+
+def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger):
+    """
+    Append newly-closed trades to the simulator's running Trade Ledger.
+    Unlike insert_trades() (backtest -- full rebuild every run), this is a
+    live, ever-growing ledger across scheduler runs, so rows are appended,
+    never dropped or replaced. The table is only created (not recreated) if
+    missing, so it survives across runs.
+
+    Schema: simulator.{exchange}_{symbol}_{strategy_name}_trades
+
+    trade_ledger : DataFrame of newly-closed trades from this run only
+    (same columns as one closed_trade dict from simulator.py: direction,
+    entry_time, exit_time, entry_price, exit_price, quantity, gross_pnl,
+    commission, slippage, net_pnl, exit_reason, balance_after_trade).
+    Does nothing if trade_ledger is empty.
+    """
+    if trade_ledger.empty:
+        return
+
+    cursor = conn.cursor()
+    safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
+    table_name = f"{exchange}_{symbol}_{safe_strategy_name}_trades"
+
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS simulator"))
+
+    column_defs = sql.SQL(", ").join(
+        sql.SQL("{col} {pg_type}").format(
+            col=sql.Identifier(col),
+            pg_type=sql.SQL(_pg_type_for(trade_ledger[col]))
+        )
+        for col in trade_ledger.columns
+    )
+
+    cursor.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {schema}.{table} ({column_defs})").format(
+        schema=sql.Identifier("simulator"),
+        table=sql.Identifier(table_name),
+        column_defs=column_defs
+    ))
+
+    conn.commit()
+    cursor.close()
+
+    _copy_dataframe(conn, trade_ledger, "simulator", table_name)
+    logger.info(f"Appended {len(trade_ledger)} trade(s) to simulator.{table_name}")

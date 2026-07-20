@@ -1,0 +1,37 @@
+# ============================================================================
+# STRATEGY 01: RSI 14 Reversal
+# Long when RSI < 30 (oversold), Short when RSI > 70 (overbought).
+# ============================================================================
+
+strategy_name: "RSI_14_reversal"
+
+# Resampled-timeframe candle this strategy's signals are generated on.
+# Used by simulator/main.py to gate new entries -- a new signal only takes
+# effect on the first 1-minute candle at/after this timeframe's candle closes.
+time_horizon: "2h"
+
+RSI:
+  - inputs:
+      - close
+    parameters:
+      period: 14
+    aliases:
+      rsi: ind_RSI_14
+
+strategy:
+
+  long:
+    rule: AND
+    conditions:
+      - left: ind_RSI_14
+        operator: "<"
+        right: 30
+        persist_bars: 0
+
+  short:
+    rule: AND
+    conditions:
+      - left: ind_RSI_14
+        operator: ">"
+        right: 70
+        persist_bars: 0

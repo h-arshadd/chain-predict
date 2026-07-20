@@ -1,0 +1,58 @@
+# ============================================================================
+# STRATEGY 03: Golden Cross (SMA 50 vs SMA 200) with RSI filter
+# ============================================================================
+
+strategy_name: "golden_cross_sma50_200"
+
+time_horizon: "4h"
+
+SMA:
+  - inputs:
+      - close
+    parameters:
+      timeperiod: 50
+    aliases:
+      sma: ind_sma_50
+
+  - inputs:
+      - close
+    parameters:
+      timeperiod: 200
+    aliases:
+      sma: ind_sma_200
+
+RSI:
+  - inputs:
+      - close
+    parameters:
+      period: 14
+    aliases:
+      rsi: ind_RSI_14
+
+strategy:
+
+  long:
+    rule: AND
+    conditions:
+      - left: ind_sma_50
+        operator: cross_above
+        right: ind_sma_200
+        persist_bars: 0
+
+      - left: ind_RSI_14
+        operator: "<"
+        right: 70
+        persist_bars: 0
+
+  short:
+    rule: AND
+    conditions:
+      - left: ind_sma_50
+        operator: cross_below
+        right: ind_sma_200
+        persist_bars: 0
+
+      - left: ind_RSI_14
+        operator: ">"
+        right: 30
+        persist_bars: 0

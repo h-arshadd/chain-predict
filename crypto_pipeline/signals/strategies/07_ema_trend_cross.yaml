@@ -1,0 +1,40 @@
+# ============================================================================
+# STRATEGY 07: EMA 20/50 Trend Cross
+# ============================================================================
+
+strategy_name: "ema_20_50_trend_cross"
+
+time_horizon: "1h"
+
+EMA:
+  - inputs:
+      - close
+    parameters:
+      period: 20
+    aliases:
+      ema: ind_EMA_20
+
+  - inputs:
+      - close
+    parameters:
+      period: 50
+    aliases:
+      ema: ind_EMA_50
+
+strategy:
+
+  long:
+    rule: AND
+    conditions:
+      - left: ind_EMA_20
+        operator: cross_above
+        right: ind_EMA_50
+        persist_bars: 0
+
+  short:
+    rule: AND
+    conditions:
+      - left: ind_EMA_20
+        operator: cross_below
+        right: ind_EMA_50
+        persist_bars: 0

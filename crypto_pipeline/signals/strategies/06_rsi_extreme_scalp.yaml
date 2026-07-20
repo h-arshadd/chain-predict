@@ -1,0 +1,33 @@
+# ============================================================================
+# STRATEGY 06: RSI Extreme Scalp (20/80 bands, short time horizon)
+# ============================================================================
+
+strategy_name: "rsi_extreme_scalp"
+
+time_horizon: "15min"
+
+RSI:
+  - inputs:
+      - close
+    parameters:
+      period: 7
+    aliases:
+      rsi: ind_RSI_7
+
+strategy:
+
+  long:
+    rule: AND
+    conditions:
+      - left: ind_RSI_7
+        operator: "<"
+        right: 20
+        persist_bars: 0
+
+  short:
+    rule: AND
+    conditions:
+      - left: ind_RSI_7
+        operator: ">"
+        right: 80
+        persist_bars: 0

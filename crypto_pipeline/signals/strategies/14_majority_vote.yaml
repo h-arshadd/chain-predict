@@ -1,0 +1,73 @@
+# ============================================================================
+# STRATEGY 14: Majority Vote (2 of 3 conditions must agree)
+# ============================================================================
+
+strategy_name: "majority_vote_3cond"
+
+time_horizon: "1h"
+
+SMA:
+  - inputs:
+      - close
+    parameters:
+      timeperiod: 20
+    aliases:
+      sma: ind_sma_20
+
+RSI:
+  - inputs:
+      - close
+    parameters:
+      period: 14
+    aliases:
+      rsi: ind_RSI_14
+
+MACD:
+  - inputs:
+      - close
+    parameters:
+      fast: 12
+      slow: 26
+      signal: 9
+    aliases:
+      macd: ind_MACD_12_26_9
+      signal: ind_MACD_SIGNAL_12_26_9
+      histogram: ind_MACD_HIST_12_26_9
+
+strategy:
+
+  long:
+    rule: MAJORITY
+    conditions:
+      - left: close
+        operator: ">"
+        right: ind_sma_20
+        persist_bars: 0
+
+      - left: ind_RSI_14
+        operator: "<"
+        right: 45
+        persist_bars: 0
+
+      - left: ind_MACD_12_26_9
+        operator: ">"
+        right: ind_MACD_SIGNAL_12_26_9
+        persist_bars: 0
+
+  short:
+    rule: MAJORITY
+    conditions:
+      - left: close
+        operator: "<"
+        right: ind_sma_20
+        persist_bars: 0
+
+      - left: ind_RSI_14
+        operator: ">"
+        right: 55
+        persist_bars: 0
+
+      - left: ind_MACD_12_26_9
+        operator: "<"
+        right: ind_MACD_SIGNAL_12_26_9
+        persist_bars: 0
