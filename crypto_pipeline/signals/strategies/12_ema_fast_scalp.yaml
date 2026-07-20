@@ -6,6 +6,16 @@ strategy_name: "ema_9_21_fast_scalp"
 
 time_horizon: "15min"
 
+# TP/SL for this strategy (required -- every strategy sets its own,
+# no shared default across strategies).
+take_profit:
+  type: percentage
+  value: 2.0
+
+stop_loss:
+  type: percentage
+  value: 1.0
+
 EMA:
   - inputs:
       - close

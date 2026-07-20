@@ -10,6 +10,16 @@ strategy_name: "RSI_14_reversal"
 # effect on the first 1-minute candle at/after this timeframe's candle closes.
 time_horizon: "2h"
 
+# TP/SL for this strategy (required -- every strategy sets its own,
+# no shared default across strategies).
+take_profit:
+  type: percentage
+  value: 2.0
+
+stop_loss:
+  type: percentage
+  value: 1.0
+
 RSI:
   - inputs:
       - close

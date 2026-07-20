@@ -58,13 +58,9 @@ allow_short: true
 # ------------------------------------------------------------
 # Risk Management
 # ------------------------------------------------------------
-take_profit:
-  type: percentage
-  value: 2.0
-
-stop_loss:
-  type: percentage
-  value: 1.0
+# take_profit/stop_loss are NOT set here anymore -- every strategy sets
+# its own take_profit/stop_loss in its own YAML under signals/strategies/
+# (required key, see main.py's load_strategies()).
 
 # ------------------------------------------------------------
 # Portfolio
