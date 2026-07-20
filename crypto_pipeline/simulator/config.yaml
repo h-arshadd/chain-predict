@@ -2,6 +2,33 @@
 # Simulator Configuration
 # ============================================================
 
+# ------------------------------------------------------------
+# Universe
+# ------------------------------------------------------------
+# Exchanges and symbols (coins) the simulator runs every strategy against.
+# Every (exchange, symbol, strategy) combination gets its own Position
+# Table + Trade Ledger, so add/remove a coin or exchange just by editing
+# these two lists -- nothing in main.py needs to change.
+exchanges:
+  - binance
+  - bybit
+
+symbols:
+  - btc
+
+
+# ------------------------------------------------------------
+# Data Range
+# ------------------------------------------------------------
+
+# Only used on the very first run of a given (exchange, symbol, strategy) --
+# once a run has happened, saved state (last_processed, in
+# simulator.{exchange}_{symbol}_{strategy}_state) takes over and this is
+# ignored. Set to the earliest date your DB actually has data for (no point
+# asking further back than that). end_date is always "now" internally --
+# simulator is live/ongoing, not a fixed window like backtest.
+start_date: "2026-07-01"
+
 # Starting account balance
 initial_balance: 10000
 

@@ -39,8 +39,14 @@ file has no strategy-specific fields (see Simulator Module spec: execution
 settings must stay separate from strategy rules). Each strategy's own
 indicators/conditions/rule and time_horizon live only in its own file
 under signals/strategies/.
+
+The universe (which exchanges and coins/symbols to run every strategy on)
+also lives in simulator/config.yaml, under "exchanges" and "symbols" --
+add or remove a coin there and it's automatically picked up for every
+strategy, no code changes needed.
 """
 
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -53,9 +59,13 @@ from crypto_pipeline.utils.db_utils import (
     get_simulator_state,
     save_simulator_state,
     append_simulator_trades,
+    get_simulator_summary,
 )
 
-STRATEGIES_DIR = Path(__file__).parent.parent.parent / "signals" / "signals" / "strategies"
+# Path is crypto_pipeline/simulator/main.py -> parent.parent gets to
+# crypto_pipeline/ -- then straight into signals/strategies/ (flat layout:
+# crypto_pipeline/signals/ and crypto_pipeline/simulator/ are siblings).
+STRATEGIES_DIR = Path(__file__).parent.parent / "signals" / "strategies"
 OUTPUT_DIR = Path(__file__).parent / "output"
 
 
@@ -91,6 +101,27 @@ def load_strategies(strategies_dir=None):
     return strategies
 
 
+def parse_simulator_start_date(config: dict):
+    """
+    Parse config["start_date"] (simulator/config.yaml) into a datetime.
+    Only used as the fallback data-pull start for a (exchange, symbol,
+    strategy) combo that has never run before -- once state exists,
+    last_processed from the DB always wins instead (see run_simulator()).
+
+    Same date formats as backtest's parse_backtest_dates, minus the "now"
+    special case since start_date is never "now" here (this is the start,
+    not the end -- end_date is always "now" for a live/paper simulator,
+    handled directly in run_simulator()).
+    """
+    value = config["start_date"]
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    raise ValueError(f"Unrecognized date format for start_date: {value!r}")
+
+
 def build_resampled_signals(resampled_df, config_path):
     """
     Run the signal pipeline on resampled OHLCV for ONE strategy (identified
@@ -106,7 +137,7 @@ def build_resampled_signals(resampled_df, config_path):
     return combined[["datetime", "signal"]]
 
 
-def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strategy_config_path):
+def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strategy_config_path, default_start_date):
     """
     Advance one exchange+symbol+strategy simulation by however many new
     1-minute candles are available. Returns the number of candles processed.
@@ -117,6 +148,10 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
     effect on the 1-minute candle where a new time_horizon candle closes).
     It does NOT change how often TP/SL is checked -- that's every 1-minute
     candle inside step_candle(), independent of time horizon.
+
+    default_start_date : datetime -- config["start_date"] from
+    simulator/config.yaml, parsed. Only used if this is the very first run
+    for this (exchange, symbol, strategy) combo (no saved state yet).
     """
     conn = get_db_connection()
     try:
@@ -134,10 +169,11 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
         last_processed = state["last_processed"]
 
     # Pull live 1m data (+ resampled, for signals) starting right after
-    # whatever we've already processed. First run ever: no start date to
-    # resume from, so start_date=None isn't valid for get_data -- fall back
-    # to "as far back as the DB has" by passing the earliest possible date.
-    start_date = last_processed if last_processed is not None else pd.Timestamp("2020-01-01")
+    # whatever we've already processed. First run ever for this
+    # (exchange, symbol, strategy): no last_processed to resume from, so
+    # fall back to config["start_date"] (simulator/config.yaml) instead --
+    # set that to wherever your DB's data actually begins.
+    start_date = last_processed if last_processed is not None else default_start_date
 
     result = get_data(
         exchange=exchange,
@@ -188,7 +224,22 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
     last_candle_time = last_processed
 
     for i in range(len(ohlcv_1m)):
-        candle = ohlcv_1m.iloc[i]
+        # .iloc[i] on a DataFrame returns numpy scalar types (numpy.float64,
+        # pandas.Timestamp, etc.) inside the Series -- psycopg2 can adapt
+        # native Python types but not numpy ones, and that numpy-ness would
+        # otherwise silently ride along through step_candle() into
+        # balance/position and break save_simulator_state()'s INSERT
+        # ("schema np does not exist" -- psycopg2 rendering np.float64(...)
+        # literally instead of binding it as a parameter). Cast to plain
+        # Python types once, right here, so nothing downstream ever sees a
+        # numpy scalar.
+        candle = {
+            "datetime": ohlcv_1m["datetime"].iloc[i].to_pydatetime(),
+            "open": float(ohlcv_1m["open"].iloc[i]),
+            "high": float(ohlcv_1m["high"].iloc[i]),
+            "low": float(ohlcv_1m["low"].iloc[i]),
+            "close": float(ohlcv_1m["close"].iloc[i]),
+        }
         signal = int(aligned["signal"].iloc[i])
 
         position, balance, closed_trade = step_candle(candle, signal, position, balance, config)
@@ -196,6 +247,13 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
         if closed_trade is not None:
             closed_trade["exchange"] = exchange
             closed_trade["symbol"] = symbol
+            # Same column backtest.py's ledger has: running P&L since this
+            # strategy's very first trade (not just this run's batch), so
+            # it's correct across resumed runs too. balance_after_trade
+            # already reflects every trade ever closed for this
+            # (exchange, symbol, strategy), so this is just that minus
+            # where the account started -- no extra running state needed.
+            closed_trade["cumulative_pnl"] = closed_trade["balance_after_trade"] - config["initial_balance"]
             closed_trades.append(closed_trade)
 
         last_candle_time = candle["datetime"]
@@ -217,6 +275,25 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
         f"position {'open (' + position['direction'] + ')' if position else 'flat'}"
     )
 
+    # Spec output: Trade Ledger (already in DB), Final Account Balance
+    # (already in DB via state), Total Profit/Loss, Total Number of Trades,
+    # Win/Loss Summary -- rolled up here from the DB so it reflects the
+    # strategy's full history, not just this run's candles.
+    conn = get_db_connection()
+    try:
+        summary = get_simulator_summary(conn, exchange, symbol, strategy_name)
+    finally:
+        conn.close()
+
+    if summary is not None:
+        wl = summary["win_loss"]
+        print(
+            f"    summary: {summary['total_trades']} total trade(s), "
+            f"net PnL {summary['total_net_profit']:.2f}, "
+            f"wins {wl['wins']} / losses {wl['losses']} "
+            f"(win rate {wl['win_rate']:.1%})"
+        )
+
     return len(ohlcv_1m)
 
 
@@ -236,7 +313,8 @@ def write_csv(exchange, symbol, strategy_name, new_trades):
 
 if __name__ == "__main__":
 
-    config = load_config()  # simulator/config.yaml -- execution settings only, shared by all strategies
+    config = load_config()  # simulator/config.yaml -- execution settings + universe (exchanges/symbols), shared by all strategies
+    default_start_date = parse_simulator_start_date(config)
 
     strategies = load_strategies()
     if not strategies:
@@ -244,8 +322,11 @@ if __name__ == "__main__":
 
     print(f"Loaded {len(strategies)} strategies: {[s['strategy_name'] for s in strategies]}")
 
-    exchanges = ["binance", "bybit"]
-    symbols = ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
+    # Universe (which exchanges/coins to run every strategy on) comes from
+    # simulator/config.yaml -- edit the "exchanges"/"symbols" lists there to
+    # add or remove a coin, nothing here needs to change.
+    exchanges = config["exchanges"]
+    symbols = config["symbols"]
 
     # One live Position Table + Trade Ledger per (exchange, symbol, strategy)
     # -- see get_simulator_state/save_simulator_state/append_simulator_trades
@@ -257,4 +338,4 @@ if __name__ == "__main__":
 
         for exchange in exchanges:
             for symbol in symbols:
-                run_simulator(exchange, symbol, config, strategy_name, time_horizon, strategy_config_path)
+                run_simulator(exchange, symbol, config, strategy_name, time_horizon, strategy_config_path, default_start_date)
