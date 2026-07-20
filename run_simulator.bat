@@ -4,8 +4,10 @@ REM run_simulator.bat
 REM Runs the Simulator Module. Meant to be triggered repeatedly by
 REM Windows Task Scheduler (e.g. every 1-5 minutes), same as
 REM run_pipeline.bat. Each run picks up wherever it left off (saved
-REM state in simulator.*_state tables) and processes whatever new
-REM 1-minute candles have arrived since then.
+REM state in simulator.positions) and processes whatever new
+REM 1-minute candles have arrived since then -- appending new rows to
+REM each strategy's *_trades ledger table and refreshing its row in
+REM simulator.stats, never rebuilding anything from scratch.
 REM ============================================================
 
 REM --- REQUIRE ENVIRONMENT VARIABLES TO BE SET ---

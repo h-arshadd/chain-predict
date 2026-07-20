@@ -567,8 +567,19 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
     commission, slippage, net_pnl, exit_reason, balance_after_trade).
     Does nothing if trade_ledger is empty.
 
-    entry_time is this table's PRIMARY KEY -- it's the PDF's "Trade ID"
-    column: a strategy can only ever have one open position at a time
+    No exchange/symbol columns -- the table itself is already named per
+    exchange+symbol+strategy, so repeating them in every row would be
+    redundant.
+
+    trade_id : plain incrementing 1, 2, 3... column, added here (not by
+    the caller) so it can continue counting across every past run's
+    trades already in the table, not just this run's batch. It's a
+    convenience label only -- NOT the primary key, and NOT unique-
+    constrained, so nothing downstream should rely on it for identity.
+
+    entry_time is still this table's real PRIMARY KEY -- it's the PDF's
+    "Trade ID" column in the sense that matters (guaranteed unique): a
+    strategy can only ever have one open position at a time
     (max_open_positions=1, enforced in simulator.py's step_candle), so
     entry_time is already a unique identifier for a trade within this
     strategy's own table, and it's assigned the moment the position opens
@@ -588,6 +599,29 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
     table_name = f"{exchange}_{symbol}_{safe_strategy_name}_trades"
 
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS simulator"))
+
+    qualified_name = sql.SQL(".").join(
+        [sql.Identifier("simulator"), sql.Identifier(table_name)]
+    ).as_string(conn)
+    cursor.execute(sql.SQL("SELECT to_regclass(%s)"), (qualified_name,))
+    table_exists = cursor.fetchone()[0] is not None
+
+    # Continue trade_id from wherever the existing table left off, so
+    # numbering stays 1, 2, 3... across scheduler runs instead of
+    # restarting at 1 every time. 0 if the table doesn't exist yet (first
+    # run for this combo).
+    next_trade_id = 1
+    if table_exists:
+        cursor.execute(sql.SQL(
+            "SELECT COALESCE(MAX(trade_id), 0) FROM {schema}.{table}"
+        ).format(
+            schema=sql.Identifier("simulator"),
+            table=sql.Identifier(table_name)
+        ))
+        next_trade_id = cursor.fetchone()[0] + 1
+
+    trade_ledger = trade_ledger.copy()
+    trade_ledger.insert(0, "trade_id", range(next_trade_id, next_trade_id + len(trade_ledger)))
 
     column_defs = sql.SQL(", ").join(
         sql.SQL("{col} {pg_type}{pk}").format(

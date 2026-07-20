@@ -275,8 +275,15 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
         )
 
         if closed_trade is not None:
-            closed_trade["exchange"] = exchange
-            closed_trade["symbol"] = symbol
+            # exchange/symbol are NOT stored as columns -- the ledger
+            # table itself is already named per exchange+symbol+strategy
+            # (simulator.{exchange}_{symbol}_{strategy_name}_trades), so
+            # repeating them in every row would be redundant. trade_id
+            # (simple incrementing 1, 2, 3...) is added in
+            # append_simulator_trades instead of here, since it needs to
+            # continue counting across every past run's trades already in
+            # the table, not just this run's batch.
+            #
             # Same column backtest.py's ledger has: running P&L since this
             # strategy's very first trade (not just this run's batch), so
             # it's correct across resumed runs too. balance_after_trade
