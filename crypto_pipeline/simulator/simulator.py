@@ -51,6 +51,13 @@ def _tp_sl_prices(entry_price, direction, take_profit_pct, stop_loss_pct):
     return take_profit, stop_loss
 
 
+def _leaning(current_price, take_profit, stop_loss):
+    """Whether current_price sits closer to take_profit or stop_loss."""
+    if abs(take_profit - current_price) <= abs(current_price - stop_loss):
+        return "take_profit"
+    return "stop_loss"
+
+
 def _open_position(candle, direction, balance, config, take_profit_pct, stop_loss_pct):
     """
     Step 3: Open Position. Returns a new position dict.
@@ -88,6 +95,7 @@ def _open_position(candle, direction, balance, config, take_profit_pct, stop_los
         "stop_loss": float(stop_loss),
         "current_price": entry_price,
         "unrealized_pnl": 0.0,
+        "leaning": _leaning(entry_price, take_profit, stop_loss),
         "status": "open",
     }
 
@@ -223,6 +231,7 @@ def step_candle(candle, signal, position, balance, config, take_profit_pct, stop
             position["unrealized_pnl"] = (close_price - position["entry_price"]) * position["quantity"]
         else:
             position["unrealized_pnl"] = (position["entry_price"] - close_price) * position["quantity"]
+        position["leaning"] = _leaning(close_price, position["take_profit"], position["stop_loss"])
 
         # Step 5: TP / SL
         exit_price, exit_reason = _check_exit(position, candle)
