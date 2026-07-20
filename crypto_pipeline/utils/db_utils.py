@@ -438,6 +438,7 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
             quantity        DOUBLE PRECISION,
             take_profit     DOUBLE PRECISION,
             stop_loss       DOUBLE PRECISION,
+            leaning         TEXT,
             status          TEXT,
             UNIQUE (exchange, symbol, strategy_name)
         )
@@ -448,7 +449,7 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
 
     cursor.execute(sql.SQL(
         "SELECT last_processed, balance, cumulative_pnl, direction, entry_time, "
-        "entry_price, quantity, take_profit, stop_loss, status, time_horizon FROM {schema}.positions "
+        "entry_price, quantity, take_profit, stop_loss, leaning, status, time_horizon FROM {schema}.positions "
         "WHERE exchange = %s AND symbol = %s AND strategy_name = %s LIMIT 1"
     ).format(
         schema=sql.Identifier("simulator")
@@ -460,7 +461,7 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
         return None
 
     columns = ["last_processed", "balance", "cumulative_pnl", "direction", "entry_time",
-               "entry_price", "quantity", "take_profit", "stop_loss", "status", "time_horizon"]
+               "entry_price", "quantity", "take_profit", "stop_loss", "leaning", "status", "time_horizon"]
     values = dict(zip(columns, row))
 
     position = None
@@ -472,6 +473,7 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
             "quantity": values["quantity"],
             "take_profit": values["take_profit"],
             "stop_loss": values["stop_loss"],
+            "leaning": values["leaning"],
             "status": values["status"] or "open",
         }
 
@@ -523,6 +525,7 @@ def save_simulator_state(conn, exchange, symbol, strategy_name, time_horizon, la
             quantity        DOUBLE PRECISION,
             take_profit     DOUBLE PRECISION,
             stop_loss       DOUBLE PRECISION,
+            leaning         TEXT,
             status          TEXT,
             UNIQUE (exchange, symbol, strategy_name)
         )
@@ -567,14 +570,15 @@ def save_simulator_state(conn, exchange, symbol, strategy_name, time_horizon, la
         position.get("quantity"),
         position.get("take_profit"),
         position.get("stop_loss"),
+        position.get("leaning"),
         position.get("status") if position else "closed",
     )
 
     cursor.execute(sql.SQL("""
         INSERT INTO {schema}.positions
             (exchange, symbol, strategy_name, time_horizon, last_processed, balance, cumulative_pnl,
-             direction, entry_time, entry_price, quantity, take_profit, stop_loss, status)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             direction, entry_time, entry_price, quantity, take_profit, stop_loss, leaning, status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (exchange, symbol, strategy_name) DO UPDATE SET
             time_horizon   = EXCLUDED.time_horizon,
             last_processed = EXCLUDED.last_processed,
@@ -586,6 +590,7 @@ def save_simulator_state(conn, exchange, symbol, strategy_name, time_horizon, la
             quantity       = EXCLUDED.quantity,
             take_profit    = EXCLUDED.take_profit,
             stop_loss      = EXCLUDED.stop_loss,
+            leaning        = EXCLUDED.leaning,
             status         = EXCLUDED.status
     """).format(
         schema=sql.Identifier("simulator")
