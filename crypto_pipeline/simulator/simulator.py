@@ -38,10 +38,10 @@ def _position_size(balance, config, entry_price):
     return position_value / entry_price
 
 
-def _tp_sl_prices(entry_price, direction, config):
+def _tp_sl_prices(entry_price, direction, take_profit_pct, stop_loss_pct):
     """Take-profit / stop-loss price levels for a new position."""
-    tp_pct = config["take_profit"]["value"] / 100
-    sl_pct = config["stop_loss"]["value"] / 100
+    tp_pct = take_profit_pct / 100
+    sl_pct = stop_loss_pct / 100
     if direction == 1:  # long
         take_profit = entry_price * (1 + tp_pct)
         stop_loss = entry_price * (1 - sl_pct)
@@ -51,9 +51,13 @@ def _tp_sl_prices(entry_price, direction, config):
     return take_profit, stop_loss
 
 
-def _open_position(candle, direction, balance, config):
+def _open_position(candle, direction, balance, config, take_profit_pct, stop_loss_pct):
     """
     Step 3: Open Position. Returns a new position dict.
+
+    take_profit_pct / stop_loss_pct: this strategy's own TP/SL percentages
+    -- kept as separate params since every other execution setting is
+    shared across strategies (via config) but TP/SL is now per-strategy.
 
     No separate trade_id field: entry_time IS this trade's identity for as
     long as it's the only way to distinguish trades (see PDF's Position
@@ -66,7 +70,7 @@ def _open_position(candle, direction, balance, config):
     """
     entry_price = float(candle["open"])
     quantity = float(_position_size(balance, config, entry_price))
-    take_profit, stop_loss = _tp_sl_prices(entry_price, direction, config)
+    take_profit, stop_loss = _tp_sl_prices(entry_price, direction, take_profit_pct, stop_loss_pct)
 
     # float(...) on every numeric field here, not just entry_price: numpy
     # scalar arithmetic is "sticky" -- entry_price * anything stays
@@ -165,7 +169,7 @@ def _close_position(position, exit_price, exit_time, exit_reason, balance, confi
     return trade, new_balance
 
 
-def step_candle(candle, signal, position, balance, config):
+def step_candle(candle, signal, position, balance, config, take_profit_pct, stop_loss_pct):
     """
     Advance the simulation by exactly one candle (Steps 1-6 of the spec).
 
@@ -181,10 +185,15 @@ def step_candle(candle, signal, position, balance, config):
         exit, and used as the PRIMARY KEY on both the state and trade
         ledger tables in db_utils.py.
     balance : float -- current account balance.
-    config : dict -- simulator config. Execution settings (initial_balance,
-        position_size, commission, slippage) plus strategy rules
-        (allow_long, allow_short, take_profit, stop_loss,
-        max_open_positions), same as backtest/config.yaml.
+    config : dict -- simulator config. Execution settings shared across
+        every strategy (initial_balance, position_size, commission,
+        slippage, allow_long, allow_short, max_open_positions), same as
+        backtest/config.yaml.
+    take_profit_pct, stop_loss_pct : float -- THIS strategy's own TP/SL
+        percentages (see main.py: read from the strategy's own YAML,
+        falling back to config's take_profit/stop_loss if the strategy
+        doesn't specify its own). Only used when opening a new position;
+        an already-open position keeps whatever TP/SL it was opened with.
 
     Direction-change rule: if a position is open and a new signal arrives
     pointing the OPPOSITE way, the old position is closed immediately
@@ -254,6 +263,6 @@ def step_candle(candle, signal, position, balance, config):
             signal = 0
 
         if signal != 0:
-            position = _open_position(candle, signal, balance, config)
+            position = _open_position(candle, signal, balance, config, take_profit_pct, stop_loss_pct)
 
     return position, balance, closed_trade

@@ -34,12 +34,13 @@ way run_pipeline.bat drives the data pipelines. Each run:
           inspect a strategy's ledger.
 
 Execution settings (initial_balance, position_size, commission, slippage,
-allow_long, allow_short, take_profit, stop_loss, max_open_positions) come
-from simulator/config.yaml and are shared across every strategy -- that
-file has no strategy-specific fields (see Simulator Module spec: execution
-settings must stay separate from strategy rules). Each strategy's own
-indicators/conditions/rule and time_horizon live only in its own file
-under signals/strategies/.
+allow_long, allow_short, max_open_positions) come from simulator/config.yaml
+and are shared across every strategy. take_profit/stop_loss are PER-STRATEGY
+instead -- every strategy's own YAML under signals/strategies/ must set its
+own take_profit/stop_loss (see load_strategies(): it's a required key,
+same as strategy_name/time_horizon). Each strategy's own indicators/
+conditions/rule and time_horizon also live only in its own file under
+signals/strategies/.
 
 The universe (which exchanges and coins/symbols to run every strategy on)
 also lives in simulator/config.yaml, under "exchanges" and "symbols" --
@@ -73,9 +74,9 @@ def load_strategies(strategies_dir=None):
     """
     Load every *.yaml file under signals/strategies/ as one strategy config
     each. Returns a list of dicts, each the full parsed YAML (so it has
-    strategy_name, time_horizon, indicator blocks, and the strategy rules
-    all in one place) plus "_config_path" (str) so generate_signals() can
-    be pointed at that exact file.
+    strategy_name, time_horizon, take_profit, stop_loss, indicator blocks,
+    and the strategy rules all in one place) plus "_config_path" (str) so
+    generate_signals() can be pointed at that exact file.
 
     Add or remove a strategy by adding/removing a file here -- nothing else
     needs to change to pick it up.
@@ -94,6 +95,10 @@ def load_strategies(strategies_dir=None):
             raise ValueError(f"{path} is missing required key 'strategy_name'.")
         if "time_horizon" not in strategy_config:
             raise ValueError(f"{path} is missing required key 'time_horizon'.")
+        if "take_profit" not in strategy_config:
+            raise ValueError(f"{path} is missing required key 'take_profit'.")
+        if "stop_loss" not in strategy_config:
+            raise ValueError(f"{path} is missing required key 'stop_loss'.")
 
         strategy_config["_config_path"] = str(path)
         strategies.append(strategy_config)
@@ -137,7 +142,8 @@ def build_resampled_signals(resampled_df, config_path):
     return combined[["datetime", "signal"]]
 
 
-def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strategy_config_path, default_start_date):
+def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strategy_config_path,
+                   default_start_date, take_profit_pct, stop_loss_pct):
     """
     Advance one exchange+symbol+strategy simulation by however many new
     1-minute candles are available. Returns the number of candles processed.
@@ -148,6 +154,10 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
     effect on the 1-minute candle where a new time_horizon candle closes).
     It does NOT change how often TP/SL is checked -- that's every 1-minute
     candle inside step_candle(), independent of time horizon.
+
+    take_profit_pct, stop_loss_pct : float -- THIS strategy's own TP/SL
+    percentages, read directly from its own YAML (required key). Passed
+    straight through to step_candle().
 
     default_start_date : datetime -- config["start_date"] from
     simulator/config.yaml, parsed. Only used if this is the very first run
@@ -242,7 +252,9 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
         }
         signal = int(aligned["signal"].iloc[i])
 
-        position, balance, closed_trade = step_candle(candle, signal, position, balance, config)
+        position, balance, closed_trade = step_candle(
+            candle, signal, position, balance, config, take_profit_pct, stop_loss_pct
+        )
 
         if closed_trade is not None:
             closed_trade["exchange"] = exchange
@@ -319,6 +331,14 @@ if __name__ == "__main__":
         time_horizon = strategy_config["time_horizon"]
         strategy_config_path = strategy_config["_config_path"]
 
+        # Every strategy YAML has its own take_profit/stop_loss (required,
+        # enforced in load_strategies()) -- no shared default across strategies.
+        take_profit_pct = strategy_config["take_profit"]["value"]
+        stop_loss_pct = strategy_config["stop_loss"]["value"]
+
         for exchange in exchanges:
             for symbol in symbols:
-                run_simulator(exchange, symbol, config, strategy_name, time_horizon, strategy_config_path, default_start_date)
+                run_simulator(
+                    exchange, symbol, config, strategy_name, time_horizon, strategy_config_path,
+                    default_start_date, take_profit_pct, stop_loss_pct
+                )

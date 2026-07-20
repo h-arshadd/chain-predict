@@ -9,6 +9,16 @@ strategy_name: "ema_50_200_long_only_trend"
 
 time_horizon: "4h"
 
+# TP/SL for this strategy (required -- every strategy sets its own,
+# no shared default across strategies).
+take_profit:
+  type: percentage
+  value: 2.0
+
+stop_loss:
+  type: percentage
+  value: 1.0
+
 EMA:
   - inputs:
       - close

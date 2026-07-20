@@ -6,6 +6,16 @@ strategy_name: "weighted_multi_indicator"
 
 time_horizon: "2h"
 
+# TP/SL for this strategy (required -- every strategy sets its own,
+# no shared default across strategies).
+take_profit:
+  type: percentage
+  value: 2.0
+
+stop_loss:
+  type: percentage
+  value: 1.0
+
 EMA:
   - inputs:
       - close
@@ -32,7 +42,7 @@ MACD:
     aliases:
       macd: ind_MACD_12_26_9
       signal: ind_MACD_SIGNAL_12_26_9
-      hist: ind_MACD_HIST_12_26_9
+      histogram: ind_MACD_HIST_12_26_9
 
 strategy:
 

@@ -6,6 +6,16 @@ strategy_name: "rsi_21_swing"
 
 time_horizon: "6h"
 
+# TP/SL for this strategy (required -- every strategy sets its own,
+# no shared default across strategies).
+take_profit:
+  type: percentage
+  value: 2.0
+
+stop_loss:
+  type: percentage
+  value: 1.0
+
 RSI:
   - inputs:
       - close
