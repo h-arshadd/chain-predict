@@ -396,8 +396,8 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
     Ledger's permanent history.
 
     Returns a dict with keys: last_processed, balance, cumulative_pnl,
-    position (dict or None). position dict has: direction, entry_time,
-    entry_price, quantity, take_profit, stop_loss, status.
+    time_horizon, position (dict or None). position dict has: direction,
+    entry_time, entry_price, quantity, take_profit, stop_loss, status.
 
     No separate trade_id column: entry_time already uniquely identifies
     this trade (a strategy can only have one open position at a time), and
@@ -428,6 +428,7 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
             exchange        TEXT NOT NULL,
             symbol          TEXT NOT NULL,
             strategy_name   TEXT NOT NULL,
+            time_horizon    TEXT,
             last_processed  TIMESTAMP,
             balance         DOUBLE PRECISION NOT NULL,
             cumulative_pnl  DOUBLE PRECISION,
@@ -447,7 +448,7 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
 
     cursor.execute(sql.SQL(
         "SELECT last_processed, balance, cumulative_pnl, direction, entry_time, "
-        "entry_price, quantity, take_profit, stop_loss, status FROM {schema}.positions "
+        "entry_price, quantity, take_profit, stop_loss, status, time_horizon FROM {schema}.positions "
         "WHERE exchange = %s AND symbol = %s AND strategy_name = %s LIMIT 1"
     ).format(
         schema=sql.Identifier("simulator")
@@ -459,7 +460,7 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
         return None
 
     columns = ["last_processed", "balance", "cumulative_pnl", "direction", "entry_time",
-               "entry_price", "quantity", "take_profit", "stop_loss", "status"]
+               "entry_price", "quantity", "take_profit", "stop_loss", "status", "time_horizon"]
     values = dict(zip(columns, row))
 
     position = None
@@ -478,11 +479,12 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
         "last_processed": values["last_processed"],
         "balance": values["balance"],
         "cumulative_pnl": values["cumulative_pnl"],
+        "time_horizon": values["time_horizon"],
         "position": position,
     }
 
 
-def save_simulator_state(conn, exchange, symbol, strategy_name, last_processed, balance, position, cumulative_pnl):
+def save_simulator_state(conn, exchange, symbol, strategy_name, time_horizon, last_processed, balance, position, cumulative_pnl):
     """
     Overwrite the simulator's saved state for this exchange+symbol+strategy.
     Called at the end of every run so the next scheduled run resumes from
@@ -511,6 +513,7 @@ def save_simulator_state(conn, exchange, symbol, strategy_name, last_processed, 
             exchange        TEXT NOT NULL,
             symbol          TEXT NOT NULL,
             strategy_name   TEXT NOT NULL,
+            time_horizon    TEXT,
             last_processed  TIMESTAMP,
             balance         DOUBLE PRECISION NOT NULL,
             cumulative_pnl  DOUBLE PRECISION,
@@ -554,6 +557,7 @@ def save_simulator_state(conn, exchange, symbol, strategy_name, last_processed, 
         exchange,
         symbol,
         strategy_name,
+        time_horizon,
         last_processed,
         balance,
         cumulative_pnl,
@@ -568,10 +572,11 @@ def save_simulator_state(conn, exchange, symbol, strategy_name, last_processed, 
 
     cursor.execute(sql.SQL("""
         INSERT INTO {schema}.positions
-            (exchange, symbol, strategy_name, last_processed, balance, cumulative_pnl,
+            (exchange, symbol, strategy_name, time_horizon, last_processed, balance, cumulative_pnl,
              direction, entry_time, entry_price, quantity, take_profit, stop_loss, status)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (exchange, symbol, strategy_name) DO UPDATE SET
+            time_horizon   = EXCLUDED.time_horizon,
             last_processed = EXCLUDED.last_processed,
             balance        = EXCLUDED.balance,
             cumulative_pnl = EXCLUDED.cumulative_pnl,
@@ -853,7 +858,7 @@ def build_equity_curve_from_ledger(conn, exchange, symbol, strategy_name, initia
     return equity
 
 
-def save_simulator_stats(conn, exchange, symbol, strategy_name, stats_dict):
+def save_simulator_stats(conn, exchange, symbol, strategy_name, time_horizon, stats_dict):
     """
     Save one row of ALL performance stats for this exchange+symbol+
     strategy combo into simulator.stats -- ONE shared table for every
@@ -897,6 +902,7 @@ def save_simulator_stats(conn, exchange, symbol, strategy_name, stats_dict):
             exchange        TEXT NOT NULL,
             symbol          TEXT NOT NULL,
             strategy_name   TEXT NOT NULL,
+            time_horizon    TEXT,
             total_trades    INTEGER,
             updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
             UNIQUE (exchange, symbol, strategy_name)
@@ -929,7 +935,7 @@ def save_simulator_stats(conn, exchange, symbol, strategy_name, stats_dict):
     # Reserved/base column names -- never treated as a metric column even
     # if a metric somehow shared the name (defensive, shouldn't happen
     # with quantstats' actual function names).
-    _RESERVED = {"id", "exchange", "symbol", "strategy_name", "total_trades", "updated_at"}
+    _RESERVED = {"id", "exchange", "symbol", "strategy_name", "time_horizon", "total_trades", "updated_at"}
     metric_cols = [k for k in stats_dict.keys() if k not in _RESERVED]
 
     # Every metric value is a plain float (or None) from quantstats --
@@ -944,11 +950,12 @@ def save_simulator_stats(conn, exchange, symbol, strategy_name, stats_dict):
         ))
     conn.commit()
 
-    all_cols = ["exchange", "symbol", "strategy_name", "total_trades"] + metric_cols
+    all_cols = ["exchange", "symbol", "strategy_name", "time_horizon", "total_trades"] + metric_cols
     values = (
         exchange,
         symbol,
         strategy_name,
+        time_horizon,
         stats_dict.get("total_trades"),
         *[stats_dict.get(m) for m in metric_cols],
     )
@@ -957,7 +964,7 @@ def save_simulator_stats(conn, exchange, symbol, strategy_name, stats_dict):
     placeholders = sql.SQL(", ").join(sql.Placeholder() for _ in all_cols) + sql.SQL(", NOW()")
     update_set = sql.SQL(", ").join(
         sql.SQL("{col} = EXCLUDED.{col}").format(col=sql.Identifier(c))
-        for c in (["total_trades"] + metric_cols)
+        for c in (["time_horizon", "total_trades"] + metric_cols)
     ) + sql.SQL(", updated_at = NOW()")
 
     cursor.execute(sql.SQL("""
