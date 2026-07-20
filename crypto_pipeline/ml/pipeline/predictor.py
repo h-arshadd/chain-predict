@@ -33,10 +33,21 @@ Timeseries (Darts-backed models, ml/timeseries/*) does NOT go through
 generate_predictions(): Darts models forecast n steps forward from
 wherever train() left off (model.predict(n=...)), there is no X_test
 DataFrame to predict row-by-row against, so the same function signature
-doesn't apply. generate_timeseries_predictions() below is the
-timeseries equivalent -- same standardized-dict philosophy, different
-shape because the input shape is genuinely different, not because
-timeseries is treated as a lesser case.
+doesn't apply. Two timeseries equivalents below, same standardized-dict
+philosophy, different shape because the input shape is genuinely
+different, not because timeseries is treated as a lesser case:
+
+    generate_timeseries_predictions()   -- single anchored n-step
+        forecast (task_type="timeseries_regression" or
+        "timeseries_classification" depending on which family the
+        trained model belongs to -- see ml/timeseries/registry.py's
+        TS_REGRESSORS/TS_CLASSIFIERS).
+    generate_timeseries_historical_predictions() -- many forecasts
+        walking forward across a series (PDF heading 10's evaluation
+        needs this shape, not just one anchor point) -- wraps
+        model.historical_forecasts(), covering both the one-step
+        (forecast_horizon=1, stride=1) and fixed-window
+        (train_length=N) modes.
 """
 
 import logging
@@ -120,36 +131,143 @@ def _predict_classification(model, X_test: pd.DataFrame) -> dict:
     }
 
 
-def generate_timeseries_predictions(model, n: int, last_known_close: float, past_covariates=None) -> dict:
+def generate_timeseries_predictions(
+    model,
+    n: int,
+    last_known_close: Optional[float] = None,
+    past_covariates=None,
+    future_covariates=None,
+) -> dict:
     """
-    Generate a standardized prediction result for a timeseries model
-    (ml/timeseries/*, e.g. NBEATSTimeseriesModel, TCNTimeseriesModel).
+    Generate a standardized prediction result for a single anchored
+    timeseries forecast (ml/timeseries/*, e.g. NBEATSTimeseriesModel,
+    TCNTimeseriesModel, StatsForecastTimeseriesModel,
+    SKLearnClassifierTimeseriesModel).
 
     Args:
-        model: a trained BaseTimeseriesModel exposing .predict(n, past_covariates)
-        n: int, how many steps ahead to forecast (typically
-            ml/config.yaml's model.params.output_chunk_length)
+        model: a trained BaseTimeseriesModel or BaseTimeseriesClassifier
+            (ml/timeseries/registry.py's TS_REGRESSORS/TS_CLASSIFIERS)
+            exposing .predict(n, past_covariates, future_covariates),
+            and .predict_proba()/.classes_ if it's a classifier.
+        n: int, how many steps ahead to forecast (this project uses
+            output_chunk_length=1, forecast_horizon=1 -- see
+            ml/config.yaml).
         last_known_close: float, the close price the forecast is
             anchored from (the last row of whatever series train() was
             fit on) -- echoed back here so timeseries_signals.py can
             compute a % change without needing the original DataFrame.
-        past_covariates: optional darts.TimeSeries of covariates
-            (indicator/pattern/sentiment columns) covering the forecast
-            horizon, forwarded to model.predict() unchanged.
+            Only meaningful for regression forecasters; None for a
+            classifier (there's no "% change from anchor" concept for a
+            discrete label).
+        past_covariates / future_covariates: optional darts.TimeSeries,
+            forwarded to model.predict() unchanged.
 
     Returns:
         dict:
-            task_type: "timeseries"
-            forecast: np.ndarray, the n predicted future close prices,
-                in chronological order
-            last_known_close: float, echoed back
+            task_type: "timeseries_regression" or "timeseries_classification",
+                based on whether `model` is a TS_REGRESSORS or
+                TS_CLASSIFIERS instance (checked via TASK_TYPE, set on
+                every concrete model class -- see
+                base_timeseries_model.py / base_timeseries_classifier.py).
+            forecast: np.ndarray, the n predicted future close prices
+                (regression) or class labels (classification), in
+                chronological order
+            probabilities: np.ndarray or None -- shape (n, n_classes)
+                for a classifier, None for a regressor
+            classes: np.ndarray or None -- classifier's class label set,
+                None for a regressor
+            last_known_close: float or None, echoed back
             n_predictions: int, len(forecast)
     """
-    forecast = model.predict(n=n, past_covariates=past_covariates)
-    logger.info(f"Generated {len(forecast)}-step timeseries forecast from last_known_close={last_known_close}")
+    is_classifier = getattr(model, "TASK_TYPE", "regression") == "classification"
+
+    forecast = model.predict(n=n, past_covariates=past_covariates, future_covariates=future_covariates)
+
+    probabilities = None
+    classes = None
+    if is_classifier:
+        probabilities = model.predict_proba(n=n, past_covariates=past_covariates, future_covariates=future_covariates)
+        classes = np.asarray(model.classes_)
+
+    task_type = "timeseries_classification" if is_classifier else "timeseries_regression"
+    logger.info(
+        f"Generated {len(forecast)}-step {task_type} forecast"
+        + (f" from last_known_close={last_known_close}" if last_known_close is not None else "")
+    )
     return {
-        "task_type": "timeseries",
+        "task_type": task_type,
         "forecast": forecast,
+        "probabilities": probabilities,
+        "classes": classes,
         "last_known_close": last_known_close,
+        "n_predictions": len(forecast),
+    }
+
+
+def generate_timeseries_historical_predictions(
+    model,
+    series,
+    past_covariates=None,
+    future_covariates=None,
+    forecast_horizon: int = 1,
+    stride: int = 1,
+    retrain: bool = False,
+    train_length: Optional[int] = None,
+) -> dict:
+    """
+    Generate a standardized prediction result for WALK-FORWARD
+    timeseries forecasting (PDF heading 10 -- many forecasts across a
+    series, not one anchor point), via model.historical_forecasts().
+    Both forecasting modes this project uses are just different
+    argument combinations here:
+
+        one-step forecasting:     forecast_horizon=1, stride=1 (defaults)
+        fixed window forecasting: train_length=N (with retrain=True to
+            actually refit on each rolling window; retrain=False slides
+            the window without refitting)
+
+    Args:
+        model: a trained BaseTimeseriesModel or BaseTimeseriesClassifier.
+        series: darts.TimeSeries to walk forward over -- typically the
+            full (train+test) series so historical_forecasts() has
+            enough leading history to produce a forecast at the start
+            of the test period.
+        past_covariates / future_covariates: optional darts.TimeSeries
+            covering `series`'s full span.
+        forecast_horizon, stride, retrain, train_length: forwarded to
+            model.historical_forecasts() (see that method's docstring
+            on base_timeseries_model.py / base_timeseries_classifier.py
+            for the full explanation of each).
+
+    Returns:
+        dict:
+            task_type: "timeseries_regression" or "timeseries_classification"
+            forecast: np.ndarray, one predicted value per historical
+                forecast point (last_points_only=True is always used
+                here, matching this project's forecast_horizon=1 setup)
+            n_predictions: int, len(forecast)
+    """
+    is_classifier = getattr(model, "TASK_TYPE", "regression") == "classification"
+
+    forecast = model.historical_forecasts(
+        series=series,
+        past_covariates=past_covariates,
+        future_covariates=future_covariates,
+        forecast_horizon=forecast_horizon,
+        stride=stride,
+        retrain=retrain,
+        train_length=train_length,
+        last_points_only=True,
+    )
+
+    task_type = "timeseries_classification" if is_classifier else "timeseries_regression"
+    logger.info(
+        f"Generated {len(forecast)} historical {task_type} forecasts "
+        f"(forecast_horizon={forecast_horizon}, stride={stride}, retrain={retrain}, "
+        f"train_length={train_length})"
+    )
+    return {
+        "task_type": task_type,
+        "forecast": forecast,
         "n_predictions": len(forecast),
     }

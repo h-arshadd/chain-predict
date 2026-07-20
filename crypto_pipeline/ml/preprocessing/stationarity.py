@@ -22,6 +22,13 @@ Note: both methods here create leading NaN rows by construction (not
 enough history yet). preprocessing_pipeline.py is responsible for
 dropping those rows after transforming -- these functions only report
 how many rows via fit_info["note"], they do not drop anything themselves.
+
+inverse_fractional_differencing()/inverse_simple_differencing() below
+are used by ml/timeseries/postprocessing.py's inverse_transform_forecast()
+(PDF heading 13, Forecast Post-Processing) -- only relevant if the
+target column itself was ever run through one of these steps, which it
+is not for nbeats/tcn/statsforecast in this project today (see
+postprocessing.py's module docstring).
 """
 
 from typing import Callable, Dict
@@ -76,9 +83,53 @@ def apply_fractional_differencing(df: pd.DataFrame, fit_mask=None, d: float = 0.
         "d": d,
         "threshold": threshold,
         "weight_length": weight_length,
+        # last_values/last_index: the original (pre-transform) series
+        # tail, one full weight-window's worth -- needed by
+        # inverse_fractional_differencing() to reconstruct price levels
+        # from a forecast of differenced values (a forecast has no
+        # window of its own original-space history to fall back on,
+        # unlike test_df's own feature columns which just get inverted
+        # column-by-column against fit_info's static params).
+        "last_values": {col: df[col].values[-(weight_length or 1):].tolist() for col in df.columns},
         "note": f"first {weight_length - 1 if weight_length else 0} rows are NaN by construction (not enough history). Drop these rows before training.",
     }
     return out, fit_info
+
+
+def inverse_fractional_differencing(transformed_df: pd.DataFrame, fit_info: dict) -> pd.DataFrame:
+    """
+    Approximate inverse of apply_fractional_differencing(), for
+    reconstructing price-space forecasts from differenced-space
+    forecasts (PDF heading 13). Fractional differencing has no exact
+    closed-form inverse the way simple differencing does (it's a
+    convolution over an infinite-in-principle weight series, truncated
+    by `threshold`) -- this reconstructs the level by walking forward
+    from fit_info["last_values"] (the original series' tail at fit
+    time) and cumulatively re-applying the same weights in reverse,
+    which is exact only for full (d=1) differencing and increasingly
+    approximate as d moves away from 1. Good enough for turning a
+    forecast back into a plottable/comparable price path; not a
+    substitute for re-fitting if exact reconstruction matters.
+    """
+    d = fit_info["d"]
+    threshold = fit_info["threshold"]
+    weights = _frac_diff_weights(d, fit_info.get("weight_length", 1), threshold)
+    w_len = len(weights)
+
+    out = pd.DataFrame(index=transformed_df.index, columns=transformed_df.columns, dtype=float)
+    for col in transformed_df.columns:
+        history = list(fit_info["last_values"].get(col, [])[-(w_len - 1):]) if w_len > 1 else []
+        diffed = transformed_df[col].to_numpy()
+        levels = np.empty(len(diffed))
+        for i, d_val in enumerate(diffed):
+            window = np.array((history + list(levels[:i]))[-(w_len - 1):]) if w_len > 1 else np.array([])
+            # weights[-1] corresponds to the current (undifferenced) level's
+            # own coefficient (always 1.0 for this weight construction);
+            # solve for it given the past window's contribution.
+            past_contribution = np.dot(weights[:-1], window) if w_len > 1 and len(window) == w_len - 1 else 0.0
+            levels[i] = d_val - past_contribution if w_len > 1 else d_val
+        out[col] = levels
+    return out
 
 
 def apply_simple_differencing(df: pd.DataFrame, fit_mask=None, order: int = 1):
@@ -95,9 +146,31 @@ def apply_simple_differencing(df: pd.DataFrame, fit_mask=None, order: int = 1):
     fit_info = {
         "method": "simple_differencing",
         "order": order,
+        # last_values: the original series' last `order` values --
+        # needed by inverse_simple_differencing() to reconstruct levels
+        # from a forecast of differenced values (see
+        # inverse_fractional_differencing()'s docstring for why this is
+        # necessary for a forecast specifically, vs. test_df's columns).
+        "last_values": {col: df[col].values[-order:].tolist() for col in df.columns},
         "note": f"first {order} row(s) are NaN by construction (no prior value to diff against). Drop these rows before training.",
     }
     return out, fit_info
+
+
+def inverse_simple_differencing(transformed_df: pd.DataFrame, fit_info: dict) -> pd.DataFrame:
+    """
+    Exact inverse of apply_simple_differencing(): cumulative sum
+    starting from fit_info["last_values"] (the original series' value
+    immediately before the differenced window begins).
+    """
+    order = fit_info["order"]
+    out = pd.DataFrame(index=transformed_df.index, columns=transformed_df.columns, dtype=float)
+    for col in transformed_df.columns:
+        last_values = fit_info["last_values"].get(col, [0.0] * order)
+        start_level = last_values[-1] if last_values else 0.0
+        diffed = transformed_df[col].to_numpy()
+        out[col] = start_level + np.cumsum(diffed)
+    return out
 
 
 PREPROCESSING_STATIONARITY: Dict[str, Callable] = {

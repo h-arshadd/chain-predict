@@ -14,14 +14,15 @@ exactly the same field each pipeline file already gates on internally:
 
     model_type: regression     -> regressors/deep_learning regressors (mlp/lstm/gru)
     model_type: classification -> classifiers/deep_learning classifiers (mlp/lstm/gru)
-    model_type: timeseries     -> darts (nbeats/tcn)
+    model_type: timeseries     -> darts (nbeats/tcn/statsforecast, or sklearn_classifier)
 
 Unlike calling run_regression_pipeline() etc. directly, this file does
 NOT treat the pipeline as one black box. It calls the exact same
 underlying stage functions each pipeline file already calls internally
-(load_dataset, select_features, split_dataset, run_preprocessing, the
-matching train/predict/signal functions, evaluate_model, save_run) IN
-THE SAME ORDER, but writes a CSV for each MAIN module's output into
+(load_dataset, select_features, split_dataset, run_preprocessing, then
+delegates headings 5-13 to run_regression_algorithm() /
+run_classification_algorithm() / run_timeseries_algorithm()) IN THE
+SAME ORDER, but writes a CSV for each MAIN module's output into
 pipeline_out/ -- dataset (data_prep), predictions (model), signals
 (signals), metrics + trade ledger (evaluation) -- no logic is different
 from the real pipeline, this is just the real pipeline with a to_csv()
@@ -80,7 +81,9 @@ import yaml
 
 from crypto_pipeline.ml.pipeline.dataset_loader import load_dataset
 from crypto_pipeline.ml.pipeline.train_test_split import split_dataset
-from crypto_pipeline.ml.pipeline.predictor import generate_predictions, generate_timeseries_predictions
+from crypto_pipeline.ml.pipeline.regression_pipeline import run_regression_algorithm
+from crypto_pipeline.ml.pipeline.classification_pipeline import run_classification_algorithm
+from crypto_pipeline.ml.pipeline.timeseries_pipeline import run_timeseries_algorithm
 from crypto_pipeline.ml.preprocessing.feature_selector import select_features
 from crypto_pipeline.ml.preprocessing.preprocessing_pipeline import run_preprocessing
 
@@ -90,27 +93,13 @@ from crypto_pipeline.ml.deep_learning.registry import (
     DL_REGRESSORS, build_dl_regressor,
     DL_CLASSIFIERS, build_dl_classifier,
 )
-from crypto_pipeline.ml.timeseries.registry import TS_MODELS, build_timeseries_model
-from crypto_pipeline.ml.timeseries.base_timeseries_model import series_from_dataframe
+from crypto_pipeline.ml.timeseries.registry import TS_REGRESSORS, TS_CLASSIFIERS
 
-from crypto_pipeline.ml.signals.regression_signals import generate_regression_signals
-from crypto_pipeline.ml.signals.classification_signals import generate_classification_signals
-from crypto_pipeline.ml.signals.timeseries_signals import generate_timeseries_signals
 from crypto_pipeline.ml.signals.signal_utils import signal_counts
 
-from crypto_pipeline.ml.evaluation.evaluator import evaluate_model
-from crypto_pipeline.ml.evaluation.classification_metrics import compute_classification_metrics
-from crypto_pipeline.ml.evaluation.regression_metrics import compute_regression_metrics
 from crypto_pipeline.backtest.backtest import load_config as load_backtest_config
 from crypto_pipeline.utils.db_utils import get_db_connection, get_candles_from_db
-from crypto_pipeline.ml.persistence.metadata import (
-    build_data_prep_metadata,
-    build_split_metadata,
-    build_preprocessing_metadata,
-    build_model_metadata,
-    build_evaluation_metadata,
-)
-from crypto_pipeline.ml.persistence.artifact_manager import make_run_id, save_run, ARTIFACTS_DIR, MODELS_DIR
+from crypto_pipeline.ml.persistence.artifact_manager import make_run_id, ARTIFACTS_DIR, MODELS_DIR
 from crypto_pipeline.ml.utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -179,7 +168,7 @@ def _resolve_algorithms(model_type: str, ml_config: dict) -> list:
 
     if not explicit:
         if model_type == "timeseries":
-            available = sorted(TS_MODELS.keys())
+            available = sorted(TS_REGRESSORS.keys()) + sorted(TS_CLASSIFIERS.keys())
         else:
             traditional, _, deep_learning, _ = _TRADITIONAL_REGISTRIES[model_type]
             available = sorted(traditional.keys()) + sorted(deep_learning.keys())
@@ -348,11 +337,16 @@ def run_ml_pipeline(
 
     preprocessed = run_preprocessing(
         split_info["train_df"], split_info["test_df"], feature_columns, ml_config,
-        val_df=split_info["val_df"],
+        val_df=split_info.get("val_df"),
     )
     train_df = preprocessed["train_df"]
-    val_df = preprocessed["val_df"]  # None if split.val_size wasn't set in config
     test_df = preprocessed["test_df"]
+    # split_info["val_df"] was raw/untransformed -- replace it with the
+    # preprocessed version so every downstream split_info.get("val_df")
+    # read (regression/classification/timeseries pipelines) sees val
+    # data transformed the same way as train_df/test_df, not raw
+    # features the model was never trained on the scale of.
+    split_info["val_df"] = preprocessed["val_df"]
 
     row_counts = {
         "total_rows": len(df),
@@ -361,9 +355,6 @@ def run_ml_pipeline(
         "dropped_rows_train": preprocessed["dropped_rows"]["train"],
         "dropped_rows_test": preprocessed["dropped_rows"]["test"],
     }
-    if val_df is not None:
-        row_counts["val_rows"] = len(val_df)
-        row_counts["dropped_rows_val"] = preprocessed["dropped_rows"]["val"]
     logger.info(f"Row counts: {row_counts}")
 
     # How many rows fall into each target class (e.g. -1/0/1 for the
@@ -391,7 +382,6 @@ def run_ml_pipeline(
                 ml_config=ml_config,
                 df=df,
                 train_df=train_df,
-                val_df=val_df,
                 test_df=test_df,
                 preprocessed=preprocessed,
                 split_info=split_info,
@@ -425,7 +415,6 @@ def _run_one_algorithm(
     ml_config: dict,
     df: pd.DataFrame,
     train_df: pd.DataFrame,
-    val_df: pd.DataFrame,
     test_df: pd.DataFrame,
     preprocessed: dict,
     split_info: dict,
@@ -475,39 +464,49 @@ def _run_one_algorithm(
     params = _params_for(algorithm, model_type, ml_config)
     y_test = None
     classes = None
-    val_metrics = None
-    y_val = None
-    has_val = val_df is not None
 
-    # ---- Headings 5-7: model training (branches by model_type) -------
+    # ---- Headings 5-11: model training, prediction, signals,
+    # evaluation, and persistence (branches by model_type). For
+    # regression/classification this delegates to
+    # regression_pipeline.run_regression_algorithm() /
+    # classification_pipeline.run_classification_algorithm() -- the
+    # exact same per-algorithm logic run_regression_pipeline() /
+    # run_classification_pipeline() use standalone, just given data
+    # that's already been loaded/split/preprocessed once (above) rather
+    # than reloading it per algorithm. main.py itself only adds the
+    # pipeline_out/ CSV dumps around that shared logic; it doesn't
+    # reimplement training/evaluation/persistence.
     if model_type == "regression":
-        X_train, y_train = train_df[feature_columns], train_df[target_column]
-        X_test, y_test = test_df[feature_columns], test_df[target_column]
-        X_val, y_val = (val_df[feature_columns], val_df[target_column]) if has_val else (None, None)
-
-        if algorithm in REGRESSORS:
-            model_kind = "regressor"
-            model = build_regressor(algorithm, **params)
-            model.train(X_train, y_train)
-        elif algorithm in DL_REGRESSORS:
-            model_kind = "deep_learning_regressor"
-            model = build_dl_regressor(algorithm, **params)
-            # X_val/y_val (None if split.val_size wasn't set) drive early
-            # stopping and ReduceLROnPlateau inside base_network.py/trainer.py.
-            model.train(X_train, y_train, X_val, y_val)
-        else:
-            raise ValueError(
-                f"Unknown regression algorithm '{algorithm}'. "
-                f"Available traditional: {sorted(REGRESSORS.keys())}, "
-                f"deep learning: {sorted(DL_REGRESSORS.keys())}"
-            )
-
-        if has_val:
-            val_metrics = compute_regression_metrics(y_val.to_numpy(), model.predict(X_val))
-            logger.info(f"[{algorithm}] Validation metrics: {val_metrics}")
-
-        prediction_result = generate_predictions(model, X_test, task_type="regression")
-        signals = generate_regression_signals(prediction_result, ml_config)
+        algo_result = run_regression_algorithm(
+            algorithm=algorithm,
+            params=params,
+            ml_config=ml_config,
+            train_df=train_df,
+            test_df=test_df,
+            feature_columns=feature_columns,
+            target_column=target_column,
+            timestamp_column=timestamp_column,
+            split_info=split_info,
+            fit_objects=preprocessed["fit_objects"],
+            row_counts=row_counts,
+            ohlcv_1m=ohlcv_1m,
+            backtest_config=backtest_config,
+            stats_config=stats_config,
+            plot_dir=plot_dir,
+            artifacts_dir=artifacts_dir,
+            models_dir=models_dir,
+            run_id=resolved_run_id,
+            target_counts=target_counts,
+            requested_hyperparams=params,
+            effective_hyperparams_fn=_effective_hyperparams,
+        )
+        model = algo_result["model"]
+        model_kind = algo_result["model_kind"]
+        prediction_result = algo_result["prediction_result"]
+        signals = algo_result["signals"]
+        evaluation = algo_result["evaluation"]
+        artifact_paths = algo_result["artifact_paths"]
+        y_test = algo_result["y_test"]
 
         predictions_df = pd.DataFrame({
             timestamp_column: test_df[timestamp_column],
@@ -517,33 +516,36 @@ def _run_one_algorithm(
         signal_timestamps = test_df[timestamp_column]
 
     elif model_type == "classification":
-        X_train, y_train = train_df[feature_columns], train_df[target_column]
-        X_test, y_test = test_df[feature_columns], test_df[target_column]
-        X_val, y_val = (val_df[feature_columns], val_df[target_column]) if has_val else (None, None)
-
-        if algorithm in CLASSIFIERS:
-            model_kind = "classifier"
-            model = build_classifier(algorithm, **params)
-            model.train(X_train, y_train)
-        elif algorithm in DL_CLASSIFIERS:
-            model_kind = "deep_learning_classifier"
-            model = build_dl_classifier(algorithm, **params)
-            # X_val/y_val (None if split.val_size wasn't set) drive early
-            # stopping and ReduceLROnPlateau inside base_network.py/trainer.py.
-            model.train(X_train, y_train, X_val, y_val)
-        else:
-            raise ValueError(
-                f"Unknown classification algorithm '{algorithm}'. "
-                f"Available traditional: {sorted(CLASSIFIERS.keys())}, "
-                f"deep learning: {sorted(DL_CLASSIFIERS.keys())}"
-            )
-
-        if has_val:
-            val_metrics = compute_classification_metrics(y_val.to_numpy(), model.predict(X_val))
-            logger.info(f"[{algorithm}] Validation metrics: {val_metrics}")
-
-        prediction_result = generate_predictions(model, X_test, task_type="classification")
-        signals = generate_classification_signals(prediction_result, ml_config)
+        algo_result = run_classification_algorithm(
+            algorithm=algorithm,
+            params=params,
+            ml_config=ml_config,
+            train_df=train_df,
+            test_df=test_df,
+            feature_columns=feature_columns,
+            target_column=target_column,
+            timestamp_column=timestamp_column,
+            split_info=split_info,
+            fit_objects=preprocessed["fit_objects"],
+            row_counts=row_counts,
+            ohlcv_1m=ohlcv_1m,
+            backtest_config=backtest_config,
+            stats_config=stats_config,
+            plot_dir=plot_dir,
+            artifacts_dir=artifacts_dir,
+            models_dir=models_dir,
+            run_id=resolved_run_id,
+            target_counts=target_counts,
+            requested_hyperparams=params,
+            effective_hyperparams_fn=_effective_hyperparams,
+        )
+        model = algo_result["model"]
+        model_kind = algo_result["model_kind"]
+        prediction_result = algo_result["prediction_result"]
+        signals = algo_result["signals"]
+        evaluation = algo_result["evaluation"]
+        artifact_paths = algo_result["artifact_paths"]
+        y_test = algo_result["y_test"]
         classes = np.asarray(model.classes_)
 
         predictions_df = pd.DataFrame({
@@ -556,54 +558,62 @@ def _run_one_algorithm(
         signal_timestamps = test_df[timestamp_column]
 
     else:  # timeseries
-        if algorithm not in TS_MODELS:
-            raise ValueError(
-                f"Unknown timeseries algorithm '{algorithm}'. Available: {sorted(TS_MODELS.keys())}"
-            )
-        model_kind = "timeseries"
-        n = params.get("output_chunk_length")
-        if not n:
-            raise ValueError(
-                f"ml/config.yaml's model.param_overrides.timeseries.{algorithm} must set output_chunk_length"
-            )
-
-        train_df = train_df.copy()
-        test_df = test_df.copy()
-        train_df[timestamp_column] = pd.to_datetime(train_df[timestamp_column])
-        test_df[timestamp_column] = pd.to_datetime(test_df[timestamp_column])
-
-        target_series = series_from_dataframe(train_df, timestamp_column, target_column)
-        past_covariates = (
-            series_from_dataframe(train_df, timestamp_column, feature_columns)
-            if feature_columns else None
+        algo_result = run_timeseries_algorithm(
+            algorithm=algorithm,
+            params=params,
+            ml_config=ml_config,
+            train_df=train_df,
+            test_df=test_df,
+            feature_columns=feature_columns,
+            target_column=target_column,
+            timestamp_column=timestamp_column,
+            split_info=split_info,
+            fit_objects=preprocessed["fit_objects"],
+            row_counts=row_counts,
+            ohlcv_1m=ohlcv_1m,
+            backtest_config=backtest_config,
+            stats_config=stats_config,
+            plot_dir=plot_dir,
+            artifacts_dir=artifacts_dir,
+            models_dir=models_dir,
+            run_id=resolved_run_id,
+            requested_hyperparams=params,
+            effective_hyperparams_fn=_effective_hyperparams,
         )
-        model = build_timeseries_model(algorithm, **params)
-        model.train(target_series, past_covariates=past_covariates)
-
-        forecast_covariates = (
-            series_from_dataframe(test_df, timestamp_column, feature_columns)
-            if feature_columns else None
-        )
-        last_known_close = float(train_df[target_column].iloc[-1])
-        prediction_result = generate_timeseries_predictions(
-            model, n=n, last_known_close=last_known_close, past_covariates=forecast_covariates
-        )
-        signals = generate_timeseries_signals(prediction_result, ml_config)
+        model = algo_result["model"]
+        model_kind = algo_result["model_kind"]
+        prediction_result = algo_result["prediction_result"]
+        signals = algo_result["signals"]
+        evaluation = algo_result["evaluation"]
+        artifact_paths = algo_result["artifact_paths"]
+        classes = getattr(model, "classes_", None) if model_kind == "timeseries_classifier" else None
 
         n_pred = prediction_result["n_predictions"]
+        # "anchored" forecast_mode (the default) is anchored at the start
+        # of test_df; "historical" mode's forecasts instead line up with
+        # the LAST n_pred rows of train+test combined (see
+        # timeseries_pipeline.py's run_timeseries_algorithm() for why).
+        forecast_mode = (params or {}).get("forecast_mode", "anchored")
+        if forecast_mode == "anchored":
+            actual_slice = test_df.iloc[:n_pred]
+            signal_timestamps = test_df[timestamp_column].iloc[:1]
+        else:
+            combined_df = pd.concat([train_df, test_df], ignore_index=True)
+            actual_slice = combined_df.iloc[-n_pred:]
+            signal_timestamps = actual_slice[timestamp_column]
+
         predictions_df = pd.DataFrame({
-            timestamp_column: test_df[timestamp_column].iloc[:n_pred].reset_index(drop=True),
-            "actual": test_df[target_column].iloc[:n_pred].reset_index(drop=True),
+            timestamp_column: actual_slice[timestamp_column].reset_index(drop=True),
+            "actual": actual_slice[target_column].reset_index(drop=True),
             "predicted": prediction_result["forecast"],
         })
-        signal_timestamps = test_df[timestamp_column].iloc[:1]
 
     _dump("05_predictions.csv", predictions_df)
 
     # ---- Heading 9: signal generation ---------------------------------
     if model_type == "timeseries":
         signals_df = pd.DataFrame({
-            timestamp_column: [signal_timestamps.iloc[0]],
+            timestamp_column: [signal_timestamps.iloc[0]] if len(signals) == 1 else signal_timestamps.reset_index(drop=True),
             "signal": signals,
         })
     else:
@@ -613,19 +623,11 @@ def _run_one_algorithm(
     algo_signal_counts = signal_counts(signals)
     logger.info(f"[{algorithm}] Signal counts: {algo_signal_counts}")
 
-    # ---- Heading 10: evaluation (ML metrics + backtest + stats) ------
-    evaluation = evaluate_model(
-        task_type=model_type,
-        y_true=predictions_df["actual"].to_numpy(),
-        y_pred=predictions_df["predicted"].to_numpy(),
-        signals=signals,
-        signal_timestamps=pd.to_datetime(signal_timestamps),
-        ohlcv_1m=ohlcv_1m,
-        backtest_config=backtest_config,
-        stats_config=stats_config,
-        plot_dir=plot_dir,
-        run_id=algorithm,
-    )
+    # regression/classification/timeseries: evaluation + persistence
+    # (heading 10/11) already happened inside run_regression_algorithm() /
+    # run_classification_algorithm() / run_timeseries_algorithm() above --
+    # `evaluation` and `artifact_paths` are already sitting in algo_result,
+    # reused as-is rather than redone here.
 
     # 07_metrics.csv keeps the FULL computation (ml metrics + every
     # quantstats key) for anyone who wants to dig into one run -- the
@@ -634,65 +636,11 @@ def _run_one_algorithm(
     _dump("07_metrics.csv", pd.DataFrame([metrics_row]))
     _dump("07_trade_ledger.csv", evaluation["backtest_result"]["trade_ledger"])
 
-    # 08_val_metrics.csv -- only written when a validation split exists
-    # (split.val_size > 0 in config). For mlp/lstm/gru this is the same
-    # signal that already drove early stopping during training above;
-    # for traditional models it's purely a reported number, since they
-    # don't take a validation set during training.
-    if val_metrics is not None:
-        _dump("08_val_metrics.csv", pd.DataFrame([val_metrics]))
-
-    # ---- Heading 11: full model/experiment persistence ----------------
-    metadata = {
-        "data_prep": build_data_prep_metadata(
-            ml_config=ml_config,
-            row_counts=row_counts,
-            target_counts=target_counts,
-        ),
-        "split": build_split_metadata(
-            split_info=split_info,
-            row_counts=row_counts,
-        ),
-        "preprocessing": build_preprocessing_metadata(
-            feature_columns=feature_columns,
-            target_column=target_column,
-            timestamp_column=timestamp_column,
-            preprocessing_config=ml_config.get("preprocessing", {}),
-            fit_objects=preprocessed["fit_objects"],
-        ),
-        "model": build_model_metadata(
-            model_kind=model_kind,
-            algorithm=algorithm,
-            hyperparams=_effective_hyperparams(model, params),
-            requested_hyperparams=params,
-            classes=classes,
-        ),
-        "evaluation": build_evaluation_metadata(
-            ml_metrics={
-                **evaluation["ml_metrics"],
-                **({f"val_{k}": v for k, v in val_metrics.items()} if val_metrics is not None else {}),
-            },
-            trading_metrics=evaluation["trading_metrics"],
-            trade_summary=evaluation["trade_summary"],
-            signal_counts=algo_signal_counts,
-        ),
-    }
-    artifact_paths = save_run(
-        run_id=resolved_run_id,
-        metadata=metadata,
-        fit_objects=preprocessed["fit_objects"],
-        base_dir=artifacts_dir,
-        models_dir=models_dir,
-        model_save_fn=model.save,
-    )
-    logger.info(f"Run persisted: run_id={resolved_run_id}, model at {artifact_paths['run_dir']}")
-
     result = {
         "model": model,
         "prediction_result": prediction_result,
         "signals": signals,
         "evaluation": evaluation,
-        "val_metrics": val_metrics,  # None if split.val_size wasn't set in config
         "run_id": resolved_run_id,
         "artifact_paths": artifact_paths,
         "feature_columns": feature_columns,
@@ -702,7 +650,6 @@ def _run_one_algorithm(
     if model_type in ("regression", "classification"):
         result.update({
             "y_test": y_test,
-            "y_val": y_val,  # None if split.val_size wasn't set in config
             "split_info": split_info,
             "fit_objects": preprocessed["fit_objects"],
         })
