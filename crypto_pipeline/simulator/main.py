@@ -15,8 +15,9 @@ way run_pipeline.bat drives the data pipelines. Each run:
           uses -- reads whatever's in the DB and fetches any live gap from
           the exchange), resampled to THIS strategy's time_horizon.
        b. Loads saved state (last processed candle, balance, open position)
-          from simulator.{exchange}_{symbol}_{strategy}_state -- or starts
-          fresh if this is the first run for that strategy.
+          from simulator.positions -- one shared table, row matched on
+          (exchange, symbol, strategy) -- or starts fresh if this is the
+          first run for that combo.
        c. Walks forward candle by candle over whatever 1-minute candles are
           new since last_processed, calling simulator.step_candle() for
           each one.
@@ -26,10 +27,10 @@ way run_pipeline.bat drives the data pipelines. Each run:
           candle -- every other 1-minute candle just monitors the open
           position (signal=0). TP/SL is still checked every 1-minute candle
           regardless of time horizon -- see simulator.py's step_candle().
-       e. Saves state back to the DB, appends any newly-closed trades to
-          the running Trade Ledger table (its own Position Table + Trade
-          Ledger per strategy, per exchange, per symbol). The DB is the
-          only source of truth -- no CSV is written; query
+       e. Saves state back to simulator.positions (its own row, one per
+          exchange+symbol+strategy), appends any newly-closed trades to
+          that combo's own Trade Ledger table. The DB is the only source
+          of truth -- no CSV is written; query
           simulator.{exchange}_{symbol}_{strategy}_trades directly to
           inspect a strategy's ledger.
 
@@ -62,12 +63,29 @@ from crypto_pipeline.utils.db_utils import (
     save_simulator_state,
     append_simulator_trades,
     get_simulator_summary,
+    build_equity_curve_from_ledger,
+    save_simulator_stats,
 )
+from crypto_pipeline.stats.calculator import compute_stats
 
 # Path is crypto_pipeline/simulator/main.py -> parent.parent gets to
 # crypto_pipeline/ -- then straight into signals/strategies/ (flat layout:
 # crypto_pipeline/signals/ and crypto_pipeline/simulator/ are siblings).
 STRATEGIES_DIR = Path(__file__).parent.parent / "signals" / "strategies"
+
+# stats/config.yaml -- same config compute_stats() takes everywhere else
+# (risk_free_rate, periods_per_year, resample_freq, exclude_metrics,
+# generate_plots). Loaded once here rather than importing stats_runner's
+# _default_stats_config() (leading underscore = that module's own
+# internal default, not meant to be reused elsewhere).
+def _load_stats_config():
+    import yaml
+    stats_config_path = Path(__file__).parent.parent / "stats" / "config.yaml"
+    with open(stats_config_path, "r") as f:
+        return yaml.safe_load(f)
+
+
+STATS_CONFIG = _load_stats_config()
 
 
 def load_strategies(strategies_dir=None):
@@ -272,7 +290,8 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
 
     conn = get_db_connection()
     try:
-        save_simulator_state(conn, exchange, symbol, strategy_name, last_candle_time, balance, position)
+        cumulative_pnl = balance - config["initial_balance"]
+        save_simulator_state(conn, exchange, symbol, strategy_name, last_candle_time, balance, position, cumulative_pnl)
         trade_ledger = pd.DataFrame(closed_trades)
         append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
     finally:
@@ -303,6 +322,41 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
             f"(win rate {wl['win_rate']:.1%})"
         )
 
+    # Stats: one shared simulator.stats table, one row per
+    # exchange+symbol+strategy (see save_simulator_stats in db_utils.py),
+    # holding the same headline metrics stats_runner.py's comparison CSV
+    # already treats as "most important" (sharpe, sortino, calmar,
+    # max_drawdown, cagr, profit_factor, win_rate, recovery_factor,
+    # risk_of_ruin) plus total_trades. Computed from the strategy's full
+    # ledger-to-date (not just this run's candles), same equity-curve
+    # shape compute_stats() expects from run_backtest() -- built here via
+    # build_equity_curve_from_ledger() since the simulator itself only
+    # persists balance + a trade ledger, never an in-memory equity curve.
+    # Skipped if there are no closed trades yet: quantstats' metrics need
+    # at least one return to be meaningful.
+    if summary is not None and summary["total_trades"] > 0:
+        conn = get_db_connection()
+        try:
+            equity_curve = build_equity_curve_from_ledger(
+                conn, exchange, symbol, strategy_name, config["initial_balance"]
+            )
+        finally:
+            conn.close()
+
+        if equity_curve is not None and len(equity_curve) > 1:
+            stats_dict = compute_stats(
+                {"equity_curve": equity_curve, "total_trades": summary["total_trades"]},
+                STATS_CONFIG,
+            )
+            stats_row = dict(stats_dict["metrics"])
+            stats_row["total_trades"] = summary["total_trades"]
+
+            conn = get_db_connection()
+            try:
+                save_simulator_stats(conn, exchange, symbol, strategy_name, stats_row)
+            finally:
+                conn.close()
+
     return len(ohlcv_1m)
 
 
@@ -323,9 +377,10 @@ if __name__ == "__main__":
     exchanges = config["exchanges"]
     symbols = config["symbols"]
 
-    # One live Position Table + Trade Ledger per (exchange, symbol, strategy)
-    # -- see get_simulator_state/save_simulator_state/append_simulator_trades
-    # in db_utils.py, keyed on all three.
+    # One shared simulator.positions table (one row per exchange+symbol+strategy)
+    # plus one Trade Ledger table per (exchange, symbol, strategy) -- see
+    # get_simulator_state/save_simulator_state/append_simulator_trades in
+    # db_utils.py.
     for strategy_config in strategies:
         strategy_name = strategy_config["strategy_name"]
         time_horizon = strategy_config["time_horizon"]
