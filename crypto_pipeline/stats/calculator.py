@@ -27,9 +27,20 @@ are written to it.
 
 import os
 import json
+import warnings
 
 from crypto_pipeline.stats import metrics, plots
 from crypto_pipeline.stats.utils import equity_to_returns, to_json_safe
+
+# quantstats' stats.py raises RuntimeWarning ("Mean of empty slice", "invalid
+# value encountered in sqrt"/"scalar divide") for metrics like c_var/sharpe
+# when a strategy has too few (or all-winning/all-losing) trades for that
+# metric to be meaningful -- NaN is already the correct, expected output in
+# that case, so these are just numpy/quantstats being noisy about it, not a
+# bug in our data. Scoped to those two modules only, so warnings from our
+# own code are unaffected.
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="quantstats")
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="numpy")
 
 
 def compute_stats(backtest_result: dict, config: dict, plot_dir: str = None) -> dict:
