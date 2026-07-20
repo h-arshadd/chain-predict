@@ -613,8 +613,8 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
 
     trade_ledger : DataFrame of newly-closed trades from this run only
     (same columns as one closed_trade dict from simulator.py: direction,
-    entry_time, exit_time, entry_price, exit_price, quantity, gross_pnl,
-    commission, slippage, net_pnl, exit_reason, balance_after_trade).
+    entry_date_time, exit_date_time, entry_price, exit_price, quantity,
+    gross_pnl, commission, slippage, net_pnl, exit_reason, balance).
     Does nothing if trade_ledger is empty.
 
     No exchange/symbol columns -- the table itself is already named per
@@ -627,19 +627,20 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
     convenience label only -- NOT the primary key, and NOT unique-
     constrained, so nothing downstream should rely on it for identity.
 
-    entry_time is still this table's real PRIMARY KEY -- it's the PDF's
-    "Trade ID" column in the sense that matters (guaranteed unique): a
-    strategy can only ever have one open position at a time
+    entry_date_time is still this table's real PRIMARY KEY -- it's the
+    PDF's "Trade ID" column in the sense that matters (guaranteed
+    unique): a strategy can only ever have one open position at a time
     (max_open_positions=1, enforced in simulator.py's step_candle), so
-    entry_time is already a unique identifier for a trade within this
-    strategy's own table, and it's assigned the moment the position opens
-    (Step 3 of the spec) rather than only once it closes -- so the same
-    value identifies the trade on both the Position Table (while open,
-    see get_simulator_state) and the Trade Ledger (once closed, here).
-    If entry_time is ever duplicated (would mean two trades opened on the
-    exact same candle for the same strategy -- shouldn't happen given
-    max_open_positions=1), the COPY below fails loudly on the PK
-    violation rather than silently overwriting a row.
+    entry_date_time is already a unique identifier for a trade within
+    this strategy's own table, and it's assigned the moment the position
+    opens (Step 3 of the spec) rather than only once it closes -- so the
+    same value identifies the trade on both the Position Table (while
+    open, see get_simulator_state, where the column is still named
+    entry_time) and the Trade Ledger (once closed, here, named
+    entry_date_time). If entry_date_time is ever duplicated (would mean
+    two trades opened on the exact same candle for the same strategy --
+    shouldn't happen given max_open_positions=1), the COPY below fails
+    loudly on the PK violation rather than silently overwriting a row.
     """
     if trade_ledger.empty:
         return
@@ -677,7 +678,7 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
         sql.SQL("{col} {pg_type}{pk}").format(
             col=sql.Identifier(col),
             pg_type=sql.SQL(_pg_type_for(trade_ledger[col])),
-            pk=sql.SQL(" PRIMARY KEY" if col == "entry_time" else "")
+            pk=sql.SQL(" PRIMARY KEY" if col == "entry_date_time" else "")
         )
         for col in trade_ledger.columns
     )
@@ -713,10 +714,10 @@ def get_simulator_summary(conn, exchange, symbol, strategy_name):
                              never run at all (no positions table yet).
         total_net_profit  : float -- final_balance - starting balance.
                              starting balance is read from the ledger's
-                             own first trade's (balance_after_trade -
-                             net_pnl) if any trades exist, otherwise falls
-                             back to final_balance itself (0 profit, no
-                             trades yet).
+                             own first trade's (balance - net_pnl) if any
+                             trades exist, otherwise falls back to
+                             final_balance itself (0 profit, no trades
+                             yet).
         total_trades      : int -- row count in the Trade Ledger table.
         win_loss          : dict -- {"wins", "losses", "win_rate"}, same
                              convention as backtest (win = net_pnl > 0).
@@ -771,7 +772,7 @@ def get_simulator_summary(conn, exchange, symbol, strategy_name):
         "SELECT COUNT(*), "
         "COUNT(*) FILTER (WHERE net_pnl > 0), "
         "COUNT(*) FILTER (WHERE net_pnl <= 0), "
-        "MIN(balance_after_trade - net_pnl) "
+        "MIN(balance - net_pnl) "
         "FROM {schema}.{table}"
     ).format(
         schema=sql.Identifier("simulator"),
@@ -786,7 +787,7 @@ def get_simulator_summary(conn, exchange, symbol, strategy_name):
     win_rate = (wins / total_trades) if total_trades > 0 else 0.0
 
     # starting_balance comes from the earliest trade's pre-trade balance
-    # (balance_after_trade - net_pnl on that row). If there are no trades
+    # (balance - net_pnl on that row). If there are no trades
     # yet, there's nothing to compute profit against -- net profit is 0.
     if starting_balance is not None:
         total_net_profit = float(final_balance) - float(starting_balance)
@@ -821,11 +822,11 @@ def build_equity_curve_from_ledger(conn, exchange, symbol, strategy_name, initia
     possibly many separate scheduled runs. So stats has to read it back
     from the ledger table instead of receiving it directly.
 
-    Returns a pandas Series indexed by exit_time, values = balance after
-    each trade, with one synthetic point at the very start
-    (index = first trade's entry_time, value = initial_balance) so the
-    curve doesn't start mid-air. Returns None if the ledger table doesn't
-    exist yet or has no rows (nothing to build a curve from).
+    Returns a pandas Series indexed by exit_date_time, values = balance
+    after each trade, with one synthetic point at the very start
+    (index = first trade's entry_date_time, value = initial_balance) so
+    the curve doesn't start mid-air. Returns None if the ledger table
+    doesn't exist yet or has no rows (nothing to build a curve from).
     """
     cursor = conn.cursor()
     safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
@@ -842,8 +843,8 @@ def build_equity_curve_from_ledger(conn, exchange, symbol, strategy_name, initia
         return None
 
     cursor.execute(sql.SQL(
-        "SELECT entry_time, exit_time, balance_after_trade FROM {schema}.{table} "
-        "ORDER BY exit_time ASC"
+        "SELECT entry_date_time, exit_date_time, balance FROM {schema}.{table} "
+        "ORDER BY exit_date_time ASC"
     ).format(
         schema=sql.Identifier("simulator"),
         table=sql.Identifier(trades_table)
@@ -854,8 +855,8 @@ def build_equity_curve_from_ledger(conn, exchange, symbol, strategy_name, initia
     if not rows:
         return None
 
-    first_entry_time = rows[0][0]
-    index = [first_entry_time] + [r[1] for r in rows]
+    first_entry_date_time = rows[0][0]
+    index = [first_entry_date_time] + [r[1] for r in rows]
     values = [float(initial_balance)] + [float(r[2]) for r in rows]
 
     equity = pd.Series(values, index=pd.to_datetime(index))
