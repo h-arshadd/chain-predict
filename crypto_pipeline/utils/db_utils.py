@@ -346,20 +346,18 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
     Return the simulator's saved state for this exchange+symbol+strategy,
     or None if it has never run before.
 
-    Schema: simulator.{exchange}_{symbol}_{strategy_name}_state
-    Single-row table: last processed candle timestamp, running balance,
+    Schema: simulator.positions -- ONE shared table for every strategy/
+    exchange/symbol combo (not one table per combo). Each row = one
+    combo's current execution state: exchange, symbol, strategy_name,
+    last processed candle timestamp, running balance, cumulative_pnl,
     and the open position's fields (all NULL if flat). This is the
-    Simulator Module spec's "Position Table" -- it represents the current
-    execution state (at most one open position, per Version 1), separate
-    from the Trade Ledger's permanent history.
+    Simulator Module spec's "Position Table" -- at most one open
+    position per combo (per Version 1), separate from the Trade
+    Ledger's permanent history.
 
-    Returns a dict with keys: last_processed, balance, position (dict or
-    None). position dict has: direction, entry_time, entry_price,
-    quantity, take_profit, stop_loss, status (always "open" when position
-    is not None -- the PDF's Position Table lists Status as a column;
-    since this table only ever holds zero or one row, "open" is the only
-    status a present row can have -- there's nothing to store for "flat",
-    that's just no position at all, i.e. position=None).
+    Returns a dict with keys: last_processed, balance, cumulative_pnl,
+    position (dict or None). position dict has: direction, entry_time,
+    entry_price, quantity, take_profit, stop_loss, status.
 
     No separate trade_id column: entry_time already uniquely identifies
     this trade (a strategy can only have one open position at a time), and
@@ -369,51 +367,58 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
     having them drift apart.
 
     "id" here is a normal auto-incrementing PRIMARY KEY, unrelated to
-    trade identity -- it exists purely so this single-row table (which
-    must still have a row even when flat, i.e. entry_time IS NULL) has
-    something to upsert against in save_simulator_state. entry_time can't
-    serve as this table's PK the way it does on the trades table, because
-    it's NULL whenever there's no open position.
+    trade identity -- it exists purely so this table has something to
+    upsert against in save_simulator_state (matched there via exchange +
+    symbol + strategy_name, not via id).
+
+    NOTE: the CREATE TABLE below must stay byte-for-byte in sync with the
+    one in save_simulator_state (including the UNIQUE constraint), since
+    "IF NOT EXISTS" means only whichever of these two functions runs
+    first actually creates the table. If they ever drift, ON CONFLICT in
+    save_simulator_state will fail with "no unique or exclusion
+    constraint matching the ON CONFLICT specification".
     """
     cursor = conn.cursor()
-    safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
-    table_name = f"{exchange}_{symbol}_{safe_strategy_name}_state"
 
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS simulator"))
 
     cursor.execute(sql.SQL("""
-        CREATE TABLE IF NOT EXISTS {schema}.{table} (
+        CREATE TABLE IF NOT EXISTS {schema}.positions (
             id              SERIAL PRIMARY KEY,
+            exchange        TEXT NOT NULL,
+            symbol          TEXT NOT NULL,
+            strategy_name   TEXT NOT NULL,
             last_processed  TIMESTAMP,
             balance         DOUBLE PRECISION NOT NULL,
+            cumulative_pnl  DOUBLE PRECISION,
             direction       TEXT,
             entry_time      TIMESTAMP,
             entry_price     DOUBLE PRECISION,
             quantity        DOUBLE PRECISION,
             take_profit     DOUBLE PRECISION,
             stop_loss       DOUBLE PRECISION,
-            status          TEXT
+            status          TEXT,
+            UNIQUE (exchange, symbol, strategy_name)
         )
     """).format(
-        schema=sql.Identifier("simulator"),
-        table=sql.Identifier(table_name)
+        schema=sql.Identifier("simulator")
     ))
     conn.commit()
 
     cursor.execute(sql.SQL(
-        "SELECT last_processed, balance, direction, entry_time, "
-        "entry_price, quantity, take_profit, stop_loss, status FROM {schema}.{table} LIMIT 1"
+        "SELECT last_processed, balance, cumulative_pnl, direction, entry_time, "
+        "entry_price, quantity, take_profit, stop_loss, status FROM {schema}.positions "
+        "WHERE exchange = %s AND symbol = %s AND strategy_name = %s LIMIT 1"
     ).format(
-        schema=sql.Identifier("simulator"),
-        table=sql.Identifier(table_name)
-    ))
+        schema=sql.Identifier("simulator")
+    ), (exchange, symbol, strategy_name))
     row = cursor.fetchone()
     cursor.close()
 
     if row is None:
         return None
 
-    columns = ["last_processed", "balance", "direction", "entry_time",
+    columns = ["last_processed", "balance", "cumulative_pnl", "direction", "entry_time",
                "entry_price", "quantity", "take_profit", "stop_loss", "status"]
     values = dict(zip(columns, row))
 
@@ -432,11 +437,12 @@ def get_simulator_state(conn, exchange, symbol, strategy_name):
     return {
         "last_processed": values["last_processed"],
         "balance": values["balance"],
+        "cumulative_pnl": values["cumulative_pnl"],
         "position": position,
     }
 
 
-def save_simulator_state(conn, exchange, symbol, strategy_name, last_processed, balance, position):
+def save_simulator_state(conn, exchange, symbol, strategy_name, last_processed, balance, position, cumulative_pnl):
     """
     Overwrite the simulator's saved state for this exchange+symbol+strategy.
     Called at the end of every run so the next scheduled run resumes from
@@ -445,47 +451,72 @@ def save_simulator_state(conn, exchange, symbol, strategy_name, last_processed, 
     take_profit, stop_loss) left NULL -- there is no trade to describe, so
     only status gets an explicit value.
 
-    Schema: simulator.{exchange}_{symbol}_{strategy_name}_state
+    Schema: simulator.positions -- ONE shared table for every strategy/
+    exchange/symbol combo.
 
-    This is a genuine UPSERT (INSERT ... ON CONFLICT (id) DO UPDATE), not
-    DELETE-then-INSERT. The table only ever holds exactly one row, so an
-    UPDATE-in-place is strictly correct here and avoids doing two
-    statements (plus MVCC bloat from a dead row) every single scheduler
-    tick, for every strategy/pair, even on ticks where nothing changed.
-    "id" is a normal auto-incrementing PRIMARY KEY (SERIAL) -- the table
-    is only ever written to via this function, which always targets id=1,
-    so it stays a true singleton in practice even though nothing stops a
-    second row from existing structurally.
+    This is a genuine UPSERT (INSERT ... ON CONFLICT DO UPDATE), not
+    DELETE-then-INSERT. Matched on (exchange, symbol, strategy_name) --
+    each combo gets exactly one row, updated in place every run.
+
+    NOTE: the CREATE TABLE below must stay byte-for-byte in sync with the
+    one in get_simulator_state -- see the note there.
     """
     cursor = conn.cursor()
-    safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
-    table_name = f"{exchange}_{symbol}_{safe_strategy_name}_state"
 
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS simulator"))
 
     cursor.execute(sql.SQL("""
-        CREATE TABLE IF NOT EXISTS {schema}.{table} (
+        CREATE TABLE IF NOT EXISTS {schema}.positions (
             id              SERIAL PRIMARY KEY,
+            exchange        TEXT NOT NULL,
+            symbol          TEXT NOT NULL,
+            strategy_name   TEXT NOT NULL,
             last_processed  TIMESTAMP,
             balance         DOUBLE PRECISION NOT NULL,
+            cumulative_pnl  DOUBLE PRECISION,
             direction       TEXT,
             entry_time      TIMESTAMP,
             entry_price     DOUBLE PRECISION,
             quantity        DOUBLE PRECISION,
             take_profit     DOUBLE PRECISION,
             stop_loss       DOUBLE PRECISION,
-            status          TEXT
+            status          TEXT,
+            UNIQUE (exchange, symbol, strategy_name)
         )
     """).format(
-        schema=sql.Identifier("simulator"),
-        table=sql.Identifier(table_name)
+        schema=sql.Identifier("simulator")
     ))
+    conn.commit()
+
+    # Defensive self-heal: if simulator.positions already exists from a
+    # prior run without the UNIQUE constraint (e.g. it was created by an
+    # older version of get_simulator_state that lacked it), add the
+    # constraint now instead of failing on ON CONFLICT below. No-op if
+    # the constraint is already present.
+    cursor.execute(sql.SQL("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'positions_exchange_symbol_strategy_name_key'
+                  AND conrelid = 'simulator.positions'::regclass
+            ) THEN
+                ALTER TABLE simulator.positions
+                    ADD CONSTRAINT positions_exchange_symbol_strategy_name_key
+                    UNIQUE (exchange, symbol, strategy_name);
+            END IF;
+        END $$;
+    """))
     conn.commit()
 
     position = position or {}
     values = (
+        exchange,
+        symbol,
+        strategy_name,
         last_processed,
         balance,
+        cumulative_pnl,
         position.get("direction"),
         position.get("entry_time"),
         position.get("entry_price"),
@@ -496,13 +527,14 @@ def save_simulator_state(conn, exchange, symbol, strategy_name, last_processed, 
     )
 
     cursor.execute(sql.SQL("""
-        INSERT INTO {schema}.{table}
-            (id, last_processed, balance, direction, entry_time,
-             entry_price, quantity, take_profit, stop_loss, status)
-        VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (id) DO UPDATE SET
+        INSERT INTO {schema}.positions
+            (exchange, symbol, strategy_name, last_processed, balance, cumulative_pnl,
+             direction, entry_time, entry_price, quantity, take_profit, stop_loss, status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (exchange, symbol, strategy_name) DO UPDATE SET
             last_processed = EXCLUDED.last_processed,
             balance        = EXCLUDED.balance,
+            cumulative_pnl = EXCLUDED.cumulative_pnl,
             direction      = EXCLUDED.direction,
             entry_time     = EXCLUDED.entry_time,
             entry_price    = EXCLUDED.entry_price,
@@ -511,13 +543,12 @@ def save_simulator_state(conn, exchange, symbol, strategy_name, last_processed, 
             stop_loss      = EXCLUDED.stop_loss,
             status         = EXCLUDED.status
     """).format(
-        schema=sql.Identifier("simulator"),
-        table=sql.Identifier(table_name)
+        schema=sql.Identifier("simulator")
     ), values)
 
     conn.commit()
     cursor.close()
-    logger.info(f"Saved simulator state: simulator.{table_name}")
+    logger.info(f"Saved simulator state: simulator.positions ({exchange}/{symbol}/{strategy_name})")
 
 
 def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger):
@@ -588,15 +619,14 @@ def get_simulator_summary(conn, exchange, symbol, strategy_name):
     back from the DB instead of computed in-memory from a fresh run.
 
     Schema read: simulator.{exchange}_{symbol}_{strategy_name}_trades
-    (see append_simulator_trades) for the ledger, and
-    simulator.{exchange}_{symbol}_{strategy_name}_state (see
-    get_simulator_state) for the current balance/position.
+    (see append_simulator_trades) for the ledger, and simulator.positions
+    (see get_simulator_state) for the current balance/position.
 
     Returns a dict:
-        final_balance     : float -- current balance from the state table
-                             (starting balance if the strategy has never
-                             traded), or None if this strategy has never
-                             run at all (no state table yet).
+        final_balance     : float -- current balance from the positions
+                             table (starting balance if the strategy has
+                             never traded), or None if this strategy has
+                             never run at all (no positions table yet).
         total_net_profit  : float -- final_balance - starting balance.
                              starting balance is read from the ledger's
                              own first trade's (balance_after_trade -
@@ -686,3 +716,172 @@ def get_simulator_summary(conn, exchange, symbol, strategy_name):
         "win_loss": {"wins": wins, "losses": losses, "win_rate": win_rate},
         "open_position": open_position,
     }
+
+
+# ============================================================
+# Simulator Stats (simulator.stats)
+# ============================================================
+
+
+def build_equity_curve_from_ledger(conn, exchange, symbol, strategy_name, initial_balance):
+    """
+    Reconstruct a datetime-indexed equity curve from the simulator's own
+    Trade Ledger table (simulator.{exchange}_{symbol}_{strategy_name}_trades),
+    the same shape run_backtest() already returns as "equity_curve" (flat
+    between trades, steps at each exit) -- this is what
+    crypto_pipeline.stats.calculator.compute_stats() requires as input.
+
+    The simulator itself never builds this in memory (unlike backtest,
+    which walks one contiguous candle range in a single process): it only
+    persists final balance (simulator.positions) and a trade ledger, across
+    possibly many separate scheduled runs. So stats has to read it back
+    from the ledger table instead of receiving it directly.
+
+    Returns a pandas Series indexed by exit_time, values = balance after
+    each trade, with one synthetic point at the very start
+    (index = first trade's entry_time, value = initial_balance) so the
+    curve doesn't start mid-air. Returns None if the ledger table doesn't
+    exist yet or has no rows (nothing to build a curve from).
+    """
+    cursor = conn.cursor()
+    safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
+    trades_table = f"{exchange}_{symbol}_{safe_strategy_name}_trades"
+
+    qualified_name = sql.SQL(".").join(
+        [sql.Identifier("simulator"), sql.Identifier(trades_table)]
+    ).as_string(conn)
+    cursor.execute(sql.SQL("SELECT to_regclass(%s)"), (qualified_name,))
+    table_exists = cursor.fetchone()[0] is not None
+
+    if not table_exists:
+        cursor.close()
+        return None
+
+    cursor.execute(sql.SQL(
+        "SELECT entry_time, exit_time, balance_after_trade FROM {schema}.{table} "
+        "ORDER BY exit_time ASC"
+    ).format(
+        schema=sql.Identifier("simulator"),
+        table=sql.Identifier(trades_table)
+    ))
+    rows = cursor.fetchall()
+    cursor.close()
+
+    if not rows:
+        return None
+
+    first_entry_time = rows[0][0]
+    index = [first_entry_time] + [r[1] for r in rows]
+    values = [float(initial_balance)] + [float(r[2]) for r in rows]
+
+    equity = pd.Series(values, index=pd.to_datetime(index))
+    equity = equity[~equity.index.duplicated(keep="last")].sort_index()
+    return equity
+
+
+def save_simulator_stats(conn, exchange, symbol, strategy_name, stats_dict):
+    """
+    Save one row of headline performance stats for this
+    exchange+symbol+strategy combo into simulator.stats -- ONE shared
+    table for every combo (same pattern as simulator.positions), one row
+    per (exchange, symbol, strategy_name), upserted in place each run.
+
+    stats_dict: the "metrics" dict from
+    crypto_pipeline.stats.calculator.compute_stats(), or any dict with a
+    subset of the columns below -- missing keys are stored as NULL.
+    Callers typically only pass through the same headline metrics
+    stats_runner.py already treats as "most important":
+    sharpe, sortino, calmar, max_drawdown, cagr, profit_factor, win_rate,
+    recovery_factor, risk_of_ruin -- plus total_trades for convenience,
+    ten columns total.
+
+    This is a genuine UPSERT (INSERT ... ON CONFLICT DO UPDATE), matched
+    on (exchange, symbol, strategy_name) -- each combo gets exactly one
+    row, replaced in place every run (stats are a snapshot of the
+    strategy's full history-to-date, not something to append to).
+    """
+    cursor = conn.cursor()
+
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS simulator"))
+
+    cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {schema}.stats (
+            id              SERIAL PRIMARY KEY,
+            exchange        TEXT NOT NULL,
+            symbol          TEXT NOT NULL,
+            strategy_name   TEXT NOT NULL,
+            total_trades    INTEGER,
+            sharpe          DOUBLE PRECISION,
+            sortino         DOUBLE PRECISION,
+            calmar          DOUBLE PRECISION,
+            max_drawdown    DOUBLE PRECISION,
+            cagr            DOUBLE PRECISION,
+            profit_factor   DOUBLE PRECISION,
+            win_rate        DOUBLE PRECISION,
+            recovery_factor DOUBLE PRECISION,
+            risk_of_ruin    DOUBLE PRECISION,
+            updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+            UNIQUE (exchange, symbol, strategy_name)
+        )
+    """).format(
+        schema=sql.Identifier("simulator")
+    ))
+    conn.commit()
+
+    # Defensive self-heal, same reasoning as save_simulator_state: if
+    # simulator.stats already exists from an earlier version of this
+    # function without the UNIQUE constraint, add it now instead of
+    # failing on ON CONFLICT below.
+    cursor.execute(sql.SQL("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'stats_exchange_symbol_strategy_name_key'
+                  AND conrelid = 'simulator.stats'::regclass
+            ) THEN
+                ALTER TABLE simulator.stats
+                    ADD CONSTRAINT stats_exchange_symbol_strategy_name_key
+                    UNIQUE (exchange, symbol, strategy_name);
+            END IF;
+        END $$;
+    """))
+    conn.commit()
+
+    metric_cols = [
+        "sharpe", "sortino", "calmar", "max_drawdown", "cagr",
+        "profit_factor", "win_rate", "recovery_factor", "risk_of_ruin",
+    ]
+    values = (
+        exchange,
+        symbol,
+        strategy_name,
+        stats_dict.get("total_trades"),
+        *[stats_dict.get(m) for m in metric_cols],
+    )
+
+    cursor.execute(sql.SQL("""
+        INSERT INTO {schema}.stats
+            (exchange, symbol, strategy_name, total_trades,
+             sharpe, sortino, calmar, max_drawdown, cagr,
+             profit_factor, win_rate, recovery_factor, risk_of_ruin, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (exchange, symbol, strategy_name) DO UPDATE SET
+            total_trades    = EXCLUDED.total_trades,
+            sharpe          = EXCLUDED.sharpe,
+            sortino         = EXCLUDED.sortino,
+            calmar          = EXCLUDED.calmar,
+            max_drawdown    = EXCLUDED.max_drawdown,
+            cagr            = EXCLUDED.cagr,
+            profit_factor   = EXCLUDED.profit_factor,
+            win_rate        = EXCLUDED.win_rate,
+            recovery_factor = EXCLUDED.recovery_factor,
+            risk_of_ruin    = EXCLUDED.risk_of_ruin,
+            updated_at      = NOW()
+    """).format(
+        schema=sql.Identifier("simulator")
+    ), values)
+
+    conn.commit()
+    cursor.close()
+    logger.info(f"Saved simulator stats: simulator.stats ({exchange}/{symbol}/{strategy_name})")

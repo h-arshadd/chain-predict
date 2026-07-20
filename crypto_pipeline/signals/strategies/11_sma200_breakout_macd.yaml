@@ -34,7 +34,7 @@ MACD:
     aliases:
       macd: ind_MACD_12_26_9
       signal: ind_MACD_SIGNAL_12_26_9
-      histogram: ind_MACD_HIST_12_26_9
+      hist: ind_MACD_HIST_12_26_9
 
 strategy:
 
