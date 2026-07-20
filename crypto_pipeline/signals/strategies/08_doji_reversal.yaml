@@ -1,0 +1,54 @@
+# ============================================================================
+# STRATEGY 08: Doji Reversal + RSI Filter
+# Doji at an RSI extreme signals a potential reversal.
+# ============================================================================
+
+strategy_name: "doji_rsi_reversal"
+
+time_horizon: "1h"
+
+RSI:
+  - inputs:
+      - close
+    parameters:
+      period: 14
+    aliases:
+      rsi: ind_RSI_14
+
+PATTERNS:
+  - inputs:
+      - open
+      - high
+      - low
+      - close
+    parameters: {}
+    aliases:
+      doji: pat_DOJI
+
+strategy:
+
+  long:
+    rule: AND
+    conditions:
+      - left: pat_DOJI
+        operator: pattern_match
+        right: true
+        persist_bars: 0
+
+      - left: ind_RSI_14
+        operator: "<"
+        right: 35
+        persist_bars: 0
+
+  short:
+    rule: AND
+    conditions:
+      - left: pat_DOJI
+        operator: pattern_match
+        right: true
+        persist_bars: 0
+
+      - left: ind_RSI_14
+        operator: ">"
+        right: 65
+        persist_bars: 0

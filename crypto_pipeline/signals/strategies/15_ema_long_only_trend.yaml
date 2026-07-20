@@ -1,0 +1,43 @@
+# ============================================================================
+# STRATEGY 15: EMA 50/200 Long-Only Trend Follower
+# Short conditions are defined (required by evaluate_conditions/apply_rules)
+# but this strategy is meant to be paired with a simulator config where
+# allow_short: false, so it only ever takes longs in practice.
+# ============================================================================
+
+strategy_name: "ema_50_200_long_only_trend"
+
+time_horizon: "4h"
+
+EMA:
+  - inputs:
+      - close
+    parameters:
+      period: 50
+    aliases:
+      ema: ind_EMA_50
+
+  - inputs:
+      - close
+    parameters:
+      period: 200
+    aliases:
+      ema: ind_EMA_200
+
+strategy:
+
+  long:
+    rule: AND
+    conditions:
+      - left: ind_EMA_50
+        operator: cross_above
+        right: ind_EMA_200
+        persist_bars: 0
+
+  short:
+    rule: AND
+    conditions:
+      - left: ind_EMA_50
+        operator: cross_below
+        right: ind_EMA_200
+        persist_bars: 0

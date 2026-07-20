@@ -1,0 +1,77 @@
+# ============================================================================
+# STRATEGY 13: Weighted Multi-Indicator Vote (RSI + MACD hist + EMA trend)
+# ============================================================================
+
+strategy_name: "weighted_multi_indicator"
+
+time_horizon: "2h"
+
+EMA:
+  - inputs:
+      - close
+    parameters:
+      period: 20
+    aliases:
+      ema: ind_EMA_20
+
+RSI:
+  - inputs:
+      - close
+    parameters:
+      period: 14
+    aliases:
+      rsi: ind_RSI_14
+
+MACD:
+  - inputs:
+      - close
+    parameters:
+      fast: 12
+      slow: 26
+      signal: 9
+    aliases:
+      macd: ind_MACD_12_26_9
+      signal: ind_MACD_SIGNAL_12_26_9
+      histogram: ind_MACD_HIST_12_26_9
+
+strategy:
+
+  long:
+    rule: WEIGHTED
+    weights: [0.4, 0.3, 0.3]
+    threshold: 0.6
+    conditions:
+      - left: close
+        operator: ">"
+        right: ind_EMA_20
+        persist_bars: 0
+
+      - left: ind_RSI_14
+        operator: "<"
+        right: 40
+        persist_bars: 0
+
+      - left: ind_MACD_HIST_12_26_9
+        operator: ">"
+        right: 0
+        persist_bars: 0
+
+  short:
+    rule: WEIGHTED
+    weights: [0.4, 0.3, 0.3]
+    threshold: 0.6
+    conditions:
+      - left: close
+        operator: "<"
+        right: ind_EMA_20
+        persist_bars: 0
+
+      - left: ind_RSI_14
+        operator: ">"
+        right: 60
+        persist_bars: 0
+
+      - left: ind_MACD_HIST_12_26_9
+        operator: "<"
+        right: 0
+        persist_bars: 0

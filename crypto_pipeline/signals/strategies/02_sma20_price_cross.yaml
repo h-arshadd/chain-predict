@@ -1,0 +1,34 @@
+# ============================================================================
+# STRATEGY 02: SMA 20 vs Price Cross
+# Long when SMA20 crosses above price, Short when SMA20 crosses below price.
+# ============================================================================
+
+strategy_name: "SMA_20_price_cross"
+
+time_horizon: "1h"
+
+SMA:
+  - inputs:
+      - close
+    parameters:
+      timeperiod: 20
+    aliases:
+      sma: ind_sma_20
+
+strategy:
+
+  long:
+    rule: AND
+    conditions:
+      - left: ind_sma_20
+        operator: cross_above
+        right: close
+        persist_bars: 0
+
+  short:
+    rule: AND
+    conditions:
+      - left: ind_sma_20
+        operator: cross_below
+        right: close
+        persist_bars: 0

@@ -1,0 +1,48 @@
+# ============================================================================
+# STRATEGY 09: Bullish/Bearish Engulfing + SMA Trend Filter
+# ============================================================================
+
+strategy_name: "engulfing_sma_trend_filter"
+
+time_horizon: "1h"
+
+SMA:
+  - inputs:
+      - close
+    parameters:
+      timeperiod: 50
+    aliases:
+      sma: ind_sma_50
+
+PATTERNS:
+  - inputs:
+      - open
+      - high
+      - low
+      - close
+    parameters: {}
+    aliases:
+      bullish_engulfing: pat_BULLISH_ENGULFING
+
+strategy:
+
+  long:
+    rule: AND
+    conditions:
+      - left: pat_BULLISH_ENGULFING
+        operator: pattern_match
+        right: true
+        persist_bars: 0
+
+      - left: close
+        operator: ">"
+        right: ind_sma_50
+        persist_bars: 0
+
+  short:
+    rule: AND
+    conditions:
+      - left: close
+        operator: "<"
+        right: ind_sma_50
+        persist_bars: 0

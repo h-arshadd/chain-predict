@@ -1,0 +1,37 @@
+# ============================================================================
+# STRATEGY 05: MACD Signal-Line Crossover
+# ============================================================================
+
+strategy_name: "macd_crossover"
+
+time_horizon: "1h"
+
+MACD:
+  - inputs:
+      - close
+    parameters:
+      fast: 12
+      slow: 26
+      signal: 9
+    aliases:
+      macd: ind_MACD_12_26_9
+      signal: ind_MACD_SIGNAL_12_26_9
+      histogram: ind_MACD_HIST_12_26_9
+
+strategy:
+
+  long:
+    rule: AND
+    conditions:
+      - left: ind_MACD_12_26_9
+        operator: cross_above
+        right: ind_MACD_SIGNAL_12_26_9
+        persist_bars: 0
+
+  short:
+    rule: AND
+    conditions:
+      - left: ind_MACD_12_26_9
+        operator: cross_below
+        right: ind_MACD_SIGNAL_12_26_9
+        persist_bars: 0
