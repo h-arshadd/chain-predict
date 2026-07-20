@@ -52,7 +52,18 @@ def _tp_sl_prices(entry_price, direction, config):
 
 
 def _open_position(candle, direction, balance, config):
-    """Step 3: Open Position. Returns a new position dict."""
+    """
+    Step 3: Open Position. Returns a new position dict.
+
+    No separate trade_id field: entry_time IS this trade's identity for as
+    long as it's the only way to distinguish trades (see PDF's Position
+    Table + Trade Ledger "Trade ID" column) -- a strategy can only ever
+    have one open position at a time (max_open_positions=1, enforced by
+    the "if position is None" gate in step_candle), so entry_time is
+    already unique within one strategy's tables. It's used directly as
+    the PRIMARY KEY on both simulator.*_state and simulator.*_trades (see
+    db_utils.py) instead of minting a separate UUID/serial ID.
+    """
     entry_price = float(candle["open"])
     quantity = float(_position_size(balance, config, entry_price))
     take_profit, stop_loss = _tp_sl_prices(entry_price, direction, config)
@@ -165,7 +176,10 @@ def step_candle(candle, signal, position, balance, config):
         Pass 0 for every candle where no new resampled-timeframe signal
         has closed yet (see main.py's time-horizon gating).
     position : dict or None -- current open position (Position Table),
-        or None if flat.
+        or None if flat. entry_time doubles as this trade's ID (see
+        _open_position) -- carried through to the closed trade record on
+        exit, and used as the PRIMARY KEY on both the state and trade
+        ledger tables in db_utils.py.
     balance : float -- current account balance.
     config : dict -- simulator config. Execution settings (initial_balance,
         position_size, commission, slippage) plus strategy rules
