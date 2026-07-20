@@ -512,3 +512,97 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
 
     _copy_dataframe(conn, trade_ledger, "simulator", table_name)
     logger.info(f"Appended {len(trade_ledger)} trade(s) to simulator.{table_name}")
+
+def get_simulator_summary(conn, exchange, symbol, strategy_name):
+    """
+    Roll up the simulator's Trade Ledger for one exchange+symbol+strategy
+    into the summary fields the Simulator Module spec requires as output:
+    Final Account Balance, Total Profit/Loss, Total Number of Trades, and
+    a Win/Loss Summary -- same shape as run_backtest()'s return dict
+    (final_balance, total_net_profit, total_trades, win_loss), just read
+    back from the DB instead of computed in-memory from a fresh run.
+
+    Schema read: simulator.{exchange}_{symbol}_{strategy_name}_trades
+    (see append_simulator_trades) for the ledger, and
+    simulator.{exchange}_{symbol}_{strategy_name}_state (see
+    get_simulator_state) for the current balance/position.
+
+    Returns a dict:
+        final_balance     : float -- current balance from the state table
+                             (starting balance if the strategy has never
+                             traded), or None if this strategy has never
+                             run at all (no state table yet).
+        total_net_profit  : float -- final_balance - starting balance.
+                             starting balance is read from the ledger's
+                             own first trade's (balance_after_trade -
+                             net_pnl) if any trades exist, otherwise falls
+                             back to final_balance itself (0 profit, no
+                             trades yet).
+        total_trades      : int -- row count in the Trade Ledger table.
+        win_loss          : dict -- {"wins", "losses", "win_rate"}, same
+                             convention as backtest (win = net_pnl > 0).
+        open_position     : dict or None -- current open position, same
+                             shape as get_simulator_state()'s "position".
+
+    Returns None entirely if this (exchange, symbol, strategy) has never
+    been run (no state table exists yet).
+    """
+    state = get_simulator_state(conn, exchange, symbol, strategy_name)
+    if state is None:
+        return None
+
+    final_balance = state["balance"]
+    open_position = state["position"]
+
+    cursor = conn.cursor()
+    safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
+    trades_table = f"{exchange}_{symbol}_{safe_strategy_name}_trades"
+
+    cursor.execute(sql.SQL(
+        "SELECT to_regclass(%s)"
+    ), (f"simulator.{trades_table}",))
+    table_exists = cursor.fetchone()[0] is not None
+
+    if not table_exists:
+        cursor.close()
+        return {
+            "final_balance": final_balance,
+            "total_net_profit": 0.0,
+            "total_trades": 0,
+            "win_loss": {"wins": 0, "losses": 0, "win_rate": 0.0},
+            "open_position": open_position,
+        }
+
+    cursor.execute(sql.SQL(
+        "SELECT COUNT(*), "
+        "COUNT(*) FILTER (WHERE net_pnl > 0), "
+        "COUNT(*) FILTER (WHERE net_pnl <= 0), "
+        "MIN(balance_after_trade - net_pnl) "
+        "FROM {schema}.{table}"
+    ).format(
+        schema=sql.Identifier("simulator"),
+        table=sql.Identifier(trades_table)
+    ))
+    total_trades, wins, losses, starting_balance = cursor.fetchone()
+    cursor.close()
+
+    total_trades = int(total_trades or 0)
+    wins = int(wins or 0)
+    losses = int(losses or 0)
+    win_rate = (wins / total_trades) if total_trades > 0 else 0.0
+
+    # starting_balance comes from the earliest trade's pre-trade balance
+    # (balance_after_trade - net_pnl on that row). If there are no trades
+    # yet, there's nothing to compute profit against -- net profit is 0.
+    if starting_balance is not None:
+        total_net_profit = float(final_balance) - float(starting_balance)
+    else:
+        total_net_profit = 0.0
+
+    return {
+        "final_balance": float(final_balance),
+        "total_net_profit": total_net_profit,
+        "total_trades": total_trades,
+        "win_loss": {"wins": wins, "losses": losses, "win_rate": win_rate},
+        "open_position": open_position,
+    }

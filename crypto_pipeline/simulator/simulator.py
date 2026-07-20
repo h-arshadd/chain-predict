@@ -53,17 +53,24 @@ def _tp_sl_prices(entry_price, direction, config):
 
 def _open_position(candle, direction, balance, config):
     """Step 3: Open Position. Returns a new position dict."""
-    entry_price = candle["open"]
-    quantity = _position_size(balance, config, entry_price)
+    entry_price = float(candle["open"])
+    quantity = float(_position_size(balance, config, entry_price))
     take_profit, stop_loss = _tp_sl_prices(entry_price, direction, config)
 
+    # float(...) on every numeric field here, not just entry_price: numpy
+    # scalar arithmetic is "sticky" -- entry_price * anything stays
+    # numpy.float64 even when the other operand is a plain Python float, so
+    # take_profit/stop_loss/quantity could still end up numpy even if only
+    # entry_price started out that way. Cast everything at this single
+    # return point so a position dict is guaranteed to hold plain Python
+    # types, however it was constructed above.
     return {
         "direction": "long" if direction == 1 else "short",
         "entry_time": candle["datetime"],
         "entry_price": entry_price,
         "quantity": quantity,
-        "take_profit": take_profit,
-        "stop_loss": stop_loss,
+        "take_profit": float(take_profit),
+        "stop_loss": float(stop_loss),
         "current_price": entry_price,
         "unrealized_pnl": 0.0,
         "status": "open",
@@ -120,19 +127,26 @@ def _close_position(position, exit_price, exit_time, exit_reason, balance, confi
         gross_pnl = (entry_price - exit_price) * quantity
 
     net_pnl = gross_pnl - total_commission - total_slippage
-    new_balance = balance + net_pnl
+    new_balance = float(balance + net_pnl)
 
+    # Same reasoning as _open_position: cast every numeric field to plain
+    # Python float at this single return point, since numpy-ness in
+    # entry_price/quantity (however it got there) would otherwise ride
+    # along through every one of these computed values and eventually
+    # break save_simulator_state()'s raw INSERT, which -- unlike the COPY
+    # path insert_signals/insert_trades/append_simulator_trades use --
+    # cannot adapt numpy scalar types.
     trade = {
         "direction": position["direction"],
         "entry_time": position["entry_time"],
         "exit_time": exit_time,
-        "entry_price": entry_price,
-        "exit_price": exit_price,
-        "quantity": quantity,
-        "gross_pnl": gross_pnl,
-        "commission": total_commission,
-        "slippage": total_slippage,
-        "net_pnl": net_pnl,
+        "entry_price": float(entry_price),
+        "exit_price": float(exit_price),
+        "quantity": float(quantity),
+        "gross_pnl": float(gross_pnl),
+        "commission": float(total_commission),
+        "slippage": float(total_slippage),
+        "net_pnl": float(net_pnl),
         "exit_reason": exit_reason,
         "balance_after_trade": new_balance,
     }
@@ -179,11 +193,12 @@ def step_candle(candle, signal, position, balance, config):
     # Step 4: Monitor Open Position (update mark price / unrealized PnL)
     if position is not None:
         direction = 1 if position["direction"] == "long" else -1
-        position["current_price"] = candle["close"]
+        close_price = float(candle["close"])
+        position["current_price"] = close_price
         if direction == 1:
-            position["unrealized_pnl"] = (candle["close"] - position["entry_price"]) * position["quantity"]
+            position["unrealized_pnl"] = (close_price - position["entry_price"]) * position["quantity"]
         else:
-            position["unrealized_pnl"] = (position["entry_price"] - candle["close"]) * position["quantity"]
+            position["unrealized_pnl"] = (position["entry_price"] - close_price) * position["quantity"]
 
         # Step 5: TP / SL
         exit_price, exit_reason = _check_exit(position, candle)
