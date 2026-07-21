@@ -31,7 +31,7 @@ def split_config(config: dict) -> tuple:
     return indicator_config, strategy_config
 
 
-def generate_signals(df: pd.DataFrame, config_path: str = None) -> tuple:
+def generate_signals(df: pd.DataFrame, config_path: str = None, config_dict: dict = None) -> tuple:
     """
     Generate trading signals from OHLCV data.
 
@@ -40,8 +40,15 @@ def generate_signals(df: pd.DataFrame, config_path: str = None) -> tuple:
     df : pd.DataFrame
         OHLCV data
     config_path : str, optional
-        Path to signals config.yaml. If not provided, loads from 
-        crypto_pipeline/signals/config.yaml
+        Path to signals config.yaml. If not provided (and config_dict is
+        also not provided), loads from crypto_pipeline/signals/config.yaml.
+    config_dict : dict, optional
+        Strategy config already loaded as a dict (e.g. a row's
+        strategy_config from metadata.strategy, merged with its
+        take_profit/stop_loss/time_horizon columns) -- same shape as a
+        parsed signals/strategies/*.yaml file. Takes priority over
+        config_path when both are given, since a DB-backed strategy has
+        no file to point to.
 
     Returns
     -------
@@ -50,8 +57,9 @@ def generate_signals(df: pd.DataFrame, config_path: str = None) -> tuple:
         condition_df : pd.DataFrame — one boolean column per strategy condition
         signals : pd.Series — final trading signals (1=Buy, 0=Hold, -1=Sell)
     """
-    # Load config and split it internally
-    config = load_config(config_path)
+    # Prefer an already-loaded config dict (DB-backed strategy) over
+    # reading a yaml file from disk.
+    config = config_dict if config_dict is not None else load_config(config_path)
     indicator_config, strategy_config = split_config(config)
     
     # Calculate indicators and assign aliases

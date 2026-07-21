@@ -25,6 +25,7 @@ import logging
 import pandas as pd
 import psycopg2
 from psycopg2 import sql
+from psycopg2.extras import Json, RealDictCursor
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -714,10 +715,16 @@ def get_simulator_summary(conn, exchange, symbol, strategy_name):
                              never run at all (no positions table yet).
         total_net_profit  : float -- final_balance - starting balance.
                              starting balance is read from the ledger's
-                             own first trade's (balance - net_pnl) if any
-                             trades exist, otherwise falls back to
-                             final_balance itself (0 profit, no trades
-                             yet).
+                             own EARLIEST trade (ordered by trade_id, its
+                             chronological append order) via that row's
+                             (balance - net_pnl), if any trades exist,
+                             otherwise falls back to final_balance itself
+                             (0 profit, no trades yet). Deliberately NOT
+                             MIN(balance - net_pnl) across all rows --
+                             that would pick up the lowest equity point
+                             ever reached instead of the true starting
+                             balance whenever equity dipped below par
+                             before recovering.
         total_trades      : int -- row count in the Trade Ledger table.
         win_loss          : dict -- {"wins", "losses", "win_rate"}, same
                              convention as backtest (win = net_pnl > 0).
@@ -768,11 +775,22 @@ def get_simulator_summary(conn, exchange, symbol, strategy_name):
             "open_position": open_position,
         }
 
+    # NOTE: starting_balance must come from the EARLIEST trade specifically
+    # (ordered by trade_id, which is a plain incrementing counter assigned
+    # in chronological append order -- see append_simulator_trades), NOT
+    # MIN(balance - net_pnl) across every row. balance - net_pnl on any
+    # given row is just that row's OWN pre-trade balance -- it only equals
+    # the strategy's true starting balance on the very first trade. Taking
+    # MIN() over all rows instead picks up whatever the lowest equity point
+    # the account ever touched was (e.g. after an early losing streak),
+    # which silently inflates total_net_profit any time equity dipped below
+    # its starting value before recovering -- final_balance minus a too-low
+    # "starting_balance" overstates the real net profit.
     cursor.execute(sql.SQL(
         "SELECT COUNT(*), "
         "COUNT(*) FILTER (WHERE net_pnl > 0), "
         "COUNT(*) FILTER (WHERE net_pnl <= 0), "
-        "MIN(balance - net_pnl) "
+        "(ARRAY_AGG(balance - net_pnl ORDER BY trade_id ASC))[1] "
         "FROM {schema}.{table}"
     ).format(
         schema=sql.Identifier("simulator"),
@@ -786,9 +804,10 @@ def get_simulator_summary(conn, exchange, symbol, strategy_name):
     losses = int(losses or 0)
     win_rate = (wins / total_trades) if total_trades > 0 else 0.0
 
-    # starting_balance comes from the earliest trade's pre-trade balance
-    # (balance - net_pnl on that row). If there are no trades
-    # yet, there's nothing to compute profit against -- net profit is 0.
+    # starting_balance comes from the earliest trade's (lowest trade_id)
+    # pre-trade balance (balance - net_pnl on that row). If there are no
+    # trades yet, there's nothing to compute profit against -- net profit
+    # is 0.
     if starting_balance is not None:
         total_net_profit = float(final_balance) - float(starting_balance)
     else:
@@ -991,3 +1010,192 @@ def save_simulator_stats(conn, exchange, symbol, strategy_name, time_horizon, st
         f"Saved simulator stats ({len(metric_cols)} metric column(s)): "
         f"simulator.stats ({exchange}/{symbol}/{strategy_name})"
     )
+
+
+# ==========================================================
+# Simulator Config (simulator.config)
+# ==========================================================
+#
+# Moves simulator/config.yaml's execution settings (start_date,
+# initial_balance, position_size, commission, slippage, allow_long,
+# allow_short, max_open_positions) into the DB, one row per (exchange,
+# symbol) -- so simulator/main.py reads its settings from here instead of
+# the local yaml file. The universe itself (which exchange/symbol pairs
+# to run) is just "which rows exist in this table" -- add a pair by
+# inserting a row, drop one by deleting it, same idea as config.yaml's
+# exchanges/symbols lists but DB-driven instead of file-driven.
+#
+# strategy-level settings (take_profit/stop_loss, indicators, time_horizon)
+# are NOT here -- those stay in metadata.strategy, same separation
+# simulator/config.yaml already had.
+
+def get_simulator_config(conn, exchange, symbol):
+    """
+    Return this (exchange, symbol) pair's simulator execution config, or
+    None if it hasn't been set up yet.
+
+    Schema: simulator.config -- ONE shared table, one row per (exchange,
+    symbol) pair (not one row per strategy -- execution settings are
+    shared across every strategy run against that pair, same as
+    simulator/config.yaml being shared across all strategies today).
+
+    Returns a dict with keys: start_date, initial_balance, position_size
+    (dict: type/value), commission, slippage, allow_long, allow_short,
+    max_open_positions, enabled.
+    """
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS simulator"))
+
+    cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {schema}.config (
+            id                   SERIAL PRIMARY KEY,
+            exchange             TEXT NOT NULL,
+            symbol               TEXT NOT NULL,
+            start_date           TEXT NOT NULL,
+            initial_balance      DOUBLE PRECISION NOT NULL,
+            position_size        JSONB NOT NULL,
+            commission           DOUBLE PRECISION NOT NULL,
+            slippage             DOUBLE PRECISION NOT NULL,
+            allow_long           BOOLEAN NOT NULL DEFAULT TRUE,
+            allow_short          BOOLEAN NOT NULL DEFAULT TRUE,
+            max_open_positions   INTEGER NOT NULL DEFAULT 1,
+            enabled              BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_at           TIMESTAMP NOT NULL DEFAULT now(),
+            UNIQUE (exchange, symbol)
+        )
+    """).format(schema=sql.Identifier("simulator")))
+    conn.commit()
+
+    cursor.execute(sql.SQL("""
+        SELECT start_date, initial_balance, position_size, commission,
+               slippage, allow_long, allow_short, max_open_positions, enabled
+        FROM {schema}.config
+        WHERE exchange = %s AND symbol = %s
+    """).format(schema=sql.Identifier("simulator")), (exchange, symbol))
+    row = cursor.fetchone()
+    cursor.close()
+    return dict(row) if row else None
+
+
+def save_simulator_config(
+    conn, exchange, symbol, start_date, initial_balance, position_size,
+    commission, slippage, allow_long=True, allow_short=True, max_open_positions=1,
+    enabled=True,
+):
+    """
+    Insert or update the simulator execution config for this (exchange,
+    symbol) pair (upsert on the (exchange, symbol) UNIQUE constraint) --
+    same fields simulator/config.yaml held, minus the universe lists
+    (exchanges/symbols), since a row existing here IS how a pair gets
+    registered.
+
+    position_size: dict, e.g. {"type": "fixed_percentage", "value": 10} --
+    stored as-is in JSONB, same shape as simulator/config.yaml's
+    position_size block.
+
+    enabled: frontend on/off toggle for this pair -- True (default)
+    means the simulator runs it and results get shown; False means
+    get_simulator_universe() skips it, so simulator/main.py won't run or
+    display anything for this pair until it's flipped back to True. The
+    row (and its history in simulator.positions/*_trades/stats) stays
+    intact either way -- this only gates future runs, it doesn't delete
+    anything.
+
+    NOTE: the CREATE TABLE here must stay in sync with the one in
+    get_simulator_config (including the UNIQUE constraint) -- same
+    reasoning as simulator.positions/simulator.stats elsewhere in this
+    file: whichever function runs first creates the table.
+    """
+    cursor = conn.cursor()
+
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS simulator"))
+
+    cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {schema}.config (
+            id                   SERIAL PRIMARY KEY,
+            exchange             TEXT NOT NULL,
+            symbol               TEXT NOT NULL,
+            start_date           TEXT NOT NULL,
+            initial_balance      DOUBLE PRECISION NOT NULL,
+            position_size        JSONB NOT NULL,
+            commission           DOUBLE PRECISION NOT NULL,
+            slippage             DOUBLE PRECISION NOT NULL,
+            allow_long           BOOLEAN NOT NULL DEFAULT TRUE,
+            allow_short          BOOLEAN NOT NULL DEFAULT TRUE,
+            max_open_positions   INTEGER NOT NULL DEFAULT 1,
+            enabled              BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_at           TIMESTAMP NOT NULL DEFAULT now(),
+            UNIQUE (exchange, symbol)
+        )
+    """).format(schema=sql.Identifier("simulator")))
+    conn.commit()
+
+    cursor.execute(sql.SQL("""
+        INSERT INTO {schema}.config
+            (exchange, symbol, start_date, initial_balance, position_size,
+             commission, slippage, allow_long, allow_short, max_open_positions,
+             enabled)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (exchange, symbol) DO UPDATE SET
+            start_date = EXCLUDED.start_date,
+            initial_balance = EXCLUDED.initial_balance,
+            position_size = EXCLUDED.position_size,
+            commission = EXCLUDED.commission,
+            slippage = EXCLUDED.slippage,
+            allow_long = EXCLUDED.allow_long,
+            allow_short = EXCLUDED.allow_short,
+            max_open_positions = EXCLUDED.max_open_positions,
+            enabled = EXCLUDED.enabled,
+            updated_at = now()
+    """).format(schema=sql.Identifier("simulator")), (
+        exchange, symbol, start_date, initial_balance, Json(position_size),
+        commission, slippage, allow_long, allow_short, max_open_positions,
+        enabled,
+    ))
+    conn.commit()
+    cursor.close()
+    logger.info(f"Saved simulator config: simulator.config ({exchange}/{symbol})")
+
+
+def get_simulator_universe(conn):
+    """
+    Return every (exchange, symbol) pair currently registered AND active
+    (enabled = TRUE) in simulator.config -- this IS the universe
+    simulator/main.py should loop over, replacing simulator/config.yaml's
+    exchanges/symbols lists. Flipping a pair's enabled column to False (e.g.
+    from the frontend) removes it from this list without deleting the
+    row or its history -- flip it back to True to resume.
+
+    Returns a list of (exchange, symbol) tuples.
+    """
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS simulator"))
+
+    cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {schema}.config (
+            id                   SERIAL PRIMARY KEY,
+            exchange             TEXT NOT NULL,
+            symbol               TEXT NOT NULL,
+            start_date           TEXT NOT NULL,
+            initial_balance      DOUBLE PRECISION NOT NULL,
+            position_size        JSONB NOT NULL,
+            commission           DOUBLE PRECISION NOT NULL,
+            slippage             DOUBLE PRECISION NOT NULL,
+            allow_long           BOOLEAN NOT NULL DEFAULT TRUE,
+            allow_short          BOOLEAN NOT NULL DEFAULT TRUE,
+            max_open_positions   INTEGER NOT NULL DEFAULT 1,
+            enabled              BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_at           TIMESTAMP NOT NULL DEFAULT now(),
+            UNIQUE (exchange, symbol)
+        )
+    """).format(schema=sql.Identifier("simulator")))
+    conn.commit()
+
+    cursor.execute(sql.SQL("""
+        SELECT exchange, symbol FROM {schema}.config
+        WHERE enabled = TRUE
+    """).format(schema=sql.Identifier("simulator")))
+    rows = cursor.fetchall()
+    cursor.close()
+    return [(exchange, symbol) for exchange, symbol in rows]

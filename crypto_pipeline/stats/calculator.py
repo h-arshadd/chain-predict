@@ -42,6 +42,33 @@ from crypto_pipeline.stats.utils import equity_to_returns, to_json_safe
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="quantstats")
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="numpy")
 
+# Approximate trading periods/year for each fallback frequency
+# equity_to_returns() may resample down to, so periods_per_year (used to
+# annualize sharpe/sortino/calmar/etc.) matches whatever frequency the
+# returns series actually ended up at -- NOT always the config's daily
+# default. Getting this wrong doesn't change the returns themselves, but
+# it does silently mis-scale every annualized ratio.
+_PERIODS_PER_YEAR_BY_FREQ = {
+    "D": 252,
+    "12h": 252 * 2,
+    "6h": 252 * 4,
+    "1h": 252 * 24,
+    "30min": 252 * 24 * 2,
+    "15min": 252 * 24 * 4,
+    "5min": 252 * 24 * 12,
+    "1min": 252 * 24 * 60,
+}
+
+# Below this many returns, quantstats' ratios (sharpe/sortino/calmar/
+# max_drawdown/etc.) are not statistically meaningful even if they compute
+# without error -- e.g. a single return produces near-identical-looking
+# "stats" for every strategy regardless of actual performance (this is
+# exactly what was happening before this fix, when a ~2-day-old dataset
+# collapsed to 1 daily data point under a fixed "D" resample). Rather
+# than silently returning numbers that look legitimate but aren't, metrics
+# are explicitly nulled out and flagged below this threshold.
+MIN_RETURNS_FOR_RELIABLE_METRICS = 10
+
 
 def compute_stats(backtest_result: dict, config: dict, plot_dir: str = None) -> dict:
     """
@@ -61,24 +88,52 @@ def compute_stats(backtest_result: dict, config: dict, plot_dir: str = None) -> 
     -------
     dict, JSON-safe:
         {
-          "metrics": {...every discovered quantstats stat...},
+          "metrics": {...every discovered quantstats stat, or all None
+                       with "insufficient_data": true if the resampled
+                       returns series is too short to be meaningful...},
           "trade_summary": {...pulled straight from backtest_result...},
           "plots": {...numeric data behind each configured plot...},
+          "resample_freq_used": the frequency returns were actually
+                       resampled at (may differ from config's
+                       resample_freq if too few points forced a
+                       fallback to a finer frequency -- see
+                       equity_to_returns()),
         }
     """
     equity = backtest_result["equity_curve"]
-    returns = equity_to_returns(equity, config.get("resample_freq", "D"))
+    configured_freq = config.get("resample_freq", "D")
+    min_periods = config.get("min_periods_for_stats", MIN_RETURNS_FOR_RELIABLE_METRICS)
 
-    computed_metrics = metrics.compute_all_metrics(
-        returns=returns,
-        equity=equity,
-        rf=config.get("risk_free_rate", 0.0),
-        periods=config.get("periods_per_year", 252),
-        exclude=config.get("exclude_metrics"),
+    returns, freq_used = equity_to_returns(
+        equity,
+        resample_freq=configured_freq,
+        min_periods=min_periods,
+        auto_adjust_freq=config.get("auto_adjust_resample_freq", True),
     )
 
+    periods = _PERIODS_PER_YEAR_BY_FREQ.get(freq_used, config.get("periods_per_year", 252))
+
+    insufficient_data = len(returns) < min_periods
+
+    if insufficient_data:
+        # Still discover the metric names (so the DB/JSON schema stays
+        # consistent whether or not this run had enough data), but don't
+        # compute them -- with this few data points quantstats' ratios
+        # would compute without erroring while being statistically
+        # meaningless, which is worse than an explicit gap.
+        discovered_names = metrics.discover_metrics(exclude=config.get("exclude_metrics"))
+        computed_metrics = {name: None for name in discovered_names}
+    else:
+        computed_metrics = metrics.compute_all_metrics(
+            returns=returns,
+            equity=equity,
+            rf=config.get("risk_free_rate", 0.0),
+            periods=periods,
+            exclude=config.get("exclude_metrics"),
+        )
+
     plot_data = {}
-    if config.get("generate_plots", True):
+    if config.get("generate_plots", True) and not insufficient_data:
         plot_data = plots.generate_plot_data(returns, equity, config.get("plots", []))
 
     trade_summary = {
@@ -92,6 +147,9 @@ def compute_stats(backtest_result: dict, config: dict, plot_dir: str = None) -> 
         "metrics": computed_metrics,
         "trade_summary": trade_summary,
         "plots": plot_data,
+        "resample_freq_used": freq_used,
+        "insufficient_data": insufficient_data,
+        "returns_count": len(returns),
     })
 
 
