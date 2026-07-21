@@ -4,7 +4,7 @@
 
 strategy_name: "rsi_21_swing"
 
-time_horizon: "6h"
+time_horizon: "5min"
 
 # TP/SL for this strategy (required -- every strategy sets its own,
 # no shared default across strategies).

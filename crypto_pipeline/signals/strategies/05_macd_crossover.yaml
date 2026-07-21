@@ -4,7 +4,7 @@
 
 strategy_name: "macd_crossover"
 
-time_horizon: "1h"
+time_horizon: "3min"
 
 # TP/SL for this strategy (required -- every strategy sets its own,
 # no shared default across strategies).

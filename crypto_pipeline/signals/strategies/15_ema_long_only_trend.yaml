@@ -7,7 +7,7 @@
 
 strategy_name: "ema_50_200_long_only_trend"
 
-time_horizon: "4h"
+time_horizon: "15min"
 
 # TP/SL for this strategy (required -- every strategy sets its own,
 # no shared default across strategies).
