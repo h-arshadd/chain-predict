@@ -4,7 +4,7 @@
 
 strategy_name: "ema_20_50_trend_cross"
 
-time_horizon: "1h"
+time_horizon: "5min"
 
 # TP/SL for this strategy (required -- every strategy sets its own,
 # no shared default across strategies).

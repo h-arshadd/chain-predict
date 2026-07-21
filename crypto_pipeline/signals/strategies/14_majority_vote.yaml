@@ -4,7 +4,7 @@
 
 strategy_name: "majority_vote_3cond"
 
-time_horizon: "1h"
+time_horizon: "5min"
 
 # TP/SL for this strategy (required -- every strategy sets its own,
 # no shared default across strategies).

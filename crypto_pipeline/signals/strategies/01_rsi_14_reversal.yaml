@@ -8,7 +8,7 @@ strategy_name: "RSI_14_reversal"
 # Resampled-timeframe candle this strategy's signals are generated on.
 # Used by simulator/main.py to gate new entries -- a new signal only takes
 # effect on the first 1-minute candle at/after this timeframe's candle closes.
-time_horizon: "2h"
+time_horizon: "3min"
 
 # TP/SL for this strategy (required -- every strategy sets its own,
 # no shared default across strategies).

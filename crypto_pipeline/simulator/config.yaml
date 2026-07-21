@@ -31,7 +31,7 @@ symbols:
 # ignored. Set to the earliest date your DB actually has data for (no point
 # asking further back than that). end_date is always "now" internally --
 # simulator is live/ongoing, not a fixed window like backtest.
-start_date: "2024-01-01"
+start_date: "2026-07-20"
 
 # Starting account balance
 initial_balance: 10000

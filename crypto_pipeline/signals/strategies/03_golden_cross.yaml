@@ -4,7 +4,7 @@
 
 strategy_name: "golden_cross_sma50_200"
 
-time_horizon: "4h"
+time_horizon: "3min"
 
 # TP/SL for this strategy (required -- every strategy sets its own,
 # no shared default across strategies).
