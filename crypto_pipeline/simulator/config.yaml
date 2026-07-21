@@ -16,7 +16,7 @@
 #   exchanges: [binance, bybit]
 #   symbols:   [doge, sol, btc, eth, ada, ltc, mina, sui]
 exchanges:
-  - binance
+  - bybit
 
 symbols:
   - btc
