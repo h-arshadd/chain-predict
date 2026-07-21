@@ -1199,3 +1199,829 @@ def get_simulator_universe(conn):
     rows = cursor.fetchall()
     cursor.close()
     return [(exchange, symbol) for exchange, symbol in rows]
+
+# ==========================================================
+# Execution Config (execution.config)
+# ==========================================================
+#
+# Same pattern as Simulator Config above, just a separate schema
+# ("execution" instead of "simulator") so live-trading state never mixes
+# with simulator/paper state. One row per (exchange, symbol) pair.
+#
+# strategy_name IS stored here (unlike simulator.config) -- execution
+# only ever runs ONE strategy per pair (no universe/multi-strategy loop
+# like simulator has), so pinning it here means execution/config.yaml
+# only needs to hold local secrets, nothing else. The strategy's own
+# take_profit/stop_loss/indicators/time_horizon still come from
+# metadata.strategy (looked up by this strategy_name), same as simulator.
+
+def get_execution_config(conn, exchange, symbol):
+    """
+    Return this (exchange, symbol) pair's execution config, or None if it
+    hasn't been set up yet.
+
+    Schema: execution.config -- ONE row per (exchange, symbol) pair.
+
+    Returns a dict with keys: strategy_name, start_date, initial_balance,
+    position_size (dict: type/value), commission, slippage, allow_long,
+    allow_short, max_open_positions, enabled.
+    """
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS execution"))
+
+    cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {schema}.config (
+            id                   SERIAL PRIMARY KEY,
+            exchange             TEXT NOT NULL,
+            symbol               TEXT NOT NULL,
+            strategy_name        TEXT NOT NULL,
+            start_date           TEXT NOT NULL,
+            initial_balance      DOUBLE PRECISION NOT NULL,
+            position_size        JSONB NOT NULL,
+            commission           DOUBLE PRECISION NOT NULL,
+            slippage             DOUBLE PRECISION NOT NULL,
+            allow_long           BOOLEAN NOT NULL DEFAULT TRUE,
+            allow_short          BOOLEAN NOT NULL DEFAULT TRUE,
+            max_open_positions   INTEGER NOT NULL DEFAULT 1,
+            enabled              BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_at           TIMESTAMP NOT NULL DEFAULT now(),
+            UNIQUE (exchange, symbol)
+        )
+    """).format(schema=sql.Identifier("execution")))
+    conn.commit()
+
+    cursor.execute(sql.SQL("""
+        SELECT strategy_name, start_date, initial_balance, position_size, commission,
+               slippage, allow_long, allow_short, max_open_positions, enabled
+        FROM {schema}.config
+        WHERE exchange = %s AND symbol = %s
+    """).format(schema=sql.Identifier("execution")), (exchange, symbol))
+    row = cursor.fetchone()
+    cursor.close()
+    return dict(row) if row else None
+
+
+def save_execution_config(
+    conn, exchange, symbol, strategy_name, start_date, initial_balance, position_size,
+    commission, slippage, allow_long=True, allow_short=True, max_open_positions=1,
+    enabled=True,
+):
+    """
+    Insert or update the execution config for this (exchange, symbol)
+    pair (upsert on the (exchange, symbol) UNIQUE constraint). Same
+    fields as save_simulator_config plus strategy_name, separate
+    "execution" schema.
+
+    strategy_name: which single metadata.strategy row (for this exchange/
+    symbol) execution/main.py should trade -- e.g. "RSI_14_reversal".
+
+    position_size: dict, e.g. {"type": "fixed_percentage", "value": 10}.
+
+    enabled: on/off toggle -- False stops execution/main.py from trading
+    this pair without deleting its history.
+    """
+    cursor = conn.cursor()
+
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS execution"))
+
+    cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {schema}.config (
+            id                   SERIAL PRIMARY KEY,
+            exchange             TEXT NOT NULL,
+            symbol               TEXT NOT NULL,
+            strategy_name        TEXT NOT NULL,
+            start_date           TEXT NOT NULL,
+            initial_balance      DOUBLE PRECISION NOT NULL,
+            position_size        JSONB NOT NULL,
+            commission           DOUBLE PRECISION NOT NULL,
+            slippage             DOUBLE PRECISION NOT NULL,
+            allow_long           BOOLEAN NOT NULL DEFAULT TRUE,
+            allow_short          BOOLEAN NOT NULL DEFAULT TRUE,
+            max_open_positions   INTEGER NOT NULL DEFAULT 1,
+            enabled              BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_at           TIMESTAMP NOT NULL DEFAULT now(),
+            UNIQUE (exchange, symbol)
+        )
+    """).format(schema=sql.Identifier("execution")))
+    conn.commit()
+
+    # Defensive self-heal: if execution.config already exists from before
+    # strategy_name was added, add the column now instead of failing on
+    # the INSERT below. No-op if the column is already present.
+    cursor.execute(sql.SQL("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'execution' AND table_name = 'config'
+                  AND column_name = 'strategy_name'
+            ) THEN
+                ALTER TABLE execution.config ADD COLUMN strategy_name TEXT NOT NULL DEFAULT '';
+            END IF;
+        END $$;
+    """))
+    conn.commit()
+
+    cursor.execute(sql.SQL("""
+        INSERT INTO {schema}.config
+            (exchange, symbol, strategy_name, start_date, initial_balance, position_size,
+             commission, slippage, allow_long, allow_short, max_open_positions,
+             enabled)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (exchange, symbol) DO UPDATE SET
+            strategy_name = EXCLUDED.strategy_name,
+            start_date = EXCLUDED.start_date,
+            initial_balance = EXCLUDED.initial_balance,
+            position_size = EXCLUDED.position_size,
+            commission = EXCLUDED.commission,
+            slippage = EXCLUDED.slippage,
+            allow_long = EXCLUDED.allow_long,
+            allow_short = EXCLUDED.allow_short,
+            max_open_positions = EXCLUDED.max_open_positions,
+            enabled = EXCLUDED.enabled,
+            updated_at = now()
+    """).format(schema=sql.Identifier("execution")), (
+        exchange, symbol, strategy_name, start_date, initial_balance, Json(position_size),
+        commission, slippage, allow_long, allow_short, max_open_positions,
+        enabled,
+    ))
+    conn.commit()
+    cursor.close()
+    logger.info(f"Saved execution config: execution.config ({exchange}/{symbol}, strategy={strategy_name!r})")
+
+
+def get_execution_universe(conn):
+    """
+    Return every (exchange, symbol) pair currently registered AND active
+    (enabled = TRUE) in execution.config -- same idea as
+    get_simulator_universe(), so execution/main.py needs zero hardcoded
+    exchange/symbol: add a pair by calling save_execution_config(), stop
+    trading it by flipping enabled to False.
+
+    Returns a list of (exchange, symbol) tuples.
+    """
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS execution"))
+
+    cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {schema}.config (
+            id                   SERIAL PRIMARY KEY,
+            exchange             TEXT NOT NULL,
+            symbol               TEXT NOT NULL,
+            strategy_name        TEXT NOT NULL,
+            start_date           TEXT NOT NULL,
+            initial_balance      DOUBLE PRECISION NOT NULL,
+            position_size        JSONB NOT NULL,
+            commission           DOUBLE PRECISION NOT NULL,
+            slippage             DOUBLE PRECISION NOT NULL,
+            allow_long           BOOLEAN NOT NULL DEFAULT TRUE,
+            allow_short          BOOLEAN NOT NULL DEFAULT TRUE,
+            max_open_positions   INTEGER NOT NULL DEFAULT 1,
+            enabled              BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_at           TIMESTAMP NOT NULL DEFAULT now(),
+            UNIQUE (exchange, symbol)
+        )
+    """).format(schema=sql.Identifier("execution")))
+    conn.commit()
+
+    cursor.execute(sql.SQL("""
+        SELECT exchange, symbol FROM {schema}.config
+        WHERE enabled = TRUE
+    """).format(schema=sql.Identifier("execution")))
+    rows = cursor.fetchall()
+    cursor.close()
+    return [(exchange, symbol) for exchange, symbol in rows]
+
+
+# ==========================================================
+# Execution State + Trade Ledger + Summary (execution.positions,
+# execution.{exchange}_{symbol}_{strategy_name}_trades)
+# ==========================================================
+#
+# Exact mirror of the Simulator State/Trade Ledger/Summary functions
+# above, targeting the "execution" schema instead of "simulator" -- so
+# live execution state/trades never mix with simulator/paper state, even
+# though the shape (Position Table + per-combo Trade Ledger) is
+# identical. See get_simulator_state/save_simulator_state/
+# append_simulator_trades/get_simulator_summary above for the full
+# reasoning -- everything here works the same way, just a different
+# schema name.
+
+def get_execution_state(conn, exchange, symbol, strategy_name):
+    """
+    Return execution's saved state for this exchange+symbol+strategy,
+    or None if it has never run before.
+
+    Schema: execution.positions -- ONE shared table for every strategy/
+    exchange/symbol combo (not one table per combo). Each row = one
+    combo's current execution state: exchange, symbol, strategy_name,
+    last processed candle timestamp, running balance, cumulative_pnl,
+    and the open position's fields (all NULL if flat). This is the
+    Simulator Module spec's "Position Table" -- at most one open
+    position per combo (per Version 1), separate from the Trade
+    Ledger's permanent history.
+
+    Returns a dict with keys: last_processed, balance, cumulative_pnl,
+    time_horizon, position (dict or None). position dict has: direction,
+    entry_time, entry_price, quantity, take_profit, stop_loss, status.
+
+    No separate trade_id column: entry_time already uniquely identifies
+    this trade (a strategy can only have one open position at a time), and
+    is the same value used as the PRIMARY KEY on execution.*_trades once
+    this position closes and lands in the Trade Ledger -- see
+    append_execution_trades. Keeping one field instead of two avoids ever
+    having them drift apart.
+
+    "id" here is a normal auto-incrementing PRIMARY KEY, unrelated to
+    trade identity -- it exists purely so this table has something to
+    upsert against in save_execution_state (matched there via exchange +
+    symbol + strategy_name, not via id).
+
+    NOTE: the CREATE TABLE below must stay byte-for-byte in sync with the
+    one in save_execution_state (including the UNIQUE constraint), since
+    "IF NOT EXISTS" means only whichever of these two functions runs
+    first actually creates the table. If they ever drift, ON CONFLICT in
+    save_execution_state will fail with "no unique or exclusion
+    constraint matching the ON CONFLICT specification".
+    """
+    cursor = conn.cursor()
+
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS execution"))
+
+    cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {schema}.positions (
+            id              SERIAL PRIMARY KEY,
+            exchange        TEXT NOT NULL,
+            symbol          TEXT NOT NULL,
+            strategy_name   TEXT NOT NULL,
+            time_horizon    TEXT,
+            last_processed  TIMESTAMP,
+            balance         DOUBLE PRECISION NOT NULL,
+            cumulative_pnl  DOUBLE PRECISION,
+            direction       TEXT,
+            entry_time      TIMESTAMP,
+            entry_price     DOUBLE PRECISION,
+            quantity        DOUBLE PRECISION,
+            take_profit     DOUBLE PRECISION,
+            stop_loss       DOUBLE PRECISION,
+            leaning         TEXT,
+            status          TEXT,
+            UNIQUE (exchange, symbol, strategy_name)
+        )
+    """).format(
+        schema=sql.Identifier("execution")
+    ))
+    conn.commit()
+
+    cursor.execute(sql.SQL(
+        "SELECT last_processed, balance, cumulative_pnl, direction, entry_time, "
+        "entry_price, quantity, take_profit, stop_loss, leaning, status, time_horizon FROM {schema}.positions "
+        "WHERE exchange = %s AND symbol = %s AND strategy_name = %s LIMIT 1"
+    ).format(
+        schema=sql.Identifier("execution")
+    ), (exchange, symbol, strategy_name))
+    row = cursor.fetchone()
+    cursor.close()
+
+    if row is None:
+        return None
+
+    columns = ["last_processed", "balance", "cumulative_pnl", "direction", "entry_time",
+               "entry_price", "quantity", "take_profit", "stop_loss", "leaning", "status", "time_horizon"]
+    values = dict(zip(columns, row))
+
+    position = None
+    if values["direction"] is not None:
+        position = {
+            "direction": values["direction"],
+            "entry_time": values["entry_time"],
+            "entry_price": values["entry_price"],
+            "quantity": values["quantity"],
+            "take_profit": values["take_profit"],
+            "stop_loss": values["stop_loss"],
+            "leaning": values["leaning"],
+            "status": values["status"] or "open",
+        }
+
+    return {
+        "last_processed": values["last_processed"],
+        "balance": values["balance"],
+        "cumulative_pnl": values["cumulative_pnl"],
+        "time_horizon": values["time_horizon"],
+        "position": position,
+    }
+
+
+def save_execution_state(conn, exchange, symbol, strategy_name, time_horizon, last_processed, balance, position, cumulative_pnl):
+    """
+    Overwrite execution's saved state for this exchange+symbol+strategy.
+    Called at the end of every run so the next scheduled run resumes from
+    here. position=None is stored with status="closed" and every other
+    position field (direction, entry_time, entry_price, quantity,
+    take_profit, stop_loss) left NULL -- there is no trade to describe, so
+    only status gets an explicit value.
+
+    Schema: execution.positions -- ONE shared table for every strategy/
+    exchange/symbol combo.
+
+    This is a genuine UPSERT (INSERT ... ON CONFLICT DO UPDATE), not
+    DELETE-then-INSERT. Matched on (exchange, symbol, strategy_name) --
+    each combo gets exactly one row, updated in place every run.
+
+    NOTE: the CREATE TABLE below must stay byte-for-byte in sync with the
+    one in get_execution_state -- see the note there.
+    """
+    cursor = conn.cursor()
+
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS execution"))
+
+    cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {schema}.positions (
+            id              SERIAL PRIMARY KEY,
+            exchange        TEXT NOT NULL,
+            symbol          TEXT NOT NULL,
+            strategy_name   TEXT NOT NULL,
+            time_horizon    TEXT,
+            last_processed  TIMESTAMP,
+            balance         DOUBLE PRECISION NOT NULL,
+            cumulative_pnl  DOUBLE PRECISION,
+            direction       TEXT,
+            entry_time      TIMESTAMP,
+            entry_price     DOUBLE PRECISION,
+            quantity        DOUBLE PRECISION,
+            take_profit     DOUBLE PRECISION,
+            stop_loss       DOUBLE PRECISION,
+            leaning         TEXT,
+            status          TEXT,
+            UNIQUE (exchange, symbol, strategy_name)
+        )
+    """).format(
+        schema=sql.Identifier("execution")
+    ))
+    conn.commit()
+
+    # Defensive self-heal: if execution.positions already exists from a
+    # prior run without the UNIQUE constraint (e.g. it was created by an
+    # older version of get_execution_state that lacked it), add the
+    # constraint now instead of failing on ON CONFLICT below. No-op if
+    # the constraint is already present.
+    cursor.execute(sql.SQL("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'exec_positions_exchange_symbol_strategy_name_key'
+                  AND conrelid = 'execution.positions'::regclass
+            ) THEN
+                ALTER TABLE execution.positions
+                    ADD CONSTRAINT exec_positions_exchange_symbol_strategy_name_key
+                    UNIQUE (exchange, symbol, strategy_name);
+            END IF;
+        END $$;
+    """))
+    conn.commit()
+
+    position = position or {}
+    values = (
+        exchange,
+        symbol,
+        strategy_name,
+        time_horizon,
+        last_processed,
+        balance,
+        cumulative_pnl,
+        position.get("direction"),
+        position.get("entry_time"),
+        position.get("entry_price"),
+        position.get("quantity"),
+        position.get("take_profit"),
+        position.get("stop_loss"),
+        position.get("leaning"),
+        position.get("status") if position else "closed",
+    )
+
+    cursor.execute(sql.SQL("""
+        INSERT INTO {schema}.positions
+            (exchange, symbol, strategy_name, time_horizon, last_processed, balance, cumulative_pnl,
+             direction, entry_time, entry_price, quantity, take_profit, stop_loss, leaning, status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (exchange, symbol, strategy_name) DO UPDATE SET
+            time_horizon   = EXCLUDED.time_horizon,
+            last_processed = EXCLUDED.last_processed,
+            balance        = EXCLUDED.balance,
+            cumulative_pnl = EXCLUDED.cumulative_pnl,
+            direction      = EXCLUDED.direction,
+            entry_time     = EXCLUDED.entry_time,
+            entry_price    = EXCLUDED.entry_price,
+            quantity       = EXCLUDED.quantity,
+            take_profit    = EXCLUDED.take_profit,
+            stop_loss      = EXCLUDED.stop_loss,
+            leaning        = EXCLUDED.leaning,
+            status         = EXCLUDED.status
+    """).format(
+        schema=sql.Identifier("execution")
+    ), values)
+
+    conn.commit()
+    cursor.close()
+    logger.info(f"Saved execution state: execution.positions ({exchange}/{symbol}/{strategy_name})")
+
+
+def append_execution_trades(conn, exchange, symbol, strategy_name, trade_ledger):
+    """
+    Append newly-closed trades to execution's running Trade Ledger.
+    Unlike insert_trades() (backtest -- full rebuild every run), this is a
+    live, ever-growing ledger across scheduler runs, so rows are appended,
+    never dropped or replaced. The table is only created (not recreated) if
+    missing, so it survives across runs.
+
+    Schema: execution.{exchange}_{symbol}_{strategy_name}_trades
+
+    trade_ledger : DataFrame of newly-closed trades from this run only
+    (same columns as one closed_trade dict from simulator.py's step_candle: direction,
+    entry_date_time, exit_date_time, entry_price, exit_price, quantity,
+    gross_pnl, commission, slippage, net_pnl, exit_reason, balance).
+    Does nothing if trade_ledger is empty.
+
+    No exchange/symbol columns -- the table itself is already named per
+    exchange+symbol+strategy, so repeating them in every row would be
+    redundant.
+
+    trade_id : plain incrementing 1, 2, 3... column, added here (not by
+    the caller) so it can continue counting across every past run's
+    trades already in the table, not just this run's batch. It's a
+    convenience label only -- NOT the primary key, and NOT unique-
+    constrained, so nothing downstream should rely on it for identity.
+
+    entry_date_time is still this table's real PRIMARY KEY -- it's the
+    PDF's "Trade ID" column in the sense that matters (guaranteed
+    unique): a strategy can only ever have one open position at a time
+    (max_open_positions=1, enforced in simulator.py's step_candle, reused here), so
+    entry_date_time is already a unique identifier for a trade within
+    this strategy's own table, and it's assigned the moment the position
+    opens (Step 3 of the spec) rather than only once it closes -- so the
+    same value identifies the trade on both the Position Table (while
+    open, see get_execution_state, where the column is still named
+    entry_time) and the Trade Ledger (once closed, here, named
+    entry_date_time). If entry_date_time is ever duplicated (would mean
+    two trades opened on the exact same candle for the same strategy --
+    shouldn't happen given max_open_positions=1), the COPY below fails
+    loudly on the PK violation rather than silently overwriting a row.
+    """
+    if trade_ledger.empty:
+        return
+
+    cursor = conn.cursor()
+    safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
+    table_name = f"{exchange}_{symbol}_{safe_strategy_name}_trades"
+
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS execution"))
+
+    qualified_name = sql.SQL(".").join(
+        [sql.Identifier("execution"), sql.Identifier(table_name)]
+    ).as_string(conn)
+    cursor.execute(sql.SQL("SELECT to_regclass(%s)"), (qualified_name,))
+    table_exists = cursor.fetchone()[0] is not None
+
+    # Continue trade_id from wherever the existing table left off, so
+    # numbering stays 1, 2, 3... across scheduler runs instead of
+    # restarting at 1 every time. 0 if the table doesn't exist yet (first
+    # run for this combo).
+    next_trade_id = 1
+    if table_exists:
+        cursor.execute(sql.SQL(
+            "SELECT COALESCE(MAX(trade_id), 0) FROM {schema}.{table}"
+        ).format(
+            schema=sql.Identifier("execution"),
+            table=sql.Identifier(table_name)
+        ))
+        next_trade_id = cursor.fetchone()[0] + 1
+
+    trade_ledger = trade_ledger.copy()
+    trade_ledger.insert(0, "trade_id", range(next_trade_id, next_trade_id + len(trade_ledger)))
+
+    column_defs = sql.SQL(", ").join(
+        sql.SQL("{col} {pg_type}{pk}").format(
+            col=sql.Identifier(col),
+            pg_type=sql.SQL(_pg_type_for(trade_ledger[col])),
+            pk=sql.SQL(" PRIMARY KEY" if col == "entry_date_time" else "")
+        )
+        for col in trade_ledger.columns
+    )
+
+    cursor.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {schema}.{table} ({column_defs})").format(
+        schema=sql.Identifier("execution"),
+        table=sql.Identifier(table_name),
+        column_defs=column_defs
+    ))
+    conn.commit()
+    cursor.close()
+
+    _copy_dataframe(conn, trade_ledger, "execution", table_name)
+    logger.info(f"Appended {len(trade_ledger)} trade(s) to execution.{table_name}")
+
+def get_execution_summary(conn, exchange, symbol, strategy_name):
+    """
+    Roll up execution's Trade Ledger for one exchange+symbol+strategy
+    into the summary fields the Simulator Module spec requires as output:
+    Final Account Balance, Total Profit/Loss, Total Number of Trades, and
+    a Win/Loss Summary -- same shape as run_backtest()'s return dict
+    (final_balance, total_net_profit, total_trades, win_loss), just read
+    back from the DB instead of computed in-memory from a fresh run.
+
+    Schema read: execution.{exchange}_{symbol}_{strategy_name}_trades
+    (see append_execution_trades) for the ledger, and execution.positions
+    (see get_execution_state) for the current balance/position.
+
+    Returns a dict:
+        final_balance     : float -- current balance from the positions
+                             table (starting balance if the strategy has
+                             never traded), or None if this strategy has
+                             never run at all (no positions table yet).
+        total_net_profit  : float -- final_balance - starting balance.
+                             starting balance is read from the ledger's
+                             own EARLIEST trade (ordered by trade_id, its
+                             chronological append order) via that row's
+                             (balance - net_pnl), if any trades exist,
+                             otherwise falls back to final_balance itself
+                             (0 profit, no trades yet). Deliberately NOT
+                             MIN(balance - net_pnl) across all rows --
+                             that would pick up the lowest equity point
+                             ever reached instead of the true starting
+                             balance whenever equity dipped below par
+                             before recovering.
+        total_trades      : int -- row count in the Trade Ledger table.
+        win_loss          : dict -- {"wins", "losses", "win_rate"}, same
+                             convention as backtest (win = net_pnl > 0).
+        open_position     : dict or None -- current open position, same
+                             shape as get_execution_state()'s "position".
+
+    Returns None entirely if this (exchange, symbol, strategy) has never
+    been run (no state table exists yet).
+    """
+    state = get_execution_state(conn, exchange, symbol, strategy_name)
+    if state is None:
+        return None
+
+    final_balance = state["balance"]
+    open_position = state["position"]
+
+    cursor = conn.cursor()
+    safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
+    trades_table = f"{exchange}_{symbol}_{safe_strategy_name}_trades"
+
+    # to_regclass() takes a plain string that Postgres parses like any
+    # other identifier reference: unquoted, it folds to lowercase before
+    # the catalog lookup. But the table was created via sql.Identifier(),
+    # which always emits a double-quoted, case-preserved identifier (e.g.
+    # CREATE TABLE execution."bybit_btc_RSI_14_reversal_trades"). Any
+    # strategy_name with uppercase letters (RSI_14_reversal,
+    # SMA_20_price_cross, ...) then has a table to_regclass can never
+    # find -- table_exists comes back False even though the table exists
+    # and is full of rows, so the summary silently falls into the
+    # "never run" branch and reports 0 trades / 0 PnL forever.
+    #
+    # Fix: render the qualified name through sql.Identifier + as_string()
+    # the same way CREATE TABLE did, so the quoting matches and
+    # to_regclass looks up the exact case-preserved name.
+    qualified_name = sql.SQL(".").join(
+        [sql.Identifier("execution"), sql.Identifier(trades_table)]
+    ).as_string(conn)
+    cursor.execute(sql.SQL("SELECT to_regclass(%s)"), (qualified_name,))
+    table_exists = cursor.fetchone()[0] is not None
+
+    if not table_exists:
+        cursor.close()
+        return {
+            "final_balance": final_balance,
+            "total_net_profit": 0.0,
+            "total_trades": 0,
+            "win_loss": {"wins": 0, "losses": 0, "win_rate": 0.0},
+            "open_position": open_position,
+        }
+
+    # NOTE: starting_balance must come from the EARLIEST trade specifically
+    # (ordered by trade_id, which is a plain incrementing counter assigned
+    # in chronological append order -- see append_execution_trades), NOT
+    # MIN(balance - net_pnl) across every row. balance - net_pnl on any
+    # given row is just that row's OWN pre-trade balance -- it only equals
+    # the strategy's true starting balance on the very first trade. Taking
+    # MIN() over all rows instead picks up whatever the lowest equity point
+    # the account ever touched was (e.g. after an early losing streak),
+    # which silently inflates total_net_profit any time equity dipped below
+    # its starting value before recovering -- final_balance minus a too-low
+    # "starting_balance" overstates the real net profit.
+    cursor.execute(sql.SQL(
+        "SELECT COUNT(*), "
+        "COUNT(*) FILTER (WHERE net_pnl > 0), "
+        "COUNT(*) FILTER (WHERE net_pnl <= 0), "
+        "(ARRAY_AGG(balance - net_pnl ORDER BY trade_id ASC))[1] "
+        "FROM {schema}.{table}"
+    ).format(
+        schema=sql.Identifier("execution"),
+        table=sql.Identifier(trades_table)
+    ))
+    total_trades, wins, losses, starting_balance = cursor.fetchone()
+    cursor.close()
+
+    total_trades = int(total_trades or 0)
+    wins = int(wins or 0)
+    losses = int(losses or 0)
+    win_rate = (wins / total_trades) if total_trades > 0 else 0.0
+
+    # starting_balance comes from the earliest trade's (lowest trade_id)
+    # pre-trade balance (balance - net_pnl on that row). If there are no
+    # trades yet, there's nothing to compute profit against -- net profit
+    # is 0.
+    if starting_balance is not None:
+        total_net_profit = float(final_balance) - float(starting_balance)
+    else:
+        total_net_profit = 0.0
+
+    return {
+        "final_balance": float(final_balance),
+        "total_net_profit": total_net_profit,
+        "total_trades": total_trades,
+        "win_loss": {"wins": wins, "losses": losses, "win_rate": win_rate},
+        "open_position": open_position,
+    }
+
+# ==========================================================
+# Execution Stats (execution.stats)
+# ==========================================================
+#
+# Execution's equivalent of build_equity_curve_from_ledger() /
+# save_simulator_stats() -- same shape, same reasoning, just pointed at
+# the execution schema instead of simulator. execution/main.py never
+# called either of these, so execution.stats was never being written --
+# this fills that gap so execution has the same performance-metrics
+# table simulator does, computed from execution's own (real-money) Trade
+# Ledger instead of simulator's paper one.
+
+def build_execution_equity_curve_from_ledger(conn, exchange, symbol, strategy_name, initial_balance):
+    """
+    Reconstruct a datetime-indexed equity curve from execution's own
+    Trade Ledger table (execution.{exchange}_{symbol}_{strategy_name}_trades),
+    the same shape run_backtest() returns as "equity_curve" (flat between
+    trades, steps at each exit) -- this is what
+    crypto_pipeline.stats.calculator.compute_stats() requires as input.
+
+    Identical to build_equity_curve_from_ledger() (simulator's version),
+    just reading from the execution schema. Execution never builds this
+    in memory either -- it only persists final balance (execution.positions)
+    and a trade ledger across possibly many separate scheduled runs -- so
+    stats has to read it back from the ledger table.
+
+    Uses the same sql.Identifier + as_string() qualified-name pattern
+    get_execution_summary() uses for to_regclass(), for the same reason:
+    strategy names like "RSI_14_reversal" have uppercase letters, and the
+    ledger table was created via sql.Identifier() (case-preserved,
+    double-quoted) -- an unquoted to_regclass() string would fold to
+    lowercase and never find it.
+
+    Returns a pandas Series indexed by exit_date_time, values = balance
+    after each trade, with one synthetic point at the very start
+    (index = first trade's entry_date_time, value = initial_balance) so
+    the curve doesn't start mid-air. Returns None if the ledger table
+    doesn't exist yet or has no rows.
+    """
+    cursor = conn.cursor()
+    safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
+    trades_table = f"{exchange}_{symbol}_{safe_strategy_name}_trades"
+
+    qualified_name = sql.SQL(".").join(
+        [sql.Identifier("execution"), sql.Identifier(trades_table)]
+    ).as_string(conn)
+    cursor.execute(sql.SQL("SELECT to_regclass(%s)"), (qualified_name,))
+    table_exists = cursor.fetchone()[0] is not None
+
+    if not table_exists:
+        cursor.close()
+        return None
+
+    cursor.execute(sql.SQL(
+        "SELECT entry_date_time, exit_date_time, balance FROM {schema}.{table} "
+        "ORDER BY exit_date_time ASC"
+    ).format(
+        schema=sql.Identifier("execution"),
+        table=sql.Identifier(trades_table)
+    ))
+    rows = cursor.fetchall()
+    cursor.close()
+
+    if not rows:
+        return None
+
+    first_entry_date_time = rows[0][0]
+    index = [first_entry_date_time] + [r[1] for r in rows]
+    values = [float(initial_balance)] + [float(r[2]) for r in rows]
+
+    equity = pd.Series(values, index=pd.to_datetime(index))
+    equity = equity[~equity.index.duplicated(keep="last")].sort_index()
+    return equity
+
+
+def save_execution_stats(conn, exchange, symbol, strategy_name, time_horizon, stats_dict):
+    """
+    Save one row of ALL performance stats for this exchange+symbol+
+    strategy combo into execution.stats -- ONE shared table for every
+    combo (same pattern as execution.positions), one row per
+    (exchange, symbol, strategy_name), upserted in place each run.
+
+    Identical to save_simulator_stats(), just pointed at the execution
+    schema -- see that function's docstring for the full column-discovery
+    reasoning (every quantstats metric key in stats_dict becomes its own
+    column via ADD COLUMN IF NOT EXISTS, no hardcoded column list).
+
+    This is a genuine UPSERT (INSERT ... ON CONFLICT DO UPDATE), matched
+    on (exchange, symbol, strategy_name) -- each combo gets exactly one
+    row, replaced in place every run.
+    """
+    cursor = conn.cursor()
+
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS execution"))
+
+    cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {schema}.stats (
+            id              SERIAL PRIMARY KEY,
+            exchange        TEXT NOT NULL,
+            symbol          TEXT NOT NULL,
+            strategy_name   TEXT NOT NULL,
+            time_horizon    TEXT,
+            total_trades    INTEGER,
+            updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+            UNIQUE (exchange, symbol, strategy_name)
+        )
+    """).format(
+        schema=sql.Identifier("execution")
+    ))
+    conn.commit()
+
+    # Defensive self-heal, same reasoning as save_simulator_stats: if
+    # execution.stats already exists from an earlier version of this
+    # function without the UNIQUE constraint, add it now instead of
+    # failing on ON CONFLICT below.
+    cursor.execute(sql.SQL("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'stats_exchange_symbol_strategy_name_key'
+                  AND conrelid = 'execution.stats'::regclass
+            ) THEN
+                ALTER TABLE execution.stats
+                    ADD CONSTRAINT stats_exchange_symbol_strategy_name_key
+                    UNIQUE (exchange, symbol, strategy_name);
+            END IF;
+        END $$;
+    """))
+    conn.commit()
+
+    _RESERVED = {"id", "exchange", "symbol", "strategy_name", "time_horizon", "total_trades", "updated_at"}
+    metric_cols = [k for k in stats_dict.keys() if k not in _RESERVED]
+
+    for col in metric_cols:
+        cursor.execute(sql.SQL(
+            "ALTER TABLE {schema}.stats ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION"
+        ).format(
+            schema=sql.Identifier("execution"),
+            col=sql.Identifier(col)
+        ))
+    conn.commit()
+
+    all_cols = ["exchange", "symbol", "strategy_name", "time_horizon", "total_trades"] + metric_cols
+    values = (
+        exchange,
+        symbol,
+        strategy_name,
+        time_horizon,
+        stats_dict.get("total_trades"),
+        *[_round4(stats_dict.get(m)) for m in metric_cols],
+    )
+
+    insert_cols = sql.SQL(", ").join(sql.Identifier(c) for c in all_cols) + sql.SQL(", updated_at")
+    placeholders = sql.SQL(", ").join(sql.Placeholder() for _ in all_cols) + sql.SQL(", NOW()")
+    update_set = sql.SQL(", ").join(
+        sql.SQL("{col} = EXCLUDED.{col}").format(col=sql.Identifier(c))
+        for c in (["time_horizon", "total_trades"] + metric_cols)
+    ) + sql.SQL(", updated_at = NOW()")
+
+    cursor.execute(sql.SQL("""
+        INSERT INTO {schema}.stats ({insert_cols})
+        VALUES ({placeholders})
+        ON CONFLICT (exchange, symbol, strategy_name) DO UPDATE SET
+            {update_set}
+    """).format(
+        schema=sql.Identifier("execution"),
+        insert_cols=insert_cols,
+        placeholders=placeholders,
+        update_set=update_set,
+    ), values)
+
+    conn.commit()
+    cursor.close()
+    logger.info(
+        f"Saved execution stats ({len(metric_cols)} metric column(s)): "
+        f"execution.stats ({exchange}/{symbol}/{strategy_name})"
+    )
