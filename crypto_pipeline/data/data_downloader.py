@@ -139,9 +139,6 @@ def get_data(exchange, symbol, start_date, end_date, timeframe="1h", config=None
                 )
                 live_df = parse_candles(raw_candles)
 
-                if not live_df.empty:
-                    live_df = live_df.iloc[:-1]
-
             except Exception as e:
                 logger.error(f"Live fetch failed for {exchange} | {symbol}: {e}. Using DB data only.")
                 live_df = pd.DataFrame()
@@ -155,10 +152,7 @@ def get_data(exchange, symbol, start_date, end_date, timeframe="1h", config=None
     one_min_df = pd.concat([db_df, live_df], ignore_index=True)
 
     resampled_df = resample(resample_timeframe, df=one_min_df.set_index("datetime"))
-    
-    if not resampled_df.empty:
-        resampled_df = resampled_df.iloc[:-1]
-    
+
     logger.info(f"Resampled {exchange} | {symbol} into {resample_timeframe}: {len(resampled_df)} candles")
 
     if df_1m:
