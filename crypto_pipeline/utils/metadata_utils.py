@@ -210,19 +210,33 @@ def get_data_rows(conn, exchange=None, symbol=None):
 
 def create_strategy_table(conn):
     """
-    One row per strategy definition -- the indicator + long/short condition
-    rules currently hardcoded in signals/config.yaml, stored as JSON so the
-    frontend can build arbitrary indicator/condition combinations without
-    new columns per indicator.
+    One row per strategy definition, scoped to one (exchange, coin) pair --
+    the indicator + long/short condition rules that live in
+    signals/strategies/*.yaml, stored as JSON so the frontend can build
+    arbitrary indicator/condition combinations without new columns per
+    indicator.
 
-    Strategy is GLOBAL now, not per-pair: the active strategy runs against
-    EVERY tracked pair in metadata.data, so there's no data_id FK here --
-    that's an intentional change from the earlier per-pair design, not an
-    oversight. timeframe is the resample target the strategy runs on (e.g.
-    "1h"), same as resample_timeframe in data_downloader.get_data().
+    exchange/coin scope each strategy row to one pair (e.g.
+    "binance"/"btc") so the execution folder can pick, per pair, which
+    strategy performed best in the simulator. This replaces the earlier
+    global design (one strategy applying to every pair) -- see
+    load_strategies_from_yaml(), which now inserts one row per
+    (strategy, exchange, coin) combination.
+
+    time_horizon is the resample target the strategy runs on (e.g. "2h"),
+    same as resample_timeframe in data_downloader.get_data() -- also used
+    by simulator/main.py to gate new entries.
+
+    take_profit/stop_loss are pulled out of strategy_config into their own
+    columns (not just buried in JSON) since every strategy yaml sets its
+    own TP/SL and the execution folder will want to filter/compare on
+    these directly.
 
     strategy_name is a short human-readable label (e.g. "RSI_14_reversal")
-    -- purely descriptive, not used for lookups, so it isn't unique.
+    matching each yaml file's strategy_name. It's unique per
+    (strategy_name, exchange, coin) -- the same strategy definition can
+    exist once per pair, so re-loading the strategies/ folder upserts per
+    pair instead of duplicating rows -- see load_strategies_from_yaml().
 
     One strategy + one backtest for now -- backtest settings aren't stored
     separately yet (see backtest/config.yaml); this table can grow a
@@ -231,11 +245,18 @@ def create_strategy_table(conn):
     cursor = conn.cursor()
     cursor.execute(sql.SQL("""
         CREATE TABLE IF NOT EXISTS {schema}.strategy (
-            strategy_id      SERIAL PRIMARY KEY,
-            strategy_name    TEXT NOT NULL,
-            timeframe        TEXT NOT NULL DEFAULT '1h',
-            strategy_config  JSONB NOT NULL,
-            created_at       TIMESTAMP NOT NULL DEFAULT now()
+            strategy_id       SERIAL PRIMARY KEY,
+            strategy_name     TEXT NOT NULL,
+            exchange          TEXT NOT NULL,
+            coin              TEXT NOT NULL,
+            time_horizon      TEXT NOT NULL DEFAULT '1h',
+            take_profit_type  TEXT,
+            take_profit_value NUMERIC,
+            stop_loss_type    TEXT,
+            stop_loss_value   NUMERIC,
+            strategy_config   JSONB NOT NULL,
+            created_at        TIMESTAMP NOT NULL DEFAULT now(),
+            UNIQUE (strategy_name, exchange, coin)
         )
     """).format(schema=sql.Identifier(SCHEMA)))
     conn.commit()
@@ -243,38 +264,62 @@ def create_strategy_table(conn):
     logger.info(f"Table ensured: {SCHEMA}.strategy")
 
 
-def insert_strategy(conn, strategy_name, strategy_config, timeframe="1h"):
+def insert_strategy(
+    conn, strategy_name, exchange, coin, strategy_config, time_horizon="1h",
+    take_profit_type=None, take_profit_value=None,
+    stop_loss_type=None, stop_loss_value=None,
+):
     """
-    Register a new global strategy definition. It applies to every pair in
-    metadata.data -- no data_id / exchange / symbol taken here.
+    Register a strategy definition for one (exchange, coin) pair, or
+    update it in place if that (strategy_name, exchange, coin) combination
+    already exists (upsert on the UNIQUE constraint) -- so re-loading
+    signals/strategies/*.yaml refreshes existing rows instead of
+    duplicating them.
 
     strategy_name: short human-readable label for this strategy (e.g.
     "RSI_14_reversal", "EMA_cross_trend") -- pick something that describes
     what the strategy does, since strategy_config alone is just raw JSON.
 
-    strategy_config: dict matching the shape of signals/config.yaml minus
-    the top-level "strategy" split -- i.e. indicator blocks (RSI, EMA, ...)
-    plus a "strategy" key with "long"/"short" condition lists. Stored as-is
-    in JSONB; signals/main.py's load_config()/split_config() can be swapped
-    to read this dict directly instead of parsing a yaml file.
+    exchange/coin: which pair this strategy row is scoped to (e.g.
+    "binance"/"btc") -- matches metadata.data's exchange/symbol. The same
+    strategy_name can have one row per pair.
 
-    Returns the new strategy_id. Each insert creates a new row (no upsert)
-    since a strategy is a new definition, not something keyed by a natural
-    unique constraint. The most recently inserted row is "the current
-    strategy" -- see get_current_strategy().
+    strategy_config: dict matching the shape of a signals/strategies/*.yaml
+    file minus strategy_name/time_horizon/take_profit/stop_loss (those are
+    now their own columns) -- i.e. indicator blocks (RSI, EMA, ...) plus a
+    "strategy" key with "long"/"short" condition lists. Stored as-is in
+    JSONB.
+
+    take_profit_type/value, stop_loss_type/value: pulled out of each
+    yaml's take_profit/stop_loss blocks (e.g. type="percentage", value=2.0)
+    so they're queryable columns instead of nested JSON.
+
+    Returns the strategy_id of the inserted or existing row.
     """
     cursor = conn.cursor()
     cursor.execute(sql.SQL("""
-        INSERT INTO {schema}.strategy (strategy_name, timeframe, strategy_config)
-        VALUES (%s, %s, %s)
+        INSERT INTO {schema}.strategy
+            (strategy_name, exchange, coin, time_horizon,
+             take_profit_type, take_profit_value,
+             stop_loss_type, stop_loss_value, strategy_config)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (strategy_name, exchange, coin) DO UPDATE SET
+            time_horizon = EXCLUDED.time_horizon,
+            take_profit_type = EXCLUDED.take_profit_type,
+            take_profit_value = EXCLUDED.take_profit_value,
+            stop_loss_type = EXCLUDED.stop_loss_type,
+            stop_loss_value = EXCLUDED.stop_loss_value,
+            strategy_config = EXCLUDED.strategy_config
         RETURNING strategy_id
     """).format(schema=sql.Identifier(SCHEMA)), (
-        strategy_name, timeframe, Json(strategy_config),
+        strategy_name, exchange, coin, time_horizon,
+        take_profit_type, take_profit_value,
+        stop_loss_type, stop_loss_value, Json(strategy_config),
     ))
     strategy_id = cursor.fetchone()[0]
     conn.commit()
     cursor.close()
-    logger.info(f"Inserted {SCHEMA}.strategy: {strategy_name!r} -> strategy_id={strategy_id}")
+    logger.info(f"Inserted {SCHEMA}.strategy: {strategy_name!r} ({exchange}/{coin}) -> strategy_id={strategy_id}")
     return strategy_id
 
 
@@ -284,7 +329,7 @@ def get_strategy(conn, strategy_id):
     """
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute(sql.SQL("""
-        SELECT strategy_id, strategy_name, timeframe, strategy_config, created_at
+        SELECT *
         FROM {schema}.strategy
         WHERE strategy_id = %s
     """).format(schema=sql.Identifier(SCHEMA)), (strategy_id,))
@@ -293,39 +338,132 @@ def get_strategy(conn, strategy_id):
     return dict(row) if row else None
 
 
-def get_current_strategy(conn):
+def get_current_strategy(conn, exchange, coin):
     """
-    Fetch the single active strategy -- the most recently inserted row in
-    metadata.strategy. This is what signals/main.py would call once per
-    run, then loop over every pair in metadata.data. Returns None if no
-    strategy has been inserted yet.
+    Fetch the most recently inserted strategy row for one (exchange, coin)
+    pair. This is what signals/main.py would call once per pair it's
+    running against. Returns None if no strategy has been inserted yet
+    for that pair.
     """
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute(sql.SQL("""
-        SELECT strategy_id, strategy_name, timeframe, strategy_config, created_at
+        SELECT *
         FROM {schema}.strategy
+        WHERE exchange = %s AND coin = %s
         ORDER BY created_at DESC, strategy_id DESC
         LIMIT 1
-    """).format(schema=sql.Identifier(SCHEMA)))
+    """).format(schema=sql.Identifier(SCHEMA)), (exchange, coin))
     row = cursor.fetchone()
     cursor.close()
     return dict(row) if row else None
 
 
-def get_strategies(conn):
+def get_strategies(conn, exchange=None, coin=None):
     """
-    Fetch all strategy rows, newest first. What a frontend "strategy
-    history" list would call.
+    Fetch strategy rows, newest first, optionally filtered by exchange
+    and/or coin. What a frontend "strategy history" list, or the
+    execution folder picking the best-performing strategy per pair, would
+    call.
     """
     cursor = conn.cursor(cursor_factory=RealDictCursor)
-    cursor.execute(sql.SQL("""
-        SELECT strategy_id, strategy_name, timeframe, strategy_config, created_at
-        FROM {schema}.strategy
-        ORDER BY created_at DESC, strategy_id DESC
-    """).format(schema=sql.Identifier(SCHEMA)))
+    query = sql.SQL("SELECT * FROM {schema}.strategy").format(schema=sql.Identifier(SCHEMA))
+    conditions = []
+    params = []
+
+    if exchange is not None:
+        conditions.append(sql.SQL("exchange = %s"))
+        params.append(exchange)
+    if coin is not None:
+        conditions.append(sql.SQL("coin = %s"))
+        params.append(coin)
+
+    if conditions:
+        query = query + sql.SQL(" WHERE ") + sql.SQL(" AND ").join(conditions)
+
+    query = query + sql.SQL(" ORDER BY created_at DESC, strategy_id DESC")
+
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     cursor.close()
     return [dict(row) for row in rows]
+
+
+def load_strategies_from_yaml(conn, strategies_dir, pairs=None):
+    """
+    Load every *.yaml file in signals/strategies/ into metadata.strategy,
+    one row per (strategy, exchange, coin) combination. Replaces
+    hand-editing signals/config.yaml -- once strategies live in the DB,
+    signals/main.py can pull a pair's active strategy from
+    get_current_strategy(exchange, coin) instead of parsing a yaml file.
+
+    Each yaml file is expected to have the same shape as the existing
+    strategies/*.yaml (strategy_name, time_horizon, take_profit, stop_loss,
+    plus indicator blocks and a "strategy" long/short block). strategy_name,
+    time_horizon, take_profit, stop_loss are pulled out into their own
+    columns; everything else (indicators + strategy conditions) is stored
+    as-is in strategy_config JSONB.
+
+    Since the yaml files don't specify exchange/coin (a strategy definition
+    is written once and can run on any pair), every strategy file is
+    inserted once per (exchange, coin) pair in `pairs` -- e.g. 15 strategy
+    files x 1 pair = 15 rows by default. Later, once the simulator has run
+    each strategy against each pair, the execution folder can pick the
+    best-performing row per pair.
+
+    Safe to re-run: insert_strategy() upserts on
+    (strategy_name, exchange, coin), so editing a strategy yaml and
+    re-running this just updates the existing rows for every pair.
+
+    Parameters
+    ----------
+    strategies_dir : str or Path
+        Path to the signals/strategies/ folder.
+    pairs : list of (exchange, coin) tuples, optional
+        Which pairs to insert each strategy for. Defaults to
+        [("bybit", "btc")].
+
+    Returns
+    -------
+    list of strategy_id's for every (strategy, pair) combination loaded
+    (existing or newly inserted).
+    """
+    import yaml
+    from pathlib import Path
+
+    if pairs is None:
+        pairs = [("bybit", "btc")]
+
+    strategies_dir = Path(strategies_dir)
+    strategy_ids = []
+
+    for yaml_path in sorted(strategies_dir.glob("*.yaml")):
+        with open(yaml_path, "r") as f:
+            config = yaml.safe_load(f)
+
+        strategy_name = config["strategy_name"]
+        time_horizon = config["time_horizon"]
+        take_profit = config.get("take_profit", {})
+        stop_loss = config.get("stop_loss", {})
+
+        # Everything except the fields now stored as their own columns.
+        strategy_config = {
+            k: v for k, v in config.items()
+            if k not in ("strategy_name", "time_horizon", "take_profit", "stop_loss")
+        }
+
+        for exchange, coin in pairs:
+            strategy_id = insert_strategy(
+                conn, strategy_name, exchange, coin, strategy_config,
+                time_horizon=time_horizon,
+                take_profit_type=take_profit.get("type"),
+                take_profit_value=take_profit.get("value"),
+                stop_loss_type=stop_loss.get("type"),
+                stop_loss_value=stop_loss.get("value"),
+            )
+            strategy_ids.append(strategy_id)
+
+    logger.info(f"Loaded {len(strategy_ids)} strategies from {strategies_dir} into {SCHEMA}.strategy.")
+    return strategy_ids
 
 
 # ==========================================================
