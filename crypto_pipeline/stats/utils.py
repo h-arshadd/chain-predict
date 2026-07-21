@@ -43,7 +43,8 @@ def to_json_safe(value):
     return str(value)
 
 
-def equity_to_returns(equity_curve: pd.Series, resample_freq: str = "D") -> pd.Series:
+def equity_to_returns(equity_curve: pd.Series, resample_freq: str = "D",
+                       min_periods: int = 10, auto_adjust_freq: bool = True) -> pd.Series:
     """
     Turn a 1-min (or any sub-daily) equity curve into a resampled returns
     series that quantstats' annualized ratios (periods_per_year=252
@@ -51,7 +52,56 @@ def equity_to_returns(equity_curve: pd.Series, resample_freq: str = "D") -> pd.S
 
     equity_curve : datetime-indexed balance series, e.g. run_backtest()'s
         "equity_curve" -- flat between trades, steps at each exit.
+
+    IMPORTANT -- the daily-resample trap:
+    resample_freq="D" silently collapses an equity curve that only spans
+    a few calendar days down to just 1-2 data points (resample("D").last()
+    keeps only the final value per calendar day). pct_change().dropna()
+    on 1-2 points yields a returns series of length 0 or 1 -- every
+    quantstats metric computed on a single return degenerates to near-
+    identical, statistically meaningless values across every strategy
+    (this is exactly the bug that made every strategy's stats look
+    suspiciously alike when the simulator had only ~2 days of history).
+    This doesn't raise or warn on its own -- the numbers still *look*
+    like real stats, they just aren't.
+
+    To guard against this silently happening again as new strategies get
+    reset or as data windows shrink for any other reason:
+      - auto_adjust_freq (default True): if resampling at resample_freq
+        would yield fewer than min_periods returns, step down through
+        progressively finer frequencies (H -> 30min -> 15min -> 5min ->
+        1min) until min_periods is met or 1-minute resolution is reached.
+        This keeps annualization roughly sane (periods_per_year should be
+        adjusted by the caller to match whatever frequency was actually
+        used -- see compute_stats(), which now returns the frequency it
+        picked).
+      - Callers needing the exact configured frequency with no fallback
+        can pass auto_adjust_freq=False.
+
+    Returns
+    -------
+    (returns, freq_used) : tuple[pd.Series, str]
+        freq_used is whichever frequency the series was actually resampled
+        at (may differ from resample_freq if auto_adjust_freq kicked in).
     """
-    resampled = equity_curve.resample(resample_freq).last().ffill()
-    returns = resampled.pct_change().dropna()
-    return returns
+    candidate_freqs = [resample_freq]
+    if auto_adjust_freq:
+        # Ordered finest-to-coarsest fallback ladder, only used if the
+        # requested frequency doesn't yield enough data points. "D" is not
+        # re-added here even if resample_freq wasn't "D" -- we only ever
+        # step DOWN to finer resolution, never up to coarser.
+        fallback_ladder = ["12h", "6h", "1h", "30min", "15min", "5min", "1min"]
+        candidate_freqs += [f for f in fallback_ladder if f != resample_freq]
+
+    freq_used = resample_freq
+    returns = pd.Series(dtype=float)
+    for freq in candidate_freqs:
+        resampled = equity_curve.resample(freq).last().ffill()
+        candidate_returns = resampled.pct_change().dropna()
+        freq_used = freq
+        returns = candidate_returns
+        if len(candidate_returns) >= min_periods or not auto_adjust_freq:
+            break
+        # else: too few points at this frequency -- try the next finer one
+
+    return returns, freq_used

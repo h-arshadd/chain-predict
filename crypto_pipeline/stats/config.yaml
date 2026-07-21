@@ -12,7 +12,32 @@ periods_per_year: 252
 # Resample the 1-min equity_curve to this frequency before computing
 # stats. QuantStats' annualization (periods_per_year above) assumes daily
 # returns, so "D" is the right default -- only change both together.
+#
+# NOTE: "D" silently collapses to almost no data points while a strategy's
+# trade history only spans a few calendar days (resample("D").last() keeps
+# only the final balance per day). auto_adjust_resample_freq below exists
+# specifically to guard against this -- it's what actually matters while
+# strategies are new; resample_freq here is really just the LONG-TERM
+# target once enough calendar days of history exist.
 resample_freq: "D"
+
+# If resampling at resample_freq would yield fewer than
+# min_periods_for_stats returns, automatically step down to a finer
+# frequency (12h -> 6h -> 1h -> 30min -> 15min -> 5min -> 1min) until
+# enough data points exist or 1-minute resolution is reached. periods_per_year
+# is adjusted to match whichever frequency actually gets used, so
+# annualized ratios (sharpe/sortino/calmar/etc.) stay roughly correctly
+# scaled either way. Set to false to always use resample_freq exactly as
+# configured, with no fallback.
+auto_adjust_resample_freq: true
+
+# Minimum number of resampled returns required before quantstats metrics
+# are considered meaningful. Below this, compute_stats() returns every
+# metric as None and sets insufficient_data: true instead of computing
+# ratios on too little data (a single data point can otherwise produce
+# near-identical-looking "stats" for every strategy regardless of actual
+# performance -- not a computation error, just statistically meaningless).
+min_periods_for_stats: 10
 
 # quantstats.stats functions that need something other than a plain
 # returns series (a benchmark series, mainly) -- skipped automatically

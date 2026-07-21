@@ -71,11 +71,45 @@ def discover_metrics(exclude: list = None) -> dict:
     return discovered
 
 
+def _safe_max_drawdown(equity: pd.Series) -> float:
+    """
+    Compute max drawdown directly from an equity/price series, bypassing
+    quantstats.stats.max_drawdown()'s baseline-guessing heuristic.
+
+    quantstats==0.0.81's max_drawdown() tries to guess whether the first
+    value came from its own to_prices() conversion (which defaults to a
+    base of 1e5) purely from magnitude: any first_price > 1000 is assumed
+    to have that 100,000 baseline, and the "no drawdown" reference point
+    is hardcoded to 1e5 rather than the series' own actual starting value
+    (see quantstats.stats._get_baseline_value). A real equity curve that
+    just happens to start around a normal account balance -- e.g. $10,000
+    -- falls squarely in that ">1000" bucket, so quantstats compares
+    ~$10,000 against a baseline of $100,000 and reports a drawdown near
+    -90% even when the account barely moved. This is a quantstats bug, not
+    a property of our data -- confirmed by reproducing it directly against
+    _get_baseline_value's source.
+
+    True max drawdown is just: min over time of (equity / running-peak - 1),
+    using the series' own actual starting value as the initial peak -- no
+    baseline guessing needed.
+    """
+    if len(equity) == 0:
+        return 0.0
+    running_peak = equity.cummax()
+    drawdown = equity / running_peak - 1.0
+    return float(drawdown.min())
+
+
 def _call_metric(func, returns: pd.Series, equity: pd.Series, rf: float, periods: int):
     """Calls one quantstats.stats function with whatever input/kwargs it accepts."""
     name = func.__name__
-    params = inspect.signature(func).parameters
 
+    # max_drawdown specifically bypasses quantstats entirely -- see
+    # _safe_max_drawdown()'s docstring for why.
+    if name == "max_drawdown":
+        return _safe_max_drawdown(equity)
+
+    params = inspect.signature(func).parameters
     series = equity if name in _PRICE_INPUT_METRICS else returns
 
     kwargs = {}

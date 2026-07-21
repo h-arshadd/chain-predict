@@ -7,10 +7,11 @@ Entry point of the Simulator Module.
 Meant to be run repeatedly (Task Scheduler -> run_simulator.bat), the same
 way run_pipeline.bat drives the data pipelines. Each run:
 
-  1. Loads every strategy config in signals/strategies/*.yaml (10-20
-     strategies, each a self-contained file: indicators, long/short rules,
-     strategy_name, and this strategy's own time_horizon).
-  2. For every (exchange, symbol, strategy) combination:
+  1. Loads every strategy for a pair from metadata.strategy (10-20
+     strategies, each a row: indicators, long/short rules, strategy_name,
+     and this strategy's own time_horizon/take_profit/stop_loss).
+  2. For every (exchange, symbol) pair registered (and active) in
+     simulator.config, and every strategy for that pair:
        a. Pulls live OHLCV via get_data() (same call every other module
           uses -- reads whatever's in the DB and fetches any live gap from
           the exchange), resampled to THIS strategy's time_horizon.
@@ -35,26 +36,28 @@ way run_pipeline.bat drives the data pipelines. Each run:
           inspect a strategy's ledger.
 
 Execution settings (initial_balance, position_size, commission, slippage,
-allow_long, allow_short, max_open_positions) come from simulator/config.yaml
-and are shared across every strategy. take_profit/stop_loss are PER-STRATEGY
-instead -- every strategy's own YAML under signals/strategies/ must set its
-own take_profit/stop_loss (see load_strategies(): it's a required key,
-same as strategy_name/time_horizon). Each strategy's own indicators/
-conditions/rule and time_horizon also live only in its own file under
-signals/strategies/.
+allow_long, allow_short, max_open_positions, is_active) come from
+simulator.config (see db_utils.get_simulator_config), one row per
+(exchange, symbol) pair, and are shared across every strategy run against
+that pair. take_profit/stop_loss are PER-STRATEGY instead -- every
+strategy's own metadata.strategy row has its own take_profit_value/
+stop_loss_value columns. Each strategy's own indicators/conditions/rule
+and time_horizon also live only in its own metadata.strategy row
+(strategy_config JSONB + time_horizon column).
 
-The universe (which exchanges and coins/symbols to run every strategy on)
-also lives in simulator/config.yaml, under "exchanges" and "symbols" --
-add or remove a coin there and it's automatically picked up for every
-strategy, no code changes needed.
+The universe (which (exchange, symbol) pairs to run every strategy on) is
+simply every row in simulator.config where is_active is TRUE -- see
+db_utils.get_simulator_universe(). Add a pair by inserting a row (or
+flipping is_active back to TRUE), remove one by setting is_active to
+FALSE -- no code changes needed either way. simulator/config.yaml is no
+longer read.
 """
 
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 
-from crypto_pipeline.simulator.simulator import load_config, step_candle
+from crypto_pipeline.simulator.simulator import step_candle
 from crypto_pipeline.signals.main import generate_signals
 from crypto_pipeline.data.data_downloader import get_data
 from crypto_pipeline.utils.db_utils import (
@@ -65,13 +68,14 @@ from crypto_pipeline.utils.db_utils import (
     get_simulator_summary,
     build_equity_curve_from_ledger,
     save_simulator_stats,
+    get_simulator_universe,
+    get_simulator_config,
+)
+from crypto_pipeline.utils.metadata_utils import (
+    get_db_connection as get_metadata_connection,
+    get_strategies,
 )
 from crypto_pipeline.stats.calculator import compute_stats
-
-# Path is crypto_pipeline/simulator/main.py -> parent.parent gets to
-# crypto_pipeline/ -- then straight into signals/strategies/ (flat layout:
-# crypto_pipeline/signals/ and crypto_pipeline/simulator/ are siblings).
-STRATEGIES_DIR = Path(__file__).parent.parent / "signals" / "strategies"
 
 # stats/config.yaml -- same config compute_stats() takes everywhere else
 # (risk_free_rate, periods_per_year, resample_freq, exclude_metrics,
@@ -80,6 +84,7 @@ STRATEGIES_DIR = Path(__file__).parent.parent / "signals" / "strategies"
 # internal default, not meant to be reused elsewhere).
 def _load_stats_config():
     import yaml
+    from pathlib import Path
     stats_config_path = Path(__file__).parent.parent / "stats" / "config.yaml"
     with open(stats_config_path, "r") as f:
         return yaml.safe_load(f)
@@ -88,70 +93,66 @@ def _load_stats_config():
 STATS_CONFIG = _load_stats_config()
 
 
-def load_strategies(strategies_dir=None):
+def build_strategy_config_dict(strategy_row: dict) -> dict:
     """
-    Load every *.yaml file under signals/strategies/ as one strategy config
-    each. Returns a list of dicts, each the full parsed YAML (so it has
-    strategy_name, time_horizon, take_profit, stop_loss, indicator blocks,
-    and the strategy rules all in one place) plus "_config_path" (str) so
-    generate_signals() can be pointed at that exact file.
+    Reassemble a metadata.strategy row back into the full config dict
+    shape generate_signals()/signals/strategies/*.yaml used to have:
+    strategy_name, time_horizon, take_profit, stop_loss, plus the
+    indicator/strategy blocks from strategy_config JSONB, all in one dict.
 
-    Add or remove a strategy by adding/removing a file here -- nothing else
-    needs to change to pick it up.
+    metadata.strategy stores strategy_name/time_horizon/take_profit_*/
+    stop_loss_* as their own columns (not inside strategy_config), so this
+    just merges them back together -- the inverse of the split done in
+    metadata_utils.load_strategies_from_yaml().
     """
-    if strategies_dir is None:
-        strategies_dir = STRATEGIES_DIR
-
-    import yaml
-
-    strategies = []
-    for path in sorted(Path(strategies_dir).glob("*.yaml")):
-        with open(path, "r") as f:
-            strategy_config = yaml.safe_load(f)
-
-        if "strategy_name" not in strategy_config:
-            raise ValueError(f"{path} is missing required key 'strategy_name'.")
-        if "time_horizon" not in strategy_config:
-            raise ValueError(f"{path} is missing required key 'time_horizon'.")
-        if "take_profit" not in strategy_config:
-            raise ValueError(f"{path} is missing required key 'take_profit'.")
-        if "stop_loss" not in strategy_config:
-            raise ValueError(f"{path} is missing required key 'stop_loss'.")
-
-        strategy_config["_config_path"] = str(path)
-        strategies.append(strategy_config)
-
-    return strategies
+    config = dict(strategy_row["strategy_config"])
+    config["strategy_name"] = strategy_row["strategy_name"]
+    config["time_horizon"] = strategy_row["time_horizon"]
+    # take_profit_value/stop_loss_value are Postgres NUMERIC -> psycopg2
+    # returns them as decimal.Decimal; cast to float so this dict matches
+    # the plain-float shape a parsed yaml file always had.
+    config["take_profit"] = {
+        "type": strategy_row["take_profit_type"],
+        "value": float(strategy_row["take_profit_value"]),
+    }
+    config["stop_loss"] = {
+        "type": strategy_row["stop_loss_type"],
+        "value": float(strategy_row["stop_loss_value"]),
+    }
+    return config
 
 
-def parse_simulator_start_date(config: dict):
+def parse_simulator_start_date(start_date_str: str):
     """
-    Parse config["start_date"] (simulator/config.yaml) into a datetime.
-    Only used as the fallback data-pull start for a (exchange, symbol,
-    strategy) combo that has never run before -- once state exists,
-    last_processed from the DB always wins instead (see run_simulator()).
+    Parse a pair's simulator.config start_date (from get_simulator_config())
+    into a datetime. Only used as the fallback data-pull start for a
+    (exchange, symbol, strategy) combo that has never run before -- once
+    state exists, last_processed from the DB always wins instead (see
+    run_simulator()).
 
     Same date formats as backtest's parse_backtest_dates, minus the "now"
     special case since start_date is never "now" here (this is the start,
     not the end -- end_date is always "now" for a live/paper simulator,
     handled directly in run_simulator()).
     """
-    value = config["start_date"]
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
         try:
-            return datetime.strptime(value, fmt)
+            return datetime.strptime(start_date_str, fmt)
         except ValueError:
             continue
-    raise ValueError(f"Unrecognized date format for start_date: {value!r}")
+    raise ValueError(f"Unrecognized date format for start_date: {start_date_str!r}")
 
 
-def build_resampled_signals(resampled_df, config_path):
+def build_resampled_signals(resampled_df, strategy_config_dict):
     """
-    Run the signal pipeline on resampled OHLCV for ONE strategy (identified
-    by config_path), same pattern as backtest/main.py's build_signals().
+    Run the signal pipeline on resampled OHLCV for ONE strategy (a dict
+    loaded from metadata.strategy -- strategy_config merged with its
+    time_horizon/take_profit/stop_loss columns, same shape a parsed
+    signals/strategies/*.yaml file used to have), same pattern as
+    backtest/main.py's build_signals().
     Returns datetime/signal only, warm-up rows dropped.
     """
-    indicator_df, condition_df, signal_series = generate_signals(resampled_df, config_path=config_path)
+    indicator_df, condition_df, signal_series = generate_signals(resampled_df, config_dict=strategy_config_dict)
 
     combined = pd.concat([indicator_df, condition_df], axis=1)
     combined["signal"] = signal_series
@@ -160,26 +161,33 @@ def build_resampled_signals(resampled_df, config_path):
     return combined[["datetime", "signal"]]
 
 
-def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strategy_config_path,
+def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strategy_config_dict,
                    default_start_date, take_profit_pct, stop_loss_pct):
     """
     Advance one exchange+symbol+strategy simulation by however many new
     1-minute candles are available. Returns the number of candles processed.
 
     time_horizon is THIS strategy's own resampled timeframe (e.g. "2h"),
-    read from its config file -- controls both how signals are generated
-    (resample target) and the entry gate below (a new signal only takes
-    effect on the 1-minute candle where a new time_horizon candle closes).
-    It does NOT change how often TP/SL is checked -- that's every 1-minute
-    candle inside step_candle(), independent of time horizon.
+    read from its metadata.strategy row -- controls both how signals are
+    generated (resample target) and the entry gate below (a new signal
+    only takes effect on the 1-minute candle where a new time_horizon
+    candle closes). It does NOT change how often TP/SL is checked --
+    that's every 1-minute candle inside step_candle(), independent of
+    time horizon.
+
+    strategy_config_dict : dict -- this strategy's full config as loaded
+    from metadata.strategy (strategy_config JSONB merged with its
+    time_horizon/take_profit/stop_loss columns), same shape a parsed
+    signals/strategies/*.yaml file used to have. Passed straight through
+    to build_resampled_signals() / generate_signals().
 
     take_profit_pct, stop_loss_pct : float -- THIS strategy's own TP/SL
-    percentages, read directly from its own YAML (required key). Passed
+    percentages, read directly from its metadata.strategy row. Passed
     straight through to step_candle().
 
-    default_start_date : datetime -- config["start_date"] from
-    simulator/config.yaml, parsed. Only used if this is the very first run
-    for this (exchange, symbol, strategy) combo (no saved state yet).
+    default_start_date : datetime -- this pair's simulator.config
+    start_date, parsed. Only used if this is the very first run for this
+    (exchange, symbol, strategy) combo (no saved state yet).
     """
     conn = get_db_connection()
     try:
@@ -224,7 +232,7 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
     if ohlcv_resampled.empty:
         signals = pd.DataFrame(columns=["datetime", "signal"])
     else:
-        signals = build_resampled_signals(ohlcv_resampled, strategy_config_path)
+        signals = build_resampled_signals(ohlcv_resampled, strategy_config_dict)
 
     # Time-horizon gate: a signal only takes effect on the first 1-minute
     # candle at or after its resampled-timeframe candle has closed. Look
@@ -369,38 +377,75 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
 
 if __name__ == "__main__":
 
-    config = load_config()  # simulator/config.yaml -- execution settings + universe (exchanges/symbols), shared by all strategies
-    default_start_date = parse_simulator_start_date(config)
+    # Universe: every (exchange, symbol) pair currently active in
+    # simulator.config -- replaces simulator/config.yaml's exchanges/symbols
+    # lists. Flip a pair's is_active to False (e.g. from a frontend) to
+    # stop it from running without deleting its history.
+    conn = get_db_connection()
+    try:
+        universe = get_simulator_universe(conn)
+    finally:
+        conn.close()
 
-    strategies = load_strategies()
-    if not strategies:
-        raise RuntimeError(f"No strategy files found under {STRATEGIES_DIR}. Add at least one *.yaml there.")
+    if not universe:
+        raise RuntimeError(
+            "No active (exchange, symbol) pairs found in simulator.config. "
+            "Call save_simulator_config() for at least one pair first."
+        )
 
-    print(f"Loaded {len(strategies)} strategies: {[s['strategy_name'] for s in strategies]}")
+    print(f"Active universe: {universe}")
 
-    # Universe (which exchanges/coins to run every strategy on) comes from
-    # simulator/config.yaml -- edit the "exchanges"/"symbols" lists there to
-    # add or remove a coin, nothing here needs to change.
-    exchanges = config["exchanges"]
-    symbols = config["symbols"]
+    for exchange, symbol in universe:
+        # Execution settings for THIS pair (initial_balance, position_size,
+        # commission, slippage, allow_long, allow_short, max_open_positions)
+        # -- shared across every strategy run against this pair, same as
+        # simulator/config.yaml used to be shared across all strategies.
+        conn = get_db_connection()
+        try:
+            config = get_simulator_config(conn, exchange, symbol)
+        finally:
+            conn.close()
 
-    # One shared simulator.positions table (one row per exchange+symbol+strategy)
-    # plus one Trade Ledger table per (exchange, symbol, strategy) -- see
-    # get_simulator_state/save_simulator_state/append_simulator_trades in
-    # db_utils.py.
-    for strategy_config in strategies:
-        strategy_name = strategy_config["strategy_name"]
-        time_horizon = strategy_config["time_horizon"]
-        strategy_config_path = strategy_config["_config_path"]
+        if config is None:
+            print(f"{exchange} {symbol}: no simulator.config row -- skipping.")
+            continue
 
-        # Every strategy YAML has its own take_profit/stop_loss (required,
-        # enforced in load_strategies()) -- no shared default across strategies.
-        take_profit_pct = strategy_config["take_profit"]["value"]
-        stop_loss_pct = strategy_config["stop_loss"]["value"]
+        default_start_date = parse_simulator_start_date(config["start_date"])
 
-        for exchange in exchanges:
-            for symbol in symbols:
-                run_simulator(
-                    exchange, symbol, config, strategy_name, time_horizon, strategy_config_path,
-                    default_start_date, take_profit_pct, stop_loss_pct
-                )
+        # Every strategy registered for THIS (exchange, symbol) pair in
+        # metadata.strategy.
+        metadata_conn = get_metadata_connection()
+        try:
+            strategy_rows = get_strategies(metadata_conn, exchange=exchange, coin=symbol)
+        finally:
+            metadata_conn.close()
+
+        if not strategy_rows:
+            print(f"{exchange} {symbol}: no strategies found in metadata.strategy -- skipping.")
+            continue
+
+        print(f"{exchange} {symbol}: {len(strategy_rows)} strategies -- "
+              f"{[s['strategy_name'] for s in strategy_rows]}")
+
+        # One shared simulator.positions table (one row per exchange+symbol+strategy)
+        # plus one Trade Ledger table per (exchange, symbol, strategy) -- see
+        # get_simulator_state/save_simulator_state/append_simulator_trades in
+        # db_utils.py.
+        for strategy_row in strategy_rows:
+            strategy_name = strategy_row["strategy_name"]
+            time_horizon = strategy_row["time_horizon"]
+            strategy_config_dict = build_strategy_config_dict(strategy_row)
+
+            # Every strategy row has its own take_profit_value/stop_loss_value
+            # -- no shared default across strategies.
+            # Postgres NUMERIC columns come back from psycopg2 as
+            # decimal.Decimal, not float -- cast here so downstream math in
+            # simulator.py (entry_price * (1 + tp_pct), plain floats) never
+            # hits a "float * Decimal" TypeError.
+            take_profit_pct = float(strategy_row["take_profit_value"])
+            stop_loss_pct = float(strategy_row["stop_loss_value"])
+
+            run_simulator(
+                exchange, symbol, config, strategy_name, time_horizon, strategy_config_dict,
+                default_start_date, take_profit_pct, stop_loss_pct
+            )
