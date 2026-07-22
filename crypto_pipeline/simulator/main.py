@@ -123,27 +123,6 @@ def build_strategy_config_dict(strategy_row: dict) -> dict:
     return config
 
 
-def parse_simulator_start_date(start_date_str: str):
-    """
-    Parse a pair's simulator.config start_date (from get_simulator_config())
-    into a datetime. Only used as the fallback data-pull start for a
-    (exchange, symbol, strategy) combo that has never run before -- once
-    state exists, last_processed from the DB always wins instead (see
-    run_simulator()).
-
-    Same date formats as backtest's parse_backtest_dates, minus the "now"
-    special case since start_date is never "now" here (this is the start,
-    not the end -- end_date is always "now" for a live/paper simulator,
-    handled directly in run_simulator()).
-    """
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(start_date_str, fmt)
-        except ValueError:
-            continue
-    raise ValueError(f"Unrecognized date format for start_date: {start_date_str!r}")
-
-
 def build_resampled_signals(resampled_df, strategy_config_dict):
     """
     Run the signal pipeline on resampled OHLCV for ONE strategy (a dict
@@ -163,7 +142,7 @@ def build_resampled_signals(resampled_df, strategy_config_dict):
 
 
 def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strategy_config_dict,
-                   default_start_date, take_profit_pct, stop_loss_pct):
+                   take_profit_pct, stop_loss_pct):
     """
     Advance one exchange+symbol+strategy simulation by however many new
     1-minute candles are available. Returns the number of candles processed.
@@ -186,15 +165,19 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
     percentages, read directly from its metadata.strategy row. Passed
     straight through to step_candle().
 
-    default_start_date : datetime -- this pair's simulator.config
-    start_date, parsed. Only used if this is the very first run for this
-    (exchange, symbol, strategy) combo (no saved state yet).
+    A pair's very first run no longer falls back to a configured
+    start_date (that column/field is gone) -- see the is_first_run
+    branch below, which mirrors execution/main.py's first-run behavior
+    instead: start clean from "now", record only last_processed, no
+    historical backlog processed.
     """
     conn = get_db_connection()
     try:
         state = get_simulator_state(conn, exchange, symbol, strategy_name)
     finally:
         conn.close()
+
+    is_first_run = state is None
 
     if state is None:
         balance = config["initial_balance"]
@@ -205,17 +188,49 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
         position = state["position"]
         last_processed = state["last_processed"]
 
-    # Pull live 1m data (+ resampled, for signals) starting right after
-    # whatever we've already processed. First run ever for this
-    # (exchange, symbol, strategy): no last_processed to resume from, so
-    # fall back to config["start_date"] (simulator/config.yaml) instead --
-    # set that to wherever your DB's data actually begins.
-    start_date = last_processed if last_processed is not None else default_start_date
+    if is_first_run:
+        # First time this (exchange, symbol, strategy) has ever run --
+        # there's no last_processed to resume from. Previously this fell
+        # back to simulator.config's start_date and walked everything
+        # from there, which could be days/weeks of historical backlog
+        # processed as if it were live. Same fix as execution/main.py:
+        # start clean from THIS moment forward instead. Pull just enough
+        # recent data to know "now", record the latest 1-minute candle as
+        # last_processed, and do nothing else this run -- no signals
+        # generated, no trades opened. The very next run will only see
+        # genuinely new candles from here on, same as every subsequent
+        # run already works.
+        result = get_data(
+            exchange=exchange,
+            symbol=symbol,
+            start_date="now",
+            end_date="now",
+            timeframe=time_horizon,
+            df_1m=True,
+            drop_last_1m=False,
+        )
+        ohlcv_1m = result["one_min"]
+        last_seen = ohlcv_1m["datetime"].iloc[-1].to_pydatetime() if not ohlcv_1m.empty else None
 
+        conn = get_db_connection()
+        try:
+            cumulative_pnl = round(balance - config["initial_balance"], 4)
+            save_simulator_state(conn, exchange, symbol, strategy_name, time_horizon, last_seen, round(balance, 4), position, cumulative_pnl)
+        finally:
+            conn.close()
+
+        print(
+            f"{exchange} {symbol} ({strategy_name}): first run -- starting fresh from "
+            f"{last_seen}, no historical backlog processed. Next run will pick up new candles from here."
+        )
+        return 0
+
+    # Pull live 1m data (+ resampled, for signals) starting right after
+    # whatever we've already processed.
     result = get_data(
         exchange=exchange,
         symbol=symbol,
-        start_date=start_date,
+        start_date=last_processed,
         end_date="now",
         timeframe=time_horizon,
         df_1m=True,
@@ -412,8 +427,6 @@ if __name__ == "__main__":
             print(f"{exchange} {symbol}: no simulator.config row -- skipping.")
             continue
 
-        default_start_date = parse_simulator_start_date(config["start_date"])
-
         # Every strategy registered for THIS (exchange, symbol) pair in
         # metadata.strategy, filtered down to only the ones with
         # simulator_enabled = True -- False means this specific strategy
@@ -454,5 +467,5 @@ if __name__ == "__main__":
 
             run_simulator(
                 exchange, symbol, config, strategy_name, time_horizon, strategy_config_dict,
-                default_start_date, take_profit_pct, stop_loss_pct
+                take_profit_pct, stop_loss_pct
             )
