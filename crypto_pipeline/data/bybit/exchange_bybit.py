@@ -40,7 +40,7 @@ class BybitExchange:
         expects — this stays correct automatically if that schema changes.
         """
         response = self.client.get_kline(
-            category="spot",
+            category="linear",
             symbol=symbol,
             interval=INTERVAL,
             start=start_sec * 1000,
