@@ -2,7 +2,7 @@
 exchange: "binance"
 
 # Trading pairs to fetch
-symbols: ["doge", "sol", "btc", "eth", "ada", "ltc", "mina", "sui"]
+symbols: ["btc"]
 
 # Candlestick timeframe to fetch and store
 time_horizon: "1m"
