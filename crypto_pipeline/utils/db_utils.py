@@ -1016,8 +1016,8 @@ def save_simulator_stats(conn, exchange, symbol, strategy_name, time_horizon, st
 # Simulator Config (simulator.config)
 # ==========================================================
 #
-# Moves simulator/config.yaml's execution settings (start_date,
-# initial_balance, position_size, commission, slippage, allow_long,
+# Moves simulator/config.yaml's execution settings (initial_balance,
+# position_size, commission, slippage, allow_long,
 # allow_short, max_open_positions) into the DB, one row per (exchange,
 # symbol) -- so simulator/main.py reads its settings from here instead of
 # the local yaml file. The universe itself (which exchange/symbol pairs
@@ -1039,9 +1039,17 @@ def get_simulator_config(conn, exchange, symbol):
     shared across every strategy run against that pair, same as
     simulator/config.yaml being shared across all strategies today).
 
-    Returns a dict with keys: start_date, initial_balance, position_size
+    Returns a dict with keys: initial_balance, position_size
     (dict: type/value), commission, slippage, allow_long, allow_short,
     max_open_positions.
+
+    NOTE: start_date is no longer part of this config. A pair's very
+    first simulator run now always starts clean from "now" instead of
+    falling back to a configured start_date (see simulator/main.py's
+    run_simulator() -- same first-run behavior execution/main.py already
+    used). This table is recreated without the start_date column; if
+    you have an existing table with that column from before this
+    change, drop/recreate simulator.config yourself before re-running.
     """
     cursor = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -1052,7 +1060,6 @@ def get_simulator_config(conn, exchange, symbol):
             id                   SERIAL PRIMARY KEY,
             exchange             TEXT NOT NULL,
             symbol               TEXT NOT NULL,
-            start_date           TEXT NOT NULL,
             initial_balance      DOUBLE PRECISION NOT NULL,
             position_size        JSONB NOT NULL,
             commission           DOUBLE PRECISION NOT NULL,
@@ -1067,7 +1074,7 @@ def get_simulator_config(conn, exchange, symbol):
     conn.commit()
 
     cursor.execute(sql.SQL("""
-        SELECT start_date, initial_balance, position_size, commission,
+        SELECT initial_balance, position_size, commission,
                slippage, allow_long, allow_short, max_open_positions
         FROM {schema}.config
         WHERE exchange = %s AND symbol = %s
@@ -1078,7 +1085,7 @@ def get_simulator_config(conn, exchange, symbol):
 
 
 def save_simulator_config(
-    conn, exchange, symbol, start_date, initial_balance, position_size,
+    conn, exchange, symbol, initial_balance, position_size,
     commission, slippage, allow_long=True, allow_short=True, max_open_positions=1,
 ):
     """
@@ -1096,6 +1103,11 @@ def save_simulator_config(
     To stop simulator/main.py from running a pair, delete its row (or
     just don't run the module for it); there's no partial-pause state.
 
+    NOTE: start_date is no longer a field here -- a pair's very first
+    simulator run now always starts clean from "now" instead (see
+    simulator/main.py's run_simulator()), same first-run behavior
+    execution/main.py already used.
+
     NOTE: the CREATE TABLE here must stay in sync with the one in
     get_simulator_config (including the UNIQUE constraint) -- same
     reasoning as simulator.positions/simulator.stats elsewhere in this
@@ -1110,7 +1122,6 @@ def save_simulator_config(
             id                   SERIAL PRIMARY KEY,
             exchange             TEXT NOT NULL,
             symbol               TEXT NOT NULL,
-            start_date           TEXT NOT NULL,
             initial_balance      DOUBLE PRECISION NOT NULL,
             position_size        JSONB NOT NULL,
             commission           DOUBLE PRECISION NOT NULL,
@@ -1126,11 +1137,10 @@ def save_simulator_config(
 
     cursor.execute(sql.SQL("""
         INSERT INTO {schema}.config
-            (exchange, symbol, start_date, initial_balance, position_size,
+            (exchange, symbol, initial_balance, position_size,
              commission, slippage, allow_long, allow_short, max_open_positions)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (exchange, symbol) DO UPDATE SET
-            start_date = EXCLUDED.start_date,
             initial_balance = EXCLUDED.initial_balance,
             position_size = EXCLUDED.position_size,
             commission = EXCLUDED.commission,
@@ -1140,7 +1150,7 @@ def save_simulator_config(
             max_open_positions = EXCLUDED.max_open_positions,
             updated_at = now()
     """).format(schema=sql.Identifier("simulator")), (
-        exchange, symbol, start_date, initial_balance, Json(position_size),
+        exchange, symbol, initial_balance, Json(position_size),
         commission, slippage, allow_long, allow_short, max_open_positions,
     ))
     conn.commit()
@@ -1165,7 +1175,6 @@ def get_simulator_universe(conn):
             id                   SERIAL PRIMARY KEY,
             exchange             TEXT NOT NULL,
             symbol               TEXT NOT NULL,
-            start_date           TEXT NOT NULL,
             initial_balance      DOUBLE PRECISION NOT NULL,
             position_size        JSONB NOT NULL,
             commission           DOUBLE PRECISION NOT NULL,
