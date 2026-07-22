@@ -1208,8 +1208,11 @@ def get_execution_config(conn, exchange, symbol):
 
     Schema: execution.config -- ONE row per (exchange, symbol) pair.
 
-    Returns a dict with keys: strategy_name, start_date, initial_balance,
-    position_size (dict: type/value), commission, slippage, allow_long,
+    Returns a dict with keys: strategy_name, initial_balance,
+    position_size (dict: type/value -- reconstructed here from the two
+    flat position_size_type/position_size_value columns so
+    _position_size() in simulator.py, which expects config["position_size"]
+    as a dict, keeps working unchanged), commission, slippage, allow_long,
     allow_short, max_open_positions.
     """
     cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -1222,9 +1225,9 @@ def get_execution_config(conn, exchange, symbol):
             exchange             TEXT NOT NULL,
             symbol               TEXT NOT NULL,
             strategy_name        TEXT NOT NULL,
-            start_date           TEXT NOT NULL,
             initial_balance      DOUBLE PRECISION NOT NULL,
-            position_size        JSONB NOT NULL,
+            position_size_type   TEXT NOT NULL,
+            position_size_value  DOUBLE PRECISION NOT NULL,
             commission           DOUBLE PRECISION NOT NULL,
             slippage             DOUBLE PRECISION NOT NULL,
             allow_long           BOOLEAN NOT NULL DEFAULT TRUE,
@@ -1237,18 +1240,27 @@ def get_execution_config(conn, exchange, symbol):
     conn.commit()
 
     cursor.execute(sql.SQL("""
-        SELECT strategy_name, start_date, initial_balance, position_size, commission,
-               slippage, allow_long, allow_short, max_open_positions
+        SELECT strategy_name, initial_balance, position_size_type, position_size_value,
+               commission, slippage, allow_long, allow_short, max_open_positions
         FROM {schema}.config
         WHERE exchange = %s AND symbol = %s
     """).format(schema=sql.Identifier("execution")), (exchange, symbol))
     row = cursor.fetchone()
     cursor.close()
-    return dict(row) if row else None
+
+    if row is None:
+        return None
+
+    row = dict(row)
+    row["position_size"] = {
+        "type": row.pop("position_size_type"),
+        "value": row.pop("position_size_value"),
+    }
+    return row
 
 
 def save_execution_config(
-    conn, exchange, symbol, strategy_name, start_date, initial_balance, position_size,
+    conn, exchange, symbol, strategy_name, initial_balance, position_size,
     commission, slippage, allow_long=True, allow_short=True, max_open_positions=1,
 ):
     """
@@ -1260,7 +1272,9 @@ def save_execution_config(
     strategy_name: which single metadata.strategy row (for this exchange/
     symbol) execution/main.py should trade -- e.g. "RSI_14_reversal".
 
-    position_size: dict, e.g. {"type": "fixed_percentage", "value": 10}.
+    position_size: dict, e.g. {"type": "fixed_percentage", "value": 10} --
+    stored as two flat columns (position_size_type, position_size_value)
+    rather than JSONB, so they're queryable/editable as plain columns.
 
     Every registered row is always active -- there's no on/off toggle.
     To stop execution/main.py from trading a pair, delete its row; there's
@@ -1276,9 +1290,9 @@ def save_execution_config(
             exchange             TEXT NOT NULL,
             symbol               TEXT NOT NULL,
             strategy_name        TEXT NOT NULL,
-            start_date           TEXT NOT NULL,
             initial_balance      DOUBLE PRECISION NOT NULL,
-            position_size        JSONB NOT NULL,
+            position_size_type   TEXT NOT NULL,
+            position_size_value  DOUBLE PRECISION NOT NULL,
             commission           DOUBLE PRECISION NOT NULL,
             slippage             DOUBLE PRECISION NOT NULL,
             allow_long           BOOLEAN NOT NULL DEFAULT TRUE,
@@ -1309,14 +1323,14 @@ def save_execution_config(
 
     cursor.execute(sql.SQL("""
         INSERT INTO {schema}.config
-            (exchange, symbol, strategy_name, start_date, initial_balance, position_size,
+            (exchange, symbol, strategy_name, initial_balance, position_size_type, position_size_value,
              commission, slippage, allow_long, allow_short, max_open_positions)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (exchange, symbol) DO UPDATE SET
             strategy_name = EXCLUDED.strategy_name,
-            start_date = EXCLUDED.start_date,
             initial_balance = EXCLUDED.initial_balance,
-            position_size = EXCLUDED.position_size,
+            position_size_type = EXCLUDED.position_size_type,
+            position_size_value = EXCLUDED.position_size_value,
             commission = EXCLUDED.commission,
             slippage = EXCLUDED.slippage,
             allow_long = EXCLUDED.allow_long,
@@ -1324,7 +1338,8 @@ def save_execution_config(
             max_open_positions = EXCLUDED.max_open_positions,
             updated_at = now()
     """).format(schema=sql.Identifier("execution")), (
-        exchange, symbol, strategy_name, start_date, initial_balance, Json(position_size),
+        exchange, symbol, strategy_name, initial_balance,
+        position_size["type"], position_size["value"],
         commission, slippage, allow_long, allow_short, max_open_positions,
     ))
     conn.commit()
@@ -1351,9 +1366,9 @@ def get_execution_universe(conn):
             exchange             TEXT NOT NULL,
             symbol               TEXT NOT NULL,
             strategy_name        TEXT NOT NULL,
-            start_date           TEXT NOT NULL,
             initial_balance      DOUBLE PRECISION NOT NULL,
-            position_size        JSONB NOT NULL,
+            position_size_type   TEXT NOT NULL,
+            position_size_value  DOUBLE PRECISION NOT NULL,
             commission           DOUBLE PRECISION NOT NULL,
             slippage             DOUBLE PRECISION NOT NULL,
             allow_long           BOOLEAN NOT NULL DEFAULT TRUE,

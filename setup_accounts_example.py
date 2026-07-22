@@ -54,11 +54,26 @@ def _get_strategy_combos(conn):
     Every (exchange, symbol, strategy_name) combo currently configured
     for execution -- one combo per execution.config row, using whatever
     strategy_name that pair's execution.config points at (same lookup
-    execution/main.py does at the top of its own loop). Also returns the
-    combined initial_balance across every combo, used as the account's
-    overall starting point for total_net_profit.
+    execution/main.py does at the top of its own loop).
+
+    Returns:
+        combos               : list of (exchange, symbol, strategy_name)
+                                tuples -- what refresh_account_history()
+                                needs to find each combo's trades table.
+        combo_configs         : list of dicts, one per combo -- each
+                                pair's full execution.config (exchange,
+                                symbol, strategy_name, initial_balance,
+                                position_size, commission, slippage, ...)
+                                merged with exchange/symbol -- what
+                                refresh_account_stats() stores in
+                                accounts.stats.combos so the account's
+                                makeup is visible before any trade closes.
+        total_initial_balance : combined initial_balance across every
+                                combo, used as the account's overall
+                                starting point for total_net_profit.
     """
     combos = []
+    combo_configs = []
     total_initial_balance = 0.0
 
     for exchange, symbol in get_execution_universe(conn):
@@ -68,9 +83,10 @@ def _get_strategy_combos(conn):
 
         strategy_name = config["strategy_name"]
         combos.append((exchange, symbol, strategy_name))
+        combo_configs.append({"exchange": exchange, "symbol": symbol, **config})
         total_initial_balance += float(config["initial_balance"])
 
-    return combos, total_initial_balance
+    return combos, combo_configs, total_initial_balance
 
 
 def _load_stats_config():
@@ -98,7 +114,7 @@ def main():
 
         # Step 2: every (exchange, symbol, strategy) combo execution
         # currently tracks, plus their combined initial_balance.
-        combos, total_initial_balance = _get_strategy_combos(conn)
+        combos, combo_configs, total_initial_balance = _get_strategy_combos(conn)
 
         if not combos:
             print("No (exchange, symbol) pairs found in execution.config -- nothing to refresh.")
@@ -112,7 +128,7 @@ def main():
 
         # Step 4: recompute accounts.stats from that refreshed history.
         stats_config = _load_stats_config()
-        refresh_account_stats(conn, ACCOUNT_NAME, total_initial_balance, stats_config)
+        refresh_account_stats(conn, ACCOUNT_NAME, total_initial_balance, stats_config, combos=combo_configs)
 
         print(f"accounts.history and accounts.stats refreshed for {ACCOUNT_NAME!r}.")
 
