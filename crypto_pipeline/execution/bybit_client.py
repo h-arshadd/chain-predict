@@ -1,14 +1,16 @@
 """
 bybit_client.py
 ----------------
-Thin wrapper around Bybit's REST API for the execution folder. Two jobs
-only:
+Thin wrapper around Bybit's REST API for the execution folder. Jobs:
 
   1. get_live_ohlcv() -- pull recent 1-minute candles directly from
      Bybit (not the DB -- execution trades off live exchange data, not
      whatever's been backfilled into binance.*/bybit.* tables).
   2. place_market_order() -- send a real market order when a position
-     opens or closes.
+     opens or closes, then look up what it actually filled at
+     (avgPrice / cumExecQty / cumExecFee) and return that -- a market
+     order's ack response does NOT include fill data, only orderId, so
+     the fill has to be fetched back separately right after placing.
 
 Uses pybit (Bybit's official Python SDK) since it already handles request
 signing. Install with: pip install pybit
@@ -19,6 +21,7 @@ lowercase "btc" convention as simulator/backtest/signals.
 """
 
 import os
+import time
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 
@@ -38,10 +41,8 @@ def get_qty_step(client: HTTP, bybit_symbol: str) -> Decimal:
     Bybit rejects any order qty that isn't an exact multiple of the
     instrument's qtyStep (ErrCode 10001 "Qty invalid") -- e.g. BTCUSDT
     linear has qtyStep "0.001", so 0.0149 is rejected but 0.014 or 0.015
-    is accepted. round(quantity, 6) in place_market_order() is NOT the
-    same thing as rounding to qtyStep, which is why that error happens.
-    Fetched live (not hardcoded) so this stays correct if a symbol's
-    lot size ever changes or a new symbol is added.
+    is accepted. Fetched live (not hardcoded) so this stays correct if a
+    symbol's lot size ever changes or a new symbol is added.
     """
     if bybit_symbol not in _QTY_STEP_CACHE:
         info = client.get_instruments_info(category="linear", symbol=bybit_symbol)
@@ -55,7 +56,7 @@ def round_to_qty_step(quantity: float, qty_step: Decimal) -> str:
     Round DOWN to the instrument's qtyStep, as Decimal to avoid float
     binary-representation drift (e.g. 0.0149 rendering as
     0.014900000000000001). Rounding down (not to nearest) guarantees we
-    never send a qty larger than step_candle() computed -- never risk
+    never send a qty larger than what was computed -- never risk
     over-ordering relative to the sized position.
     """
     step = Decimal(str(quantity)).quantize(qty_step, rounding=ROUND_DOWN)
@@ -129,7 +130,7 @@ def get_live_ohlcv(client: HTTP, symbol: str, limit: int = 200) -> pd.DataFrame:
     Returns a DataFrame with columns: datetime, open, high, low, close,
     volume -- sorted oldest to newest, same shape/column names get_data()
     returns elsewhere in the pipeline (see data_downloader.get_data()),
-    so build_resampled_signals() / step_candle() work unchanged.
+    so build_resampled_signals() works unchanged.
     """
     bybit_symbol = to_bybit_symbol(symbol)
     response = client.get_kline(
@@ -153,22 +154,113 @@ def get_live_ohlcv(client: HTTP, symbol: str, limit: int = 200) -> pd.DataFrame:
     return df
 
 
-def place_market_order(client: HTTP, symbol: str, direction: str, quantity: float) -> dict:
+def _extract_fill(row: dict) -> dict:
+    return {
+        "avg_price": float(row["avgPrice"]),
+        "filled_qty": float(row["cumExecQty"]),
+        "fee": float(row["cumExecFee"]),
+        "order_status": row["orderStatus"],
+    }
+
+
+def get_order_fill(client: HTTP, bybit_symbol: str, order_id: str,
+                    max_attempts: int = 10, poll_seconds: float = 1.0) -> dict:
     """
-    Send a real market order on Bybit.
+    Look up what an order actually filled at. place_order()'s own response
+    only echoes back orderId (no avgPrice/cumExecQty) -- the real fill has
+    to be read back separately. Market orders fill almost immediately,
+    but propagation to the history endpoints can lag by a second or two
+    (more on demo trading, which doesn't have full endpoint parity with
+    production) -- so this polls, and checks TWO endpoints each attempt:
+
+      1. get_open_orders(openOnly=0) -- the "realtime" order endpoint.
+         Despite the name, passing openOnly=0 also returns recently
+         closed orders, and this endpoint updates faster than order
+         history right after a fill.
+      2. get_order_history() -- the historical endpoint, meant for
+         orders that already fully settled. Slower to update, but used
+         as a fallback each attempt in case the order already aged out
+         of the realtime endpoint's short window.
+
+    Returns dict: avg_price, filled_qty, fee (all float), order_status.
+    Raises RuntimeError if the order can't be found or never gets filled
+    within max_attempts.
+    """
+    bybit_symbol = to_bybit_symbol(bybit_symbol) if not bybit_symbol.endswith("USDT") else bybit_symbol
+
+    for attempt in range(max_attempts):
+        response = client.get_open_orders(
+            category="linear",
+            symbol=bybit_symbol,
+            orderId=order_id,
+            openOnly=0,
+            limit=1,
+        )
+        rows = response["result"]["list"]
+
+        if not rows:
+            response = client.get_order_history(
+                category="linear",
+                symbol=bybit_symbol,
+                orderId=order_id,
+                limit=1,
+            )
+            rows = response["result"]["list"]
+
+        if rows:
+            row = rows[0]
+            status = row["orderStatus"]
+            if status == "Filled":
+                return _extract_fill(row)
+            if status in ("Cancelled", "Rejected"):
+                raise RuntimeError(
+                    f"Order {order_id} for {bybit_symbol} ended in status {status!r} -- not filled."
+                )
+
+        if attempt < max_attempts - 1:
+            time.sleep(poll_seconds)
+
+    raise RuntimeError(
+        f"Order {order_id} for {bybit_symbol} did not reach 'Filled' status after "
+        f"{max_attempts} attempt(s) (~{max_attempts * poll_seconds:.0f}s) -- check Bybit manually, "
+        f"DB state was not updated. If this keeps happening on demo trading, confirm the order "
+        f"actually filled on the Bybit website (Demo Trading -> Order History) -- demo accounts "
+        f"don't support every endpoint with full parity to production."
+    )
+
+
+def place_market_order(client: HTTP, symbol: str, direction: str, quantity: float,
+                        take_profit: float = None, stop_loss: float = None) -> dict:
+    """
+    Send a real market order on Bybit, then read back its actual fill.
 
     direction : "long" or "short" -- "long" opens/closes toward Buy,
         "short" opens/closes toward Sell. main.py calls this once to
-        open a position and once to close it, same as it calls
-        simulator.step_candle() for both -- the side passed in is
-        whichever direction the trade needs at that moment (see main.py).
-    quantity  : float -- order size in base currency (e.g. BTC amount),
-        same "quantity" step_candle()/simulator.py already computes.
+        open a position and once to close it -- the side passed in is
+        whichever direction the trade needs at that moment.
+    quantity  : float -- desired order size in base currency (e.g. BTC
+        amount), from the sizing math in simulator.py.
+    take_profit, stop_loss : float, optional -- absolute price levels.
+        Only meaningful on an OPENING order (main.py never passes these
+        on a closing order). When set, Bybit registers them as native
+        exchange-side TP/SL on the position itself (same as the "+ Add"
+        button under TP/SL on the Positions tab) -- Bybit's own engine
+        then watches price and auto-closes on hit, independent of
+        whether this script is running. main.py no longer needs to
+        candle-check TP/SL itself once these are passed (see
+        run_execution()'s reconciliation step, which detects a Bybit-
+        side auto-close on the next run).
 
-    Returns Bybit's raw order response dict. Raises if the API call
-    itself errors (network/auth) -- main.py should not swallow that
-    silently, since a failed order means the DB state and the real
-    exchange position have gone out of sync.
+    Returns dict: order_id, side, avg_price, filled_qty, fee -- the REAL
+    numbers Bybit filled at, not the requested quantity or any candle
+    price. main.py must build the ledger from this dict, not from
+    step_candle()'s paper-fill numbers, since a market order can fill at
+    a different price/size than requested (slippage, partial fill).
+
+    Raises if the API call itself errors (network/auth) or if the fill
+    can't be confirmed -- main.py should not swallow that silently,
+    since a failed/uncertain order means the DB state and the real
+    exchange position may have gone out of sync.
     """
     bybit_symbol = to_bybit_symbol(symbol)
     side = "Buy" if direction == "long" else "Sell"
@@ -179,9 +271,7 @@ def place_market_order(client: HTTP, symbol: str, direction: str, quantity: floa
     if Decimal(qty_str) <= 0:
         # position_size in execution.config produced a quantity smaller
         # than one qtyStep (e.g. BTCUSDT's 0.001) -- rounding down to
-        # Bybit's lot size collapsed it to zero. Sending qty="0.000"
-        # would just trade a different flavor of "Qty invalid" than the
-        # one this fix addresses, so fail loudly instead: this means
+        # Bybit's lot size collapsed it to zero. Fail loudly: this means
         # execution.config's position_size is too small for current
         # price/leverage and needs to be raised.
         raise ValueError(
@@ -189,13 +279,95 @@ def place_market_order(client: HTTP, symbol: str, direction: str, quantity: floa
             f"below its qtyStep ({qty_step}). Increase position_size in execution.config."
         )
 
-    return client.place_order(
+    order_kwargs = dict(
         category="linear",
         symbol=bybit_symbol,
         side=side,
         orderType="Market",
         qty=qty_str,
     )
+    if take_profit is not None:
+        order_kwargs["takeProfit"] = str(take_profit)
+    if stop_loss is not None:
+        order_kwargs["stopLoss"] = str(stop_loss)
+
+    order_response = client.place_order(**order_kwargs)
+
+    order_id = order_response["result"]["orderId"]
+    fill = get_order_fill(client, bybit_symbol, order_id)
+
+    return {
+        "order_id": order_id,
+        "side": side,
+        "avg_price": fill["avg_price"],
+        "filled_qty": fill["filled_qty"],
+        "fee": fill["fee"],
+    }
+
+
+def get_open_position(client: HTTP, symbol: str) -> dict:
+    """
+    Ask Bybit directly whether a position is currently open for this
+    symbol -- used by run_execution()'s reconciliation step to detect a
+    Bybit-side auto-close (native TP/SL hit) that happened between runs,
+    which this script's own candle walk would otherwise have no way of
+    knowing about.
+
+    Returns None if flat (size == 0 or no row), else a dict: side
+    ("Buy"/"Sell"), size (float), avg_price (float) -- Bybit's own view
+    of the currently open position, not this script's DB state.
+    """
+    bybit_symbol = to_bybit_symbol(symbol)
+    response = client.get_positions(category="linear", symbol=bybit_symbol)
+    rows = response["result"]["list"]
+
+    if not rows or float(rows[0]["size"]) == 0:
+        return None
+
+    row = rows[0]
+    return {
+        "side": row["side"],
+        "size": float(row["size"]),
+        "avg_price": float(row["avgPrice"]),
+    }
+
+
+def get_last_closed_pnl(client: HTTP, symbol: str) -> dict:
+    """
+    Look up the most recent closed-PnL record for this symbol -- used
+    when run_execution() detects Bybit auto-closed a position (native
+    TP/SL hit) that this script didn't itself close, so the trade ledger
+    can be built from Bybit's REAL exit fill/fee, not a guess.
+
+    Returns dict: exit_price (avgExitPrice), exit_time (updatedTime, as
+    a naive UTC datetime), closed_pnl (float), exit_type ("TakeProfit"/
+    "StopLoss"/etc, from closedPnl's own reason). Raises RuntimeError if
+    Bybit has no closed-PnL record yet for this symbol (e.g. called
+    before the close has propagated) -- caller should not silently
+    fabricate a fill in that case, same reasoning as get_order_fill().
+    """
+    bybit_symbol = to_bybit_symbol(symbol)
+    response = client.get_closed_pnl(category="linear", symbol=bybit_symbol, limit=1)
+    rows = response["result"]["list"]
+
+    if not rows:
+        raise RuntimeError(
+            f"No closed-PnL record found for {bybit_symbol} -- Bybit shows the position "
+            f"closed but hasn't surfaced the fill yet. Check Bybit manually before retrying."
+        )
+
+    row = rows[0]
+    return {
+        "exit_price": float(row["avgExitPrice"]),
+        "exit_time": utcnow_from_ms(int(row["updatedTime"])),
+        "closed_pnl": float(row["closedPnl"]),
+        "exit_type": row.get("execType", "unknown"),
+    }
+
+
+def utcnow_from_ms(ms: int) -> datetime:
+    """Convert a Bybit millisecond timestamp string/int into a naive UTC datetime."""
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).replace(tzinfo=None)
 
 
 def utcnow() -> datetime:
