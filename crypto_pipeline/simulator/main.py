@@ -14,7 +14,8 @@ way run_pipeline.bat drives the data pipelines. Each run:
      simulator.config, and every strategy for that pair:
        a. Pulls live OHLCV via get_data() (same call every other module
           uses -- reads whatever's in the DB and fetches any live gap from
-          the exchange), resampled to THIS strategy's time_horizon.
+          the exchange -- but with drop_last_1m=False so the still-forming
+          1m candle is kept), resampled to THIS strategy's time_horizon.
        b. Loads saved state (last processed candle, balance, open position)
           from simulator.positions -- one shared table, row matched on
           (exchange, symbol, strategy) -- or starts fresh if this is the
@@ -218,6 +219,7 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
         end_date="now",
         timeframe=time_horizon,
         df_1m=True,
+        drop_last_1m=False,
     )
     ohlcv_1m = result["one_min"]
     ohlcv_resampled = result["resampled"]
