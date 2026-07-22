@@ -1220,12 +1220,11 @@ def get_simulator_universe(conn):
 # ("execution" instead of "simulator") so live-trading state never mixes
 # with simulator/paper state. One row per (exchange, symbol) pair.
 #
-# strategy_name IS stored here (unlike simulator.config) -- execution
-# only ever runs ONE strategy per pair (no universe/multi-strategy loop
-# like simulator has), so pinning it here means execution/config.yaml
-# only needs to hold local secrets, nothing else. The strategy's own
-# take_profit/stop_loss/indicators/time_horizon still come from
-# metadata.strategy (looked up by this strategy_name), same as simulator.
+# strategy_name is NOT stored here -- unlike simulator (which can run
+# multiple strategies per pair), execution only ever runs ONE strategy
+# per pair, and which one is derived by looking up metadata.strategy
+# for that (exchange, coin) (see execution/main.py) rather than being
+# separately pinned in this table.
 
 def get_execution_config(conn, exchange, symbol):
     """
@@ -1234,12 +1233,16 @@ def get_execution_config(conn, exchange, symbol):
 
     Schema: execution.config -- ONE row per (exchange, symbol) pair.
 
-    Returns a dict with keys: strategy_name, initial_balance,
-    position_size (dict: type/value -- reconstructed here from the two
-    flat position_size_type/position_size_value columns so
-    _position_size() in simulator.py, which expects config["position_size"]
-    as a dict, keeps working unchanged), commission, slippage, allow_long,
+    Returns a dict with keys: initial_balance, position_size (dict:
+    type/value -- reconstructed here from the two flat
+    position_size_type/position_size_value columns so _position_size()
+    in simulator.py, which expects config["position_size"] as a dict,
+    keeps working unchanged), commission, slippage, allow_long,
     allow_short, max_open_positions.
+
+    NOTE: strategy_name is NOT part of this config -- look it up from
+    metadata.strategy for this (exchange, symbol) instead (see
+    execution/main.py).
     """
     cursor = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -1250,7 +1253,6 @@ def get_execution_config(conn, exchange, symbol):
             id                   SERIAL PRIMARY KEY,
             exchange             TEXT NOT NULL,
             symbol               TEXT NOT NULL,
-            strategy_name        TEXT NOT NULL,
             initial_balance      DOUBLE PRECISION NOT NULL,
             position_size_type   TEXT NOT NULL,
             position_size_value  DOUBLE PRECISION NOT NULL,
@@ -1266,7 +1268,7 @@ def get_execution_config(conn, exchange, symbol):
     conn.commit()
 
     cursor.execute(sql.SQL("""
-        SELECT strategy_name, initial_balance, position_size_type, position_size_value,
+        SELECT initial_balance, position_size_type, position_size_value,
                commission, slippage, allow_long, allow_short, max_open_positions
         FROM {schema}.config
         WHERE exchange = %s AND symbol = %s
@@ -1286,17 +1288,17 @@ def get_execution_config(conn, exchange, symbol):
 
 
 def save_execution_config(
-    conn, exchange, symbol, strategy_name, initial_balance, position_size,
+    conn, exchange, symbol, initial_balance, position_size,
     commission, slippage, allow_long=True, allow_short=True, max_open_positions=1,
 ):
     """
     Insert or update the execution config for this (exchange, symbol)
     pair (upsert on the (exchange, symbol) UNIQUE constraint). Same
-    fields as save_simulator_config plus strategy_name, separate
-    "execution" schema.
+    fields as save_simulator_config, separate "execution" schema.
 
-    strategy_name: which single metadata.strategy row (for this exchange/
-    symbol) execution/main.py should trade -- e.g. "RSI_14_reversal".
+    NOTE: strategy_name is NOT a field here -- which strategy to run for
+    this pair is looked up from metadata.strategy at run time instead
+    (see execution/main.py), not pinned in this table.
 
     position_size: dict, e.g. {"type": "fixed_percentage", "value": 10} --
     stored as two flat columns (position_size_type, position_size_value)
@@ -1315,7 +1317,6 @@ def save_execution_config(
             id                   SERIAL PRIMARY KEY,
             exchange             TEXT NOT NULL,
             symbol               TEXT NOT NULL,
-            strategy_name        TEXT NOT NULL,
             initial_balance      DOUBLE PRECISION NOT NULL,
             position_size_type   TEXT NOT NULL,
             position_size_value  DOUBLE PRECISION NOT NULL,
@@ -1330,30 +1331,12 @@ def save_execution_config(
     """).format(schema=sql.Identifier("execution")))
     conn.commit()
 
-    # Defensive self-heal: if execution.config already exists from before
-    # strategy_name was added, add the column now instead of failing on
-    # the INSERT below. No-op if the column is already present.
-    cursor.execute(sql.SQL("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_schema = 'execution' AND table_name = 'config'
-                  AND column_name = 'strategy_name'
-            ) THEN
-                ALTER TABLE execution.config ADD COLUMN strategy_name TEXT NOT NULL DEFAULT '';
-            END IF;
-        END $$;
-    """))
-    conn.commit()
-
     cursor.execute(sql.SQL("""
         INSERT INTO {schema}.config
-            (exchange, symbol, strategy_name, initial_balance, position_size_type, position_size_value,
+            (exchange, symbol, initial_balance, position_size_type, position_size_value,
              commission, slippage, allow_long, allow_short, max_open_positions)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (exchange, symbol) DO UPDATE SET
-            strategy_name = EXCLUDED.strategy_name,
             initial_balance = EXCLUDED.initial_balance,
             position_size_type = EXCLUDED.position_size_type,
             position_size_value = EXCLUDED.position_size_value,
@@ -1364,13 +1347,13 @@ def save_execution_config(
             max_open_positions = EXCLUDED.max_open_positions,
             updated_at = now()
     """).format(schema=sql.Identifier("execution")), (
-        exchange, symbol, strategy_name, initial_balance,
+        exchange, symbol, initial_balance,
         position_size["type"], position_size["value"],
         commission, slippage, allow_long, allow_short, max_open_positions,
     ))
     conn.commit()
     cursor.close()
-    logger.info(f"Saved execution config: execution.config ({exchange}/{symbol}, strategy={strategy_name!r})")
+    logger.info(f"Saved execution config: execution.config ({exchange}/{symbol})")
 
 
 def get_execution_universe(conn):

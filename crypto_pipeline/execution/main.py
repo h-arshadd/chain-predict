@@ -53,13 +53,15 @@ simulator. Each run, per registered (exchange, symbol) pair:
      trades to execution.{exchange}_{symbol}_{strategy}_trades.
 
 Execution settings (initial_balance, position_size, commission, slippage,
-allow_long, allow_short, max_open_positions, strategy_name) come
-from execution.config (see db_utils.get_execution_config), same pattern
-as simulator.config plus strategy_name. commission/slippage in
-execution.config are effectively unused for real trades now (the real
-fee comes back from Bybit itself on every order) -- kept only because
-get_execution_config still returns them. take_profit/stop_loss and the
-strategy's indicators/conditions/time_horizon come from metadata.strategy,
+allow_long, allow_short, max_open_positions) come from execution.config
+(see db_utils.get_execution_config), same pattern as simulator.config.
+commission/slippage in execution.config are effectively unused for real
+trades now (the real fee comes back from Bybit itself on every order) --
+kept only because get_execution_config still returns them. Which
+strategy to run for a pair is NOT stored in execution.config -- it's
+derived from metadata.strategy (whichever row for that exchange/symbol
+has execution_enabled=True). take_profit/stop_loss and the strategy's
+indicators/conditions/time_horizon also come from metadata.strategy,
 same as simulator.
 """
 
@@ -647,47 +649,38 @@ if __name__ == "__main__":
             print(f"{exchange} {symbol}: no execution.config row -- skipping.")
             continue
 
-        strategy_name = config["strategy_name"]
-
-        # One strategy per coin, enforced here (not just relied on from
-        # execution.config's UNIQUE(exchange, symbol) constraint, which
-        # only guarantees ONE CURRENT strategy_name value per pair -- it
-        # doesn't protect against metadata.strategy having more than one
-        # row marked execution_enabled=True for the same exchange/symbol,
-        # e.g. if two strategies were both flagged enabled for the same
-        # coin by mistake). get_strategies() can return multiple rows
-        # for this exchange/symbol -- only the ONE matching
-        # config["strategy_name"] should ever actually be traded; if
-        # more than one enabled strategy exists for this pair, that's a
-        # misconfiguration and this pair is skipped rather than guessing
-        # which one to run.
+        # Which strategy to run for this pair is no longer pinned in
+        # execution.config -- it's derived here from metadata.strategy
+        # instead: whichever row for this (exchange, symbol) has
+        # execution_enabled=True. get_strategies() can return multiple
+        # rows for this exchange/symbol (strategy history/iterations),
+        # so this still guards against more than one being marked
+        # execution_enabled at the same time (a misconfiguration) --
+        # that pair is skipped rather than guessing which one to run.
         metadata_conn = get_metadata_connection()
         try:
             strategy_rows = get_strategies(metadata_conn, exchange=exchange, coin=symbol)
         finally:
             metadata_conn.close()
 
-        enabled_strategy_names = [
-            s["strategy_name"] for s in strategy_rows if s.get("execution_enabled", True)
-        ]
-        if len(enabled_strategy_names) > 1:
+        enabled_rows = [s for s in strategy_rows if s.get("execution_enabled", True)]
+
+        if len(enabled_rows) == 0:
+            print(f"{exchange} {symbol}: no execution_enabled strategy found in metadata.strategy -- skipping.")
+            continue
+
+        if len(enabled_rows) > 1:
+            enabled_strategy_names = [s["strategy_name"] for s in enabled_rows]
             print(
-                f"{exchange} {symbol}: {len(enabled_strategy_names)} strategies are "
+                f"{exchange} {symbol}: {len(enabled_rows)} strategies are "
                 f"execution_enabled ({enabled_strategy_names}) -- only one strategy is "
                 f"allowed per coin. Disable all but one in metadata.strategy before this "
                 f"pair will run. Skipping."
             )
             continue
 
-        strategy_row = next((s for s in strategy_rows if s["strategy_name"] == strategy_name), None)
-
-        if strategy_row is None:
-            print(f"{exchange} {symbol}: strategy {strategy_name!r} not found in metadata.strategy -- skipping.")
-            continue
-
-        if not strategy_row.get("execution_enabled", True):
-            print(f"{exchange} {symbol}: strategy {strategy_name!r} has execution_enabled = False -- skipping.")
-            continue
+        strategy_row = enabled_rows[0]
+        strategy_name = strategy_row["strategy_name"]
 
         time_horizon = strategy_row["time_horizon"]
         strategy_config_dict = build_strategy_config_dict(strategy_row)
