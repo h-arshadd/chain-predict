@@ -33,6 +33,10 @@ way, revoke it on Bybit and generate a new one before using it further.
 """
 
 from crypto_pipeline.utils.db_utils import get_db_connection, get_execution_config, get_execution_universe
+from crypto_pipeline.utils.metadata_utils import (
+    get_db_connection as get_metadata_connection,
+    get_strategies,
+)
 from crypto_pipeline.utils.accounts_utils import (
     get_account_api_key,
     save_account_api_key,
