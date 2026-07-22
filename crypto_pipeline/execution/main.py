@@ -18,7 +18,7 @@ Two differences from simulator/main.py:
 Nothing pair/strategy-specific is hardcoded or read from a local config
 file -- the universe (which (exchange, symbol) pairs to trade, and which
 single strategy to run per pair) is entirely DB-driven, same as
-simulator: every row in execution.config where enabled is TRUE (see
+simulator: every row in execution.config (see
 db_utils.get_execution_universe/get_execution_config/
 save_execution_config). The ONLY thing local to this machine is the
 Bybit API key/secret, read from .env (BYBIT_API_KEY/BYBIT_API_SECRET/
@@ -26,7 +26,7 @@ BYBIT_TESTNET) via bybit_client.get_client_from_env() -- secrets never
 go in the DB or a checked-in config file.
 
 Meant to be run repeatedly (Task Scheduler -> run_execution.bat), same as
-simulator. Each run, per active (exchange, symbol) pair:
+simulator. Each run, per registered (exchange, symbol) pair:
   1. Loads saved state (last processed candle, balance, open position)
      from execution.positions -- or starts fresh on first run.
   2. Pulls recent live 1-minute candles from Bybit directly (only the new
@@ -41,7 +41,7 @@ simulator. Each run, per active (exchange, symbol) pair:
      trades to execution.{exchange}_{symbol}_{strategy}_trades.
 
 Execution settings (initial_balance, position_size, commission, slippage,
-allow_long, allow_short, max_open_positions, enabled, strategy_name) come
+allow_long, allow_short, max_open_positions, strategy_name) come
 from execution.config (see db_utils.get_execution_config), same pattern
 as simulator.config plus strategy_name. take_profit/stop_loss and the
 strategy's indicators/conditions/time_horizon come from metadata.strategy,
@@ -291,10 +291,10 @@ if __name__ == "__main__":
     # settings) is DB-driven, read below.
     client = get_client_from_env()
 
-    # Universe: every (exchange, symbol) pair currently active in
+    # Universe: every (exchange, symbol) pair currently registered in
     # execution.config -- same DB-driven pattern as simulator/main.py's
     # get_simulator_universe(). Add a pair by calling
-    # save_execution_config(), stop trading it by flipping enabled to False.
+    # save_execution_config(); remove one by deleting its row.
     conn = get_db_connection()
     try:
         universe = get_execution_universe(conn)
@@ -303,7 +303,7 @@ if __name__ == "__main__":
 
     if not universe:
         raise RuntimeError(
-            "No active (exchange, symbol) pairs found in execution.config. "
+            "No (exchange, symbol) pairs found in execution.config. "
             "Call save_execution_config() for at least one pair first."
         )
 
@@ -316,8 +316,8 @@ if __name__ == "__main__":
         finally:
             conn.close()
 
-        if config is None or not config["enabled"]:
-            print(f"{exchange} {symbol}: no active execution.config row -- skipping.")
+        if config is None:
+            print(f"{exchange} {symbol}: no execution.config row -- skipping.")
             continue
 
         strategy_name = config["strategy_name"]
@@ -332,6 +332,10 @@ if __name__ == "__main__":
 
         if strategy_row is None:
             print(f"{exchange} {symbol}: strategy {strategy_name!r} not found in metadata.strategy -- skipping.")
+            continue
+
+        if not strategy_row.get("execution_enabled", True):
+            print(f"{exchange} {symbol}: strategy {strategy_name!r} has execution_enabled = False -- skipping.")
             continue
 
         time_horizon = strategy_row["time_horizon"]
