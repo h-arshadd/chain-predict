@@ -8,6 +8,8 @@ Key details:
     - Binance timestamps are in MILLISECONDS
     - Fetches 1000 candles per API call (Binance max)
     - Retries on failure with configurable delay
+    - Pulls from Binance USDⓈ-M FUTURES (perpetuals), not spot -- see
+      fetch_batch()'s use of client.futures_klines() below.
 """
 
 import time
@@ -30,14 +32,18 @@ class BinanceExchange:
 
     def fetch_batch(self, symbol, start_ms, end_ms):
         """
-        Fetch a single batch of up to 1000 raw candles from Binance.
+        Fetch a single batch of up to 1000 raw candles from Binance
+        FUTURES (USDⓈ-M perpetuals) via futures_klines(). This is the
+        only line that differs from spot -- everything else in this
+        file (pagination, retries, symbol format) works the same way
+        for futures as it did for spot.
 
         Binance's kline rows have 12 fields (open time, OHLCV, close time,
         quote volume, trade count, taker buy volumes, unused field). We only
         keep as many fields as CANDLE_COLUMNS expects, so this stays correct
         automatically if that schema changes.
         """
-        raw_batch = self.client.get_klines(
+        raw_batch = self.client.futures_klines(
             symbol=symbol,
             interval=INTERVAL,
             startTime=start_ms,
@@ -48,7 +54,8 @@ class BinanceExchange:
 
     def fetch_candles(self, symbol, start_date, end_date, config):
         """
-        Fetch all raw OHLCV candles for a symbol from Binance in batches.
+        Fetch all raw OHLCV candles for a symbol from Binance Futures in
+        batches.
 
         Since Binance only returns 1000 candles per call, we loop — moving the
         start time forward after each batch — until we reach the end date.
@@ -56,7 +63,7 @@ class BinanceExchange:
         start_date arrives as either a "YYYY-MM-DD" string (first run) or a
         datetime/Timestamp (incremental run). Both are handled here.
 
-        Returns raw candle lists directly from the Binance API.
+        Returns raw candle lists directly from the Binance Futures API.
         """
         full_symbol = f"{symbol.upper()}USDT"
 
@@ -79,7 +86,7 @@ class BinanceExchange:
         all_candles = []
         current_start_ms = start_ms
 
-        logger.info(f"Fetching Binance candles for {full_symbol} | from {start_date} to {end_date}")
+        logger.info(f"Fetching Binance Futures candles for {full_symbol} | from {start_date} to {end_date}")
 
         while current_start_ms < end_ms:
             attempt = 0
