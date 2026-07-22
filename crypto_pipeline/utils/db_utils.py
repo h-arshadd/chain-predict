@@ -1631,98 +1631,193 @@ def save_execution_state(conn, exchange, symbol, strategy_name, time_horizon, la
     logger.info(f"Saved execution state: execution.positions ({exchange}/{symbol}/{strategy_name})")
 
 
-def append_execution_trades(conn, exchange, symbol, strategy_name, trade_ledger):
-    """
-    Append newly-closed trades to execution's running Trade Ledger.
-    Unlike insert_trades() (backtest -- full rebuild every run), this is a
-    live, ever-growing ledger across scheduler runs, so rows are appended,
-    never dropped or replaced. The table is only created (not recreated) if
-    missing, so it survives across runs.
-
-    Schema: execution.{exchange}_{symbol}_{strategy_name}_trades
-
-    trade_ledger : DataFrame of newly-closed trades from this run only
-    (same columns as one closed_trade dict from simulator.py's step_candle: direction,
-    entry_date_time, exit_date_time, entry_price, exit_price, quantity,
-    gross_pnl, commission, slippage, net_pnl, exit_reason, balance).
-    Does nothing if trade_ledger is empty.
-
-    No exchange/symbol columns -- the table itself is already named per
-    exchange+symbol+strategy, so repeating them in every row would be
-    redundant.
-
-    trade_id : plain incrementing 1, 2, 3... column, added here (not by
-    the caller) so it can continue counting across every past run's
-    trades already in the table, not just this run's batch. It's a
-    convenience label only -- NOT the primary key, and NOT unique-
-    constrained, so nothing downstream should rely on it for identity.
-
-    entry_date_time is still this table's real PRIMARY KEY -- it's the
-    PDF's "Trade ID" column in the sense that matters (guaranteed
-    unique): a strategy can only ever have one open position at a time
-    (max_open_positions=1, enforced in simulator.py's step_candle, reused here), so
-    entry_date_time is already a unique identifier for a trade within
-    this strategy's own table, and it's assigned the moment the position
-    opens (Step 3 of the spec) rather than only once it closes -- so the
-    same value identifies the trade on both the Position Table (while
-    open, see get_execution_state, where the column is still named
-    entry_time) and the Trade Ledger (once closed, here, named
-    entry_date_time). If entry_date_time is ever duplicated (would mean
-    two trades opened on the exact same candle for the same strategy --
-    shouldn't happen given max_open_positions=1), the COPY below fails
-    loudly on the PK violation rather than silently overwriting a row.
-    """
-    if trade_ledger.empty:
-        return
-
-    cursor = conn.cursor()
+def _execution_trades_table(exchange, symbol, strategy_name):
+    """Shared table-name builder so open/close/append all agree on it."""
     safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
-    table_name = f"{exchange}_{symbol}_{safe_strategy_name}_trades"
+    return f"{exchange}_{symbol}_{safe_strategy_name}_trades"
 
+
+def _ensure_execution_trades_table(conn, table_name):
+    """
+    Create execution.{table_name} if it doesn't exist yet, with a fixed
+    column set covering both the open-time fields (known as soon as a
+    position opens) and the close-time fields (only known once it
+    exits). Close-time columns are nullable since they start out empty
+    and get filled in later by close_execution_trade().
+
+    entry_date_time is the PRIMARY KEY -- a strategy can only have one
+    open position at a time (max_open_positions=1), so it's already a
+    unique identifier for a trade the moment the position opens, same
+    value used on both execution.positions (open, column entry_time)
+    and here (entry_date_time).
+    """
+    cursor = conn.cursor()
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS execution"))
-
-    qualified_name = sql.SQL(".").join(
-        [sql.Identifier("execution"), sql.Identifier(table_name)]
-    ).as_string(conn)
-    cursor.execute(sql.SQL("SELECT to_regclass(%s)"), (qualified_name,))
-    table_exists = cursor.fetchone()[0] is not None
-
-    # Continue trade_id from wherever the existing table left off, so
-    # numbering stays 1, 2, 3... across scheduler runs instead of
-    # restarting at 1 every time. 0 if the table doesn't exist yet (first
-    # run for this combo).
-    next_trade_id = 1
-    if table_exists:
-        cursor.execute(sql.SQL(
-            "SELECT COALESCE(MAX(trade_id), 0) FROM {schema}.{table}"
-        ).format(
-            schema=sql.Identifier("execution"),
-            table=sql.Identifier(table_name)
-        ))
-        next_trade_id = cursor.fetchone()[0] + 1
-
-    trade_ledger = trade_ledger.copy()
-    trade_ledger.insert(0, "trade_id", range(next_trade_id, next_trade_id + len(trade_ledger)))
-
-    column_defs = sql.SQL(", ").join(
-        sql.SQL("{col} {pg_type}{pk}").format(
-            col=sql.Identifier(col),
-            pg_type=sql.SQL(_pg_type_for(trade_ledger[col])),
-            pk=sql.SQL(" PRIMARY KEY" if col == "entry_date_time" else "")
+    cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {schema}.{table} (
+            trade_id         SERIAL,
+            entry_date_time  TIMESTAMP PRIMARY KEY,
+            direction        TEXT NOT NULL,
+            entry_price      DOUBLE PRECISION NOT NULL,
+            quantity         DOUBLE PRECISION NOT NULL,
+            take_profit      DOUBLE PRECISION,
+            stop_loss        DOUBLE PRECISION,
+            exit_date_time   TIMESTAMP,
+            exit_price       DOUBLE PRECISION,
+            gross_pnl        DOUBLE PRECISION,
+            commission       DOUBLE PRECISION,
+            slippage         DOUBLE PRECISION,
+            net_pnl          DOUBLE PRECISION,
+            exit_reason      TEXT,
+            balance          DOUBLE PRECISION,
+            status           TEXT NOT NULL DEFAULT 'open'
         )
-        for col in trade_ledger.columns
-    )
-
-    cursor.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {schema}.{table} ({column_defs})").format(
+    """).format(
         schema=sql.Identifier("execution"),
-        table=sql.Identifier(table_name),
-        column_defs=column_defs
+        table=sql.Identifier(table_name)
     ))
     conn.commit()
     cursor.close()
 
-    _copy_dataframe(conn, trade_ledger, "execution", table_name)
-    logger.info(f"Appended {len(trade_ledger)} trade(s) to execution.{table_name}")
+
+def open_execution_trade(conn, exchange, symbol, strategy_name, position):
+    """
+    Insert a trade row the moment a position OPENS, instead of waiting
+    for it to close. Fills only what's known at open time (entry_date_time,
+    direction, entry_price, quantity, take_profit, stop_loss); every
+    close-time column (exit_date_time, exit_price, pnl, etc.) starts out
+    NULL and gets filled in later by close_execution_trade() once the
+    trade actually closes. status is set to 'open' here.
+
+    position : the dict returned by main.py's _open_live_position()
+    (has entry_time, direction, entry_price, quantity, take_profit,
+    stop_loss, ...).
+
+    Does nothing if position is None.
+    """
+    if position is None:
+        return
+
+    table_name = _execution_trades_table(exchange, symbol, strategy_name)
+    _ensure_execution_trades_table(conn, table_name)
+
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("""
+        INSERT INTO {schema}.{table}
+            (entry_date_time, direction, entry_price, quantity, take_profit, stop_loss, status)
+        VALUES (%s, %s, %s, %s, %s, %s, 'open')
+        ON CONFLICT (entry_date_time) DO NOTHING
+    """).format(
+        schema=sql.Identifier("execution"),
+        table=sql.Identifier(table_name)
+    ), (
+        position["entry_time"],
+        position["direction"],
+        _round4(position["entry_price"]),
+        _round4(position["quantity"]),
+        _round4(position.get("take_profit")),
+        _round4(position.get("stop_loss")),
+    ))
+    conn.commit()
+    cursor.close()
+    logger.info(f"Opened trade row in execution.{table_name} (entry_time={position['entry_time']})")
+
+
+def close_execution_trade(conn, exchange, symbol, strategy_name, closed_trade):
+    """
+    Fill in the close-time columns of the trade row that was already
+    inserted by open_execution_trade() when this same position opened
+    (matched on entry_date_time). If that row somehow isn't there (e.g.
+    this trade was opened before this change shipped, or a reconciled
+    close for a position that was never seen open), inserts a full row
+    instead so the trade still lands in the table.
+
+    closed_trade : one closed-trade dict (same shape main.py has always
+    built: direction, entry_date_time, exit_date_time, entry_price,
+    exit_price, quantity, gross_pnl, commission, slippage, net_pnl,
+    exit_reason, balance).
+    """
+    table_name = _execution_trades_table(exchange, symbol, strategy_name)
+    _ensure_execution_trades_table(conn, table_name)
+
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("""
+        UPDATE {schema}.{table} SET
+            exit_date_time = %s,
+            exit_price     = %s,
+            gross_pnl      = %s,
+            commission     = %s,
+            slippage       = %s,
+            net_pnl        = %s,
+            exit_reason    = %s,
+            balance        = %s,
+            status         = 'closed'
+        WHERE entry_date_time = %s
+    """).format(
+        schema=sql.Identifier("execution"),
+        table=sql.Identifier(table_name)
+    ), (
+        closed_trade["exit_date_time"],
+        _round4(closed_trade["exit_price"]),
+        _round4(closed_trade["gross_pnl"]),
+        _round4(closed_trade["commission"]),
+        _round4(closed_trade.get("slippage", 0.0)),
+        _round4(closed_trade["net_pnl"]),
+        closed_trade["exit_reason"],
+        _round4(closed_trade["balance"]),
+        closed_trade["entry_date_time"],
+    ))
+
+    if cursor.rowcount == 0:
+        # No matching open row (trade opened before this change, or a
+        # reconciled close whose open was never recorded) -- fall back
+        # to inserting the full row now so the trade isn't lost.
+        cursor.execute(sql.SQL("""
+            INSERT INTO {schema}.{table}
+                (entry_date_time, direction, entry_price, quantity, exit_date_time,
+                 exit_price, gross_pnl, commission, slippage, net_pnl, exit_reason,
+                 balance, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'closed')
+            ON CONFLICT (entry_date_time) DO NOTHING
+        """).format(
+            schema=sql.Identifier("execution"),
+            table=sql.Identifier(table_name)
+        ), (
+            closed_trade["entry_date_time"],
+            closed_trade["direction"],
+            _round4(closed_trade["entry_price"]),
+            _round4(closed_trade["quantity"]),
+            closed_trade["exit_date_time"],
+            _round4(closed_trade["exit_price"]),
+            _round4(closed_trade["gross_pnl"]),
+            _round4(closed_trade["commission"]),
+            _round4(closed_trade.get("slippage", 0.0)),
+            _round4(closed_trade["net_pnl"]),
+            closed_trade["exit_reason"],
+            _round4(closed_trade["balance"]),
+        ))
+
+    conn.commit()
+    cursor.close()
+    logger.info(f"Closed trade row in execution.{table_name} (entry_date_time={closed_trade['entry_date_time']})")
+
+
+def append_execution_trades(conn, exchange, symbol, strategy_name, trade_ledger):
+    """
+    Kept for the reconciled-trade path (see main.py's
+    _reconcile_bybit_close), where a position was closed by Bybit while
+    this script wasn't running -- there was no candle-loop moment to
+    call open_execution_trade() from, so this just closes each trade
+    directly via close_execution_trade()'s insert-fallback, which fills
+    the full row in one go. Does nothing if trade_ledger is empty.
+    """
+    if trade_ledger.empty:
+        return
+
+    for _, row in trade_ledger.iterrows():
+        close_execution_trade(conn, exchange, symbol, strategy_name, row.to_dict())
+
+    logger.info(f"Appended {len(trade_ledger)} trade(s) to execution trades table for {exchange}/{symbol}/{strategy_name}")
 
 def get_execution_summary(conn, exchange, symbol, strategy_name):
     """

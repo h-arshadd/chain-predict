@@ -82,6 +82,8 @@ from crypto_pipeline.utils.db_utils import (
     get_db_connection,
     get_execution_state,
     save_execution_state,
+    open_execution_trade,
+    close_execution_trade,
     append_execution_trades,
     get_execution_summary,
     get_execution_config,
@@ -542,6 +544,15 @@ def run_execution(client, exchange, symbol, config, strategy_name, time_horizon,
                 position = _open_live_position(
                     client, symbol, signal, candle, balance, config, take_profit_pct, stop_loss_pct
                 )
+                # Trade row is written to the DB right now, as soon as the
+                # position opens -- not held until it closes. Only the
+                # entry-side columns are filled; exit columns stay NULL
+                # until close_execution_trade() fills them in later.
+                conn = get_db_connection()
+                try:
+                    open_execution_trade(conn, exchange, symbol, strategy_name, position)
+                finally:
+                    conn.close()
 
         if closed_trade is not None:
             closed_trade["cumulative_pnl"] = round(closed_trade["balance"] - config["initial_balance"], 4)
