@@ -413,15 +413,20 @@ if __name__ == "__main__":
         default_start_date = parse_simulator_start_date(config["start_date"])
 
         # Every strategy registered for THIS (exchange, symbol) pair in
-        # metadata.strategy.
+        # metadata.strategy, filtered down to only the ones with
+        # simulator_enabled = True -- False means this specific strategy
+        # is turned off for simulator (independent of execution_enabled,
+        # which execution/main.py checks instead).
         metadata_conn = get_metadata_connection()
         try:
             strategy_rows = get_strategies(metadata_conn, exchange=exchange, coin=symbol)
         finally:
             metadata_conn.close()
 
+        strategy_rows = [s for s in strategy_rows if s.get("simulator_enabled", True)]
+
         if not strategy_rows:
-            print(f"{exchange} {symbol}: no strategies found in metadata.strategy -- skipping.")
+            print(f"{exchange} {symbol}: no simulator-enabled strategies found in metadata.strategy -- skipping.")
             continue
 
         print(f"{exchange} {symbol}: {len(strategy_rows)} strategies -- "

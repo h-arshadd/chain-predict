@@ -1041,7 +1041,7 @@ def get_simulator_config(conn, exchange, symbol):
 
     Returns a dict with keys: start_date, initial_balance, position_size
     (dict: type/value), commission, slippage, allow_long, allow_short,
-    max_open_positions, enabled.
+    max_open_positions.
     """
     cursor = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -1060,7 +1060,6 @@ def get_simulator_config(conn, exchange, symbol):
             allow_long           BOOLEAN NOT NULL DEFAULT TRUE,
             allow_short          BOOLEAN NOT NULL DEFAULT TRUE,
             max_open_positions   INTEGER NOT NULL DEFAULT 1,
-            enabled              BOOLEAN NOT NULL DEFAULT TRUE,
             updated_at           TIMESTAMP NOT NULL DEFAULT now(),
             UNIQUE (exchange, symbol)
         )
@@ -1069,7 +1068,7 @@ def get_simulator_config(conn, exchange, symbol):
 
     cursor.execute(sql.SQL("""
         SELECT start_date, initial_balance, position_size, commission,
-               slippage, allow_long, allow_short, max_open_positions, enabled
+               slippage, allow_long, allow_short, max_open_positions
         FROM {schema}.config
         WHERE exchange = %s AND symbol = %s
     """).format(schema=sql.Identifier("simulator")), (exchange, symbol))
@@ -1081,7 +1080,6 @@ def get_simulator_config(conn, exchange, symbol):
 def save_simulator_config(
     conn, exchange, symbol, start_date, initial_balance, position_size,
     commission, slippage, allow_long=True, allow_short=True, max_open_positions=1,
-    enabled=True,
 ):
     """
     Insert or update the simulator execution config for this (exchange,
@@ -1094,13 +1092,9 @@ def save_simulator_config(
     stored as-is in JSONB, same shape as simulator/config.yaml's
     position_size block.
 
-    enabled: frontend on/off toggle for this pair -- True (default)
-    means the simulator runs it and results get shown; False means
-    get_simulator_universe() skips it, so simulator/main.py won't run or
-    display anything for this pair until it's flipped back to True. The
-    row (and its history in simulator.positions/*_trades/stats) stays
-    intact either way -- this only gates future runs, it doesn't delete
-    anything.
+    Every registered row is always active -- there's no on/off toggle.
+    To stop simulator/main.py from running a pair, delete its row (or
+    just don't run the module for it); there's no partial-pause state.
 
     NOTE: the CREATE TABLE here must stay in sync with the one in
     get_simulator_config (including the UNIQUE constraint) -- same
@@ -1124,7 +1118,6 @@ def save_simulator_config(
             allow_long           BOOLEAN NOT NULL DEFAULT TRUE,
             allow_short          BOOLEAN NOT NULL DEFAULT TRUE,
             max_open_positions   INTEGER NOT NULL DEFAULT 1,
-            enabled              BOOLEAN NOT NULL DEFAULT TRUE,
             updated_at           TIMESTAMP NOT NULL DEFAULT now(),
             UNIQUE (exchange, symbol)
         )
@@ -1134,9 +1127,8 @@ def save_simulator_config(
     cursor.execute(sql.SQL("""
         INSERT INTO {schema}.config
             (exchange, symbol, start_date, initial_balance, position_size,
-             commission, slippage, allow_long, allow_short, max_open_positions,
-             enabled)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             commission, slippage, allow_long, allow_short, max_open_positions)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (exchange, symbol) DO UPDATE SET
             start_date = EXCLUDED.start_date,
             initial_balance = EXCLUDED.initial_balance,
@@ -1146,12 +1138,10 @@ def save_simulator_config(
             allow_long = EXCLUDED.allow_long,
             allow_short = EXCLUDED.allow_short,
             max_open_positions = EXCLUDED.max_open_positions,
-            enabled = EXCLUDED.enabled,
             updated_at = now()
     """).format(schema=sql.Identifier("simulator")), (
         exchange, symbol, start_date, initial_balance, Json(position_size),
         commission, slippage, allow_long, allow_short, max_open_positions,
-        enabled,
     ))
     conn.commit()
     cursor.close()
@@ -1160,12 +1150,10 @@ def save_simulator_config(
 
 def get_simulator_universe(conn):
     """
-    Return every (exchange, symbol) pair currently registered AND active
-    (enabled = TRUE) in simulator.config -- this IS the universe
-    simulator/main.py should loop over, replacing simulator/config.yaml's
-    exchanges/symbols lists. Flipping a pair's enabled column to False (e.g.
-    from the frontend) removes it from this list without deleting the
-    row or its history -- flip it back to True to resume.
+    Return every (exchange, symbol) pair currently registered in
+    simulator.config -- this IS the universe simulator/main.py should
+    loop over, replacing simulator/config.yaml's exchanges/symbols
+    lists. Every row is always active; remove a pair by deleting its row.
 
     Returns a list of (exchange, symbol) tuples.
     """
@@ -1185,7 +1173,6 @@ def get_simulator_universe(conn):
             allow_long           BOOLEAN NOT NULL DEFAULT TRUE,
             allow_short          BOOLEAN NOT NULL DEFAULT TRUE,
             max_open_positions   INTEGER NOT NULL DEFAULT 1,
-            enabled              BOOLEAN NOT NULL DEFAULT TRUE,
             updated_at           TIMESTAMP NOT NULL DEFAULT now(),
             UNIQUE (exchange, symbol)
         )
@@ -1194,7 +1181,6 @@ def get_simulator_universe(conn):
 
     cursor.execute(sql.SQL("""
         SELECT exchange, symbol FROM {schema}.config
-        WHERE enabled = TRUE
     """).format(schema=sql.Identifier("simulator")))
     rows = cursor.fetchall()
     cursor.close()
@@ -1224,7 +1210,7 @@ def get_execution_config(conn, exchange, symbol):
 
     Returns a dict with keys: strategy_name, start_date, initial_balance,
     position_size (dict: type/value), commission, slippage, allow_long,
-    allow_short, max_open_positions, enabled.
+    allow_short, max_open_positions.
     """
     cursor = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -1244,7 +1230,6 @@ def get_execution_config(conn, exchange, symbol):
             allow_long           BOOLEAN NOT NULL DEFAULT TRUE,
             allow_short          BOOLEAN NOT NULL DEFAULT TRUE,
             max_open_positions   INTEGER NOT NULL DEFAULT 1,
-            enabled              BOOLEAN NOT NULL DEFAULT TRUE,
             updated_at           TIMESTAMP NOT NULL DEFAULT now(),
             UNIQUE (exchange, symbol)
         )
@@ -1253,7 +1238,7 @@ def get_execution_config(conn, exchange, symbol):
 
     cursor.execute(sql.SQL("""
         SELECT strategy_name, start_date, initial_balance, position_size, commission,
-               slippage, allow_long, allow_short, max_open_positions, enabled
+               slippage, allow_long, allow_short, max_open_positions
         FROM {schema}.config
         WHERE exchange = %s AND symbol = %s
     """).format(schema=sql.Identifier("execution")), (exchange, symbol))
@@ -1265,7 +1250,6 @@ def get_execution_config(conn, exchange, symbol):
 def save_execution_config(
     conn, exchange, symbol, strategy_name, start_date, initial_balance, position_size,
     commission, slippage, allow_long=True, allow_short=True, max_open_positions=1,
-    enabled=True,
 ):
     """
     Insert or update the execution config for this (exchange, symbol)
@@ -1278,8 +1262,9 @@ def save_execution_config(
 
     position_size: dict, e.g. {"type": "fixed_percentage", "value": 10}.
 
-    enabled: on/off toggle -- False stops execution/main.py from trading
-    this pair without deleting its history.
+    Every registered row is always active -- there's no on/off toggle.
+    To stop execution/main.py from trading a pair, delete its row; there's
+    no partial-pause state.
     """
     cursor = conn.cursor()
 
@@ -1299,7 +1284,6 @@ def save_execution_config(
             allow_long           BOOLEAN NOT NULL DEFAULT TRUE,
             allow_short          BOOLEAN NOT NULL DEFAULT TRUE,
             max_open_positions   INTEGER NOT NULL DEFAULT 1,
-            enabled              BOOLEAN NOT NULL DEFAULT TRUE,
             updated_at           TIMESTAMP NOT NULL DEFAULT now(),
             UNIQUE (exchange, symbol)
         )
@@ -1326,9 +1310,8 @@ def save_execution_config(
     cursor.execute(sql.SQL("""
         INSERT INTO {schema}.config
             (exchange, symbol, strategy_name, start_date, initial_balance, position_size,
-             commission, slippage, allow_long, allow_short, max_open_positions,
-             enabled)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             commission, slippage, allow_long, allow_short, max_open_positions)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (exchange, symbol) DO UPDATE SET
             strategy_name = EXCLUDED.strategy_name,
             start_date = EXCLUDED.start_date,
@@ -1339,12 +1322,10 @@ def save_execution_config(
             allow_long = EXCLUDED.allow_long,
             allow_short = EXCLUDED.allow_short,
             max_open_positions = EXCLUDED.max_open_positions,
-            enabled = EXCLUDED.enabled,
             updated_at = now()
     """).format(schema=sql.Identifier("execution")), (
         exchange, symbol, strategy_name, start_date, initial_balance, Json(position_size),
         commission, slippage, allow_long, allow_short, max_open_positions,
-        enabled,
     ))
     conn.commit()
     cursor.close()
@@ -1353,11 +1334,11 @@ def save_execution_config(
 
 def get_execution_universe(conn):
     """
-    Return every (exchange, symbol) pair currently registered AND active
-    (enabled = TRUE) in execution.config -- same idea as
-    get_simulator_universe(), so execution/main.py needs zero hardcoded
-    exchange/symbol: add a pair by calling save_execution_config(), stop
-    trading it by flipping enabled to False.
+    Return every (exchange, symbol) pair currently registered in
+    execution.config -- same idea as get_simulator_universe(), so
+    execution/main.py needs zero hardcoded exchange/symbol: add a pair by
+    calling save_execution_config(). Every row is always active; remove
+    a pair by deleting its row.
 
     Returns a list of (exchange, symbol) tuples.
     """
@@ -1378,7 +1359,6 @@ def get_execution_universe(conn):
             allow_long           BOOLEAN NOT NULL DEFAULT TRUE,
             allow_short          BOOLEAN NOT NULL DEFAULT TRUE,
             max_open_positions   INTEGER NOT NULL DEFAULT 1,
-            enabled              BOOLEAN NOT NULL DEFAULT TRUE,
             updated_at           TIMESTAMP NOT NULL DEFAULT now(),
             UNIQUE (exchange, symbol)
         )
@@ -1387,7 +1367,6 @@ def get_execution_universe(conn):
 
     cursor.execute(sql.SQL("""
         SELECT exchange, symbol FROM {schema}.config
-        WHERE enabled = TRUE
     """).format(schema=sql.Identifier("execution")))
     rows = cursor.fetchall()
     cursor.close()
@@ -1845,9 +1824,7 @@ def get_execution_summary(conn, exchange, symbol, strategy_name):
         "total_trades": total_trades,
         "win_loss": {"wins": wins, "losses": losses, "win_rate": win_rate},
         "open_position": open_position,
-    }
-
-# ==========================================================
+    }# ==========================================================
 # Execution Stats (execution.stats)
 # ==========================================================
 #

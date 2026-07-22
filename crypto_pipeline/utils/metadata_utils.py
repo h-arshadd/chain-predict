@@ -238,6 +238,15 @@ def create_strategy_table(conn):
     exist once per pair, so re-loading the strategies/ folder upserts per
     pair instead of duplicating rows -- see load_strategies_from_yaml().
 
+    simulator_enabled/execution_enabled: per-strategy on/off toggles --
+    True (default) means that module applies this strategy row; False
+    means simulator/main.py or execution/main.py skips it. These replace
+    the earlier per-pair "enabled" column that used to live on
+    simulator.config/execution.config -- the toggle now lives on the
+    strategy definition itself instead, since it's "should THIS strategy
+    run", not "should this pair run". A pair with no enabled strategy
+    simply has nothing to run, without deleting any row or history.
+
     One strategy + one backtest for now -- backtest settings aren't stored
     separately yet (see backtest/config.yaml); this table can grow a
     backtest_config column later if/when that's needed.
@@ -245,20 +254,48 @@ def create_strategy_table(conn):
     cursor = conn.cursor()
     cursor.execute(sql.SQL("""
         CREATE TABLE IF NOT EXISTS {schema}.strategy (
-            strategy_id       SERIAL PRIMARY KEY,
-            strategy_name     TEXT NOT NULL,
-            exchange          TEXT NOT NULL,
-            coin              TEXT NOT NULL,
-            time_horizon      TEXT NOT NULL DEFAULT '1h',
-            take_profit_type  TEXT,
-            take_profit_value NUMERIC,
-            stop_loss_type    TEXT,
-            stop_loss_value   NUMERIC,
-            strategy_config   JSONB NOT NULL,
-            created_at        TIMESTAMP NOT NULL DEFAULT now(),
+            strategy_id        SERIAL PRIMARY KEY,
+            strategy_name      TEXT NOT NULL,
+            exchange           TEXT NOT NULL,
+            coin               TEXT NOT NULL,
+            time_horizon       TEXT NOT NULL DEFAULT '1h',
+            take_profit_type   TEXT,
+            take_profit_value  NUMERIC,
+            stop_loss_type     TEXT,
+            stop_loss_value    NUMERIC,
+            strategy_config    JSONB NOT NULL,
+            simulator_enabled  BOOLEAN NOT NULL DEFAULT TRUE,
+            execution_enabled  BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at         TIMESTAMP NOT NULL DEFAULT now(),
             UNIQUE (strategy_name, exchange, coin)
         )
     """).format(schema=sql.Identifier(SCHEMA)))
+    conn.commit()
+
+    # Defensive self-heal, same pattern used for execution.config's
+    # strategy_name column: if metadata.strategy already exists from
+    # before these two columns were added, add them now instead of
+    # every INSERT/SELECT below failing on a missing column. No-op if
+    # they're already present.
+    cursor.execute(sql.SQL("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = %(schema)s AND table_name = 'strategy'
+                  AND column_name = 'simulator_enabled'
+            ) THEN
+                ALTER TABLE {schema}.strategy ADD COLUMN simulator_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = %(schema)s AND table_name = 'strategy'
+                  AND column_name = 'execution_enabled'
+            ) THEN
+                ALTER TABLE {schema}.strategy ADD COLUMN execution_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+            END IF;
+        END $$;
+    """).format(schema=sql.Identifier(SCHEMA)), {"schema": SCHEMA})
     conn.commit()
     cursor.close()
     logger.info(f"Table ensured: {SCHEMA}.strategy")
@@ -268,6 +305,7 @@ def insert_strategy(
     conn, strategy_name, exchange, coin, strategy_config, time_horizon="1h",
     take_profit_type=None, take_profit_value=None,
     stop_loss_type=None, stop_loss_value=None,
+    simulator_enabled=True, execution_enabled=True,
 ):
     """
     Register a strategy definition for one (exchange, coin) pair, or
@@ -294,6 +332,17 @@ def insert_strategy(
     yaml's take_profit/stop_loss blocks (e.g. type="percentage", value=2.0)
     so they're queryable columns instead of nested JSON.
 
+    simulator_enabled/execution_enabled: per-strategy on/off toggle for
+    each module -- True (default) means simulator/main.py or
+    execution/main.py will apply this strategy row; False means that
+    module skips it. Note this upsert OVERWRITES both flags on every call
+    (same as every other column here) -- re-running
+    load_strategies_from_yaml() without passing these will reset a
+    previously-disabled strategy back to enabled=True, since the yaml
+    files don't carry this setting themselves. Flip these directly via
+    insert_strategy() (or a dedicated setter) if you need to toggle a
+    strategy without touching its yaml.
+
     Returns the strategy_id of the inserted or existing row.
     """
     cursor = conn.cursor()
@@ -301,20 +350,24 @@ def insert_strategy(
         INSERT INTO {schema}.strategy
             (strategy_name, exchange, coin, time_horizon,
              take_profit_type, take_profit_value,
-             stop_loss_type, stop_loss_value, strategy_config)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+             stop_loss_type, stop_loss_value, strategy_config,
+             simulator_enabled, execution_enabled)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (strategy_name, exchange, coin) DO UPDATE SET
             time_horizon = EXCLUDED.time_horizon,
             take_profit_type = EXCLUDED.take_profit_type,
             take_profit_value = EXCLUDED.take_profit_value,
             stop_loss_type = EXCLUDED.stop_loss_type,
             stop_loss_value = EXCLUDED.stop_loss_value,
-            strategy_config = EXCLUDED.strategy_config
+            strategy_config = EXCLUDED.strategy_config,
+            simulator_enabled = EXCLUDED.simulator_enabled,
+            execution_enabled = EXCLUDED.execution_enabled
         RETURNING strategy_id
     """).format(schema=sql.Identifier(SCHEMA)), (
         strategy_name, exchange, coin, time_horizon,
         take_profit_type, take_profit_value,
         stop_loss_type, stop_loss_value, Json(strategy_config),
+        simulator_enabled, execution_enabled,
     ))
     strategy_id = cursor.fetchone()[0]
     conn.commit()
@@ -386,6 +439,51 @@ def get_strategies(conn, exchange=None, coin=None):
     rows = cursor.fetchall()
     cursor.close()
     return [dict(row) for row in rows]
+
+
+def set_strategy_enabled(conn, strategy_id, simulator_enabled=None, execution_enabled=None):
+    """
+    Flip simulator_enabled and/or execution_enabled for one existing
+    strategy row, without touching anything else on it (strategy_config,
+    take_profit/stop_loss, etc stay exactly as they were) and without
+    re-running load_strategies_from_yaml(), which would reset both flags
+    back to True per insert_strategy()'s docstring.
+
+    Pass only the flag(s) you want to change -- e.g.
+    set_strategy_enabled(conn, 7, execution_enabled=False) turns off
+    execution for strategy_id 7 while leaving simulator_enabled untouched.
+    Passing neither is a no-op.
+    """
+    if simulator_enabled is None and execution_enabled is None:
+        return
+
+    cursor = conn.cursor()
+    updates = []
+    params = []
+
+    if simulator_enabled is not None:
+        updates.append(sql.SQL("simulator_enabled = %s"))
+        params.append(simulator_enabled)
+    if execution_enabled is not None:
+        updates.append(sql.SQL("execution_enabled = %s"))
+        params.append(execution_enabled)
+
+    params.append(strategy_id)
+
+    cursor.execute(sql.SQL("""
+        UPDATE {schema}.strategy
+        SET {updates}
+        WHERE strategy_id = %s
+    """).format(
+        schema=sql.Identifier(SCHEMA),
+        updates=sql.SQL(", ").join(updates),
+    ), params)
+    conn.commit()
+    cursor.close()
+    logger.info(
+        f"Updated {SCHEMA}.strategy strategy_id={strategy_id}: "
+        f"simulator_enabled={simulator_enabled}, execution_enabled={execution_enabled}"
+    )
 
 
 def load_strategies_from_yaml(conn, strategies_dir, pairs=None):
