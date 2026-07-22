@@ -22,7 +22,7 @@ simulator: every row in execution.config (see
 db_utils.get_execution_universe/get_execution_config/
 save_execution_config). The ONLY thing local to this machine is the
 Bybit API key/secret, read from .env (BYBIT_API_KEY/BYBIT_API_SECRET/
-BYBIT_TESTNET) via bybit_client.get_client_from_env() -- secrets never
+BYBIT_DEMO) via bybit_client.get_client_from_env() -- secrets never
 go in the DB or a checked-in config file.
 
 Meant to be run repeatedly (Task Scheduler -> run_execution.bat), same as
@@ -286,7 +286,7 @@ def run_execution(client, exchange, symbol, config, strategy_name, time_horizon,
 
 if __name__ == "__main__":
 
-    # Bybit credentials only -- BYBIT_API_KEY/BYBIT_API_SECRET/BYBIT_TESTNET
+    # Bybit credentials only -- BYBIT_API_KEY/BYBIT_API_SECRET/BYBIT_DEMO
     # in .env. Everything else (which pair, which strategy, execution
     # settings) is DB-driven, read below.
     client = get_client_from_env()

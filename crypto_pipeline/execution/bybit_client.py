@@ -67,57 +67,50 @@ def to_bybit_symbol(symbol: str) -> str:
     return f"{symbol.upper()}USDT"
 
 
-def get_client(api_key: str, api_secret: str, testnet: bool, demo: bool = False) -> HTTP:
+def get_client(api_key: str, api_secret: str, demo: bool = False) -> HTTP:
     """
     Build a pybit HTTP session. Called once in main.py and reused.
 
-    testnet and demo are mutually exclusive, real Bybit environments --
-    setting both True is invalid at the API level (pybit doesn't warn on
-    it, it just fails on the first request), so get_client_from_env()
-    should never produce both True. testnet=False, demo=False is real
-    production trading.
+    demo=True routes to Bybit's isolated Demo Trading sub-account
+    (simulated balance, real production domain under the hood).
+    demo=False is real production trading with real funds. Testnet
+    support was removed entirely per team decision -- there is no
+    testnet option here anymore, intentionally.
     """
-    return HTTP(api_key=api_key, api_secret=api_secret, testnet=testnet, demo=demo)
+    return HTTP(api_key=api_key, api_secret=api_secret, demo=demo)
 
 
 def get_client_from_env() -> HTTP:
     """
     Build a pybit HTTP session from BYBIT_API_KEY / BYBIT_API_SECRET /
-    BYBIT_TESTNET / BYBIT_DEMO in .env -- same pattern db_utils.get_db_connection()
-    and metadata_utils.get_db_connection() already use for DB credentials.
+    BYBIT_DEMO in .env -- same pattern db_utils.get_db_connection() and
+    metadata_utils.get_db_connection() already use for DB credentials.
     Secrets never go in execution/config.yaml or the DB -- .env only.
 
-    Bybit has three distinct environments, each requiring its OWN API
-    key generated while your account is switched into that specific mode
-    -- a testnet key will not work against demo or production, and vice
-    versa:
-      - testnet   (BYBIT_TESTNET=true):  api-testnet.bybit.com, fake
-                    funds, isolated sandbox.
-      - demo      (BYBIT_DEMO=true):     api.bybit.com under the hood but
-                    routed to an isolated demo sub-account with simulated
-                    balance -- generate this key from the Bybit website
-                    while your account is switched into "Demo Trading"
-                    mode (hover the profile icon -> Demo Trading), NOT
-                    from your regular API management page.
-      - production (both false):        api.bybit.com, REAL funds, REAL
-                    orders. Note demo trading doesn't support every
-                    endpoint production does (it's meant for practice,
-                    not full parity) -- if something that worked on
-                    testnet errors out under demo, that's the likely
-                    reason.
+    Testnet has been removed entirely (per team decision) -- there are
+    now only two environments, and each requires its OWN API key
+    generated while your account is switched into that specific mode; a
+    key from one will not work against the other:
+      - demo       (BYBIT_DEMO=true):  api.bybit.com under the hood but
+                     routed to an isolated demo sub-account with
+                     simulated balance -- generate this key from the
+                     Bybit website while your account is switched into
+                     "Demo Trading" mode (hover the profile icon ->
+                     Demo Trading), NOT from your regular API management
+                     page. Note demo trading doesn't support every
+                     endpoint production does (it's meant for practice,
+                     not full parity).
+      - production (BYBIT_DEMO=false or unset): api.bybit.com, REAL
+                     funds, REAL orders.
 
-    BYBIT_TESTNET / BYBIT_DEMO: "true"/"false" (case-insensitive), each
-    defaults to "false". If BOTH are left unset/false, this connects to
-    real production Bybit with real money -- there's no more "fails safe
-    onto testnet" default now that a lead has asked to move off testnet;
-    make sure .env explicitly sets BYBIT_DEMO=true until you're actually
-    ready for production. Setting both true at once raises here rather
-    than silently picking one, since pybit doesn't validate that
-    combination itself.
+    BYBIT_DEMO: "true"/"false" (case-insensitive), defaults to "false".
+    If left unset, this connects to real production Bybit with real
+    money -- there is no "fails safe" default anymore now that testnet
+    is gone; make sure .env explicitly sets BYBIT_DEMO=true until you're
+    actually ready for production.
     """
     api_key = os.getenv("BYBIT_API_KEY")
     api_secret = os.getenv("BYBIT_API_SECRET")
-    testnet = os.getenv("BYBIT_TESTNET", "false").strip().lower() == "true"
     demo = os.getenv("BYBIT_DEMO", "false").strip().lower() == "true"
 
     if not api_key or not api_secret:
@@ -125,13 +118,7 @@ def get_client_from_env() -> HTTP:
             "BYBIT_API_KEY / BYBIT_API_SECRET not set in .env -- add them before running execution/main.py."
         )
 
-    if testnet and demo:
-        raise RuntimeError(
-            "BYBIT_TESTNET and BYBIT_DEMO are both true in .env -- pick exactly one environment. "
-            "Set the one you don't want to \"false\"."
-        )
-
-    return get_client(api_key=api_key, api_secret=api_secret, testnet=testnet, demo=demo)
+    return get_client(api_key=api_key, api_secret=api_secret, demo=demo)
 
 
 def get_live_ohlcv(client: HTTP, symbol: str, limit: int = 200) -> pd.DataFrame:
