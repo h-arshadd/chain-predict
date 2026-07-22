@@ -610,7 +610,7 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
     never dropped or replaced. The table is only created (not recreated) if
     missing, so it survives across runs.
 
-    Schema: simulator.{exchange}_{symbol}_{strategy_name}_trades
+    Schema: simulator.{strategy_name}_trades
 
     trade_ledger : DataFrame of newly-closed trades from this run only
     (same columns as one closed_trade dict from simulator.py: direction,
@@ -648,7 +648,7 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
 
     cursor = conn.cursor()
     safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
-    table_name = f"{exchange}_{symbol}_{safe_strategy_name}_trades"
+    table_name = f"{safe_strategy_name}_trades"
 
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS simulator"))
 
@@ -704,7 +704,7 @@ def get_simulator_summary(conn, exchange, symbol, strategy_name):
     (final_balance, total_net_profit, total_trades, win_loss), just read
     back from the DB instead of computed in-memory from a fresh run.
 
-    Schema read: simulator.{exchange}_{symbol}_{strategy_name}_trades
+    Schema read: simulator.{strategy_name}_trades
     (see append_simulator_trades) for the ledger, and simulator.positions
     (see get_simulator_state) for the current balance/position.
 
@@ -743,13 +743,13 @@ def get_simulator_summary(conn, exchange, symbol, strategy_name):
 
     cursor = conn.cursor()
     safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
-    trades_table = f"{exchange}_{symbol}_{safe_strategy_name}_trades"
+    trades_table = f"{safe_strategy_name}_trades"
 
     # to_regclass() takes a plain string that Postgres parses like any
     # other identifier reference: unquoted, it folds to lowercase before
     # the catalog lookup. But the table was created via sql.Identifier(),
     # which always emits a double-quoted, case-preserved identifier (e.g.
-    # CREATE TABLE simulator."binance_btc_RSI_14_reversal_trades"). Any
+    # CREATE TABLE simulator."RSI_14_reversal_trades"). Any
     # strategy_name with uppercase letters (RSI_14_reversal,
     # SMA_20_price_cross, ...) then has a table to_regclass can never
     # find -- table_exists comes back False even though the table exists
@@ -830,7 +830,7 @@ def get_simulator_summary(conn, exchange, symbol, strategy_name):
 def build_equity_curve_from_ledger(conn, exchange, symbol, strategy_name, initial_balance):
     """
     Reconstruct a datetime-indexed equity curve from the simulator's own
-    Trade Ledger table (simulator.{exchange}_{symbol}_{strategy_name}_trades),
+    Trade Ledger table (simulator.{strategy_name}_trades),
     the same shape run_backtest() already returns as "equity_curve" (flat
     between trades, steps at each exit) -- this is what
     crypto_pipeline.stats.calculator.compute_stats() requires as input.
@@ -849,7 +849,7 @@ def build_equity_curve_from_ledger(conn, exchange, symbol, strategy_name, initia
     """
     cursor = conn.cursor()
     safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
-    trades_table = f"{exchange}_{symbol}_{safe_strategy_name}_trades"
+    trades_table = f"{safe_strategy_name}_trades"
 
     qualified_name = sql.SQL(".").join(
         [sql.Identifier("simulator"), sql.Identifier(trades_table)]
