@@ -1040,8 +1040,11 @@ def get_simulator_config(conn, exchange, symbol):
     simulator/config.yaml being shared across all strategies today).
 
     Returns a dict with keys: initial_balance, position_size
-    (dict: type/value), commission, slippage, allow_long, allow_short,
-    max_open_positions.
+    (dict: type/value -- reconstructed here from the two flat
+    position_size_type/position_size_value columns so _position_size()
+    in simulator.py, which expects config["position_size"] as a dict,
+    keeps working unchanged), commission, slippage, allow_long,
+    allow_short, max_open_positions.
 
     NOTE: start_date is no longer part of this config. A pair's very
     first simulator run now always starts clean from "now" instead of
@@ -1061,7 +1064,8 @@ def get_simulator_config(conn, exchange, symbol):
             exchange             TEXT NOT NULL,
             symbol               TEXT NOT NULL,
             initial_balance      DOUBLE PRECISION NOT NULL,
-            position_size        JSONB NOT NULL,
+            position_size_type   TEXT NOT NULL,
+            position_size_value  DOUBLE PRECISION NOT NULL,
             commission           DOUBLE PRECISION NOT NULL,
             slippage             DOUBLE PRECISION NOT NULL,
             allow_long           BOOLEAN NOT NULL DEFAULT TRUE,
@@ -1074,14 +1078,23 @@ def get_simulator_config(conn, exchange, symbol):
     conn.commit()
 
     cursor.execute(sql.SQL("""
-        SELECT initial_balance, position_size, commission,
-               slippage, allow_long, allow_short, max_open_positions
+        SELECT initial_balance, position_size_type, position_size_value,
+               commission, slippage, allow_long, allow_short, max_open_positions
         FROM {schema}.config
         WHERE exchange = %s AND symbol = %s
     """).format(schema=sql.Identifier("simulator")), (exchange, symbol))
     row = cursor.fetchone()
     cursor.close()
-    return dict(row) if row else None
+
+    if row is None:
+        return None
+
+    row = dict(row)
+    row["position_size"] = {
+        "type": row.pop("position_size_type"),
+        "value": row.pop("position_size_value"),
+    }
+    return row
 
 
 def save_simulator_config(
@@ -1096,8 +1109,9 @@ def save_simulator_config(
     registered.
 
     position_size: dict, e.g. {"type": "fixed_percentage", "value": 10} --
-    stored as-is in JSONB, same shape as simulator/config.yaml's
-    position_size block.
+    stored as two flat columns (position_size_type, position_size_value)
+    rather than JSONB, so they're queryable/editable as plain columns
+    (same pattern as execution.config).
 
     Every registered row is always active -- there's no on/off toggle.
     To stop simulator/main.py from running a pair, delete its row (or
@@ -1123,7 +1137,8 @@ def save_simulator_config(
             exchange             TEXT NOT NULL,
             symbol               TEXT NOT NULL,
             initial_balance      DOUBLE PRECISION NOT NULL,
-            position_size        JSONB NOT NULL,
+            position_size_type   TEXT NOT NULL,
+            position_size_value  DOUBLE PRECISION NOT NULL,
             commission           DOUBLE PRECISION NOT NULL,
             slippage             DOUBLE PRECISION NOT NULL,
             allow_long           BOOLEAN NOT NULL DEFAULT TRUE,
@@ -1137,12 +1152,13 @@ def save_simulator_config(
 
     cursor.execute(sql.SQL("""
         INSERT INTO {schema}.config
-            (exchange, symbol, initial_balance, position_size,
+            (exchange, symbol, initial_balance, position_size_type, position_size_value,
              commission, slippage, allow_long, allow_short, max_open_positions)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (exchange, symbol) DO UPDATE SET
             initial_balance = EXCLUDED.initial_balance,
-            position_size = EXCLUDED.position_size,
+            position_size_type = EXCLUDED.position_size_type,
+            position_size_value = EXCLUDED.position_size_value,
             commission = EXCLUDED.commission,
             slippage = EXCLUDED.slippage,
             allow_long = EXCLUDED.allow_long,
@@ -1150,7 +1166,8 @@ def save_simulator_config(
             max_open_positions = EXCLUDED.max_open_positions,
             updated_at = now()
     """).format(schema=sql.Identifier("simulator")), (
-        exchange, symbol, initial_balance, Json(position_size),
+        exchange, symbol, initial_balance,
+        position_size["type"], position_size["value"],
         commission, slippage, allow_long, allow_short, max_open_positions,
     ))
     conn.commit()
