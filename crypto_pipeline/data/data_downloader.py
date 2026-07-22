@@ -81,7 +81,7 @@ def resample(timeframe, df):
     return resampled_df
 
 
-def get_data(exchange, symbol, start_date, end_date, timeframe="1h", config=None, df_1m=False):
+def get_data(exchange, symbol, start_date, end_date, timeframe="1h", config=None, df_1m=False, drop_last_1m=True):
     """
     Get 1-minute and resampled data for a symbol between start_date and end_date.
 
@@ -100,14 +100,19 @@ def get_data(exchange, symbol, start_date, end_date, timeframe="1h", config=None
     Runtime only — nothing is written to the DB.
 
     Args:
-        exchange:   "binance" or "bybit"
-        symbol:     trading pair
-        start_date: start datetime
-        end_date:   end datetime or "now"
-        timeframe:  target timeframe for resampling (default "1h")
-        config:     dict with at least "retries"/"retry_delay" for the live-gap
-                    fetch fallback. Defaults to DEFAULT_FETCH_CONFIG if omitted.
-        df_1m:      whether to return 1m data too
+        exchange:      "binance" or "bybit"
+        symbol:        trading pair
+        start_date:    start datetime
+        end_date:      end datetime or "now"
+        timeframe:     target timeframe for resampling (default "1h")
+        config:        dict with at least "retries"/"retry_delay" for the live-gap
+                       fetch fallback. Defaults to DEFAULT_FETCH_CONFIG if omitted.
+        df_1m:         whether to return 1m data too
+        drop_last_1m:  whether to drop the still-forming last 1-minute candle
+                       before it's combined into the 1m series (default True).
+                       The resampled series always has its still-forming last
+                       candle dropped regardless of this flag. Simulator sets
+                       this to False so it can see the in-progress 1m candle.
 
     Returns a dict: {"one_min": DataFrame, "resampled": DataFrame} or {"resampled": DataFrame}
     """
@@ -139,6 +144,9 @@ def get_data(exchange, symbol, start_date, end_date, timeframe="1h", config=None
                 )
                 live_df = parse_candles(raw_candles)
 
+                if not live_df.empty and drop_last_1m:
+                    live_df = live_df.iloc[:-1]
+
             except Exception as e:
                 logger.error(f"Live fetch failed for {exchange} | {symbol}: {e}. Using DB data only.")
                 live_df = pd.DataFrame()
@@ -152,6 +160,9 @@ def get_data(exchange, symbol, start_date, end_date, timeframe="1h", config=None
     one_min_df = pd.concat([db_df, live_df], ignore_index=True)
 
     resampled_df = resample(resample_timeframe, df=one_min_df.set_index("datetime"))
+
+    if not resampled_df.empty:
+        resampled_df = resampled_df.iloc[:-1]
 
     logger.info(f"Resampled {exchange} | {symbol} into {resample_timeframe}: {len(resampled_df)} candles")
 
