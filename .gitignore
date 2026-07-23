@@ -38,6 +38,8 @@ crypto_pipeline/backtest/backtest_outputs
 crypto_pipeline/signals/signal_outputs
 crypto_pipeline/validation/outputs
 
+ta_lib-*.whl
+
 # Frontend (React/Vite)
 frontend/node_modules/
 frontend/dist/
