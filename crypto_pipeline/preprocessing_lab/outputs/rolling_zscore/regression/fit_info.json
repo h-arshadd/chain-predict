@@ -1,5 +1,0 @@
-{
-  "method": "rolling_zscore",
-  "window": 96,
-  "note": "first 96 rows are NaN by construction (not enough history yet)"
-}
