@@ -536,6 +536,15 @@ def run_execution(client, exchange, symbol, config, strategy_name, time_horizon,
             "close": float(ohlcv_1m["close"].iloc[i]),
         }
         signal = int(aligned["signal"].iloc[i])
+
+        # TEMP TEST SIGNAL -- forces a signal on the first candle of this
+        # run only, to sanity-check order placement/TP-SL/fill/ledger
+        # end-to-end on live demo. REMOVE this block before leaving
+        # execution running unattended -- it overrides the real strategy
+        # signal every time this runs while position is flat.
+        if i == 0 and position is None:
+            signal = 1  # set to -1 to test a short instead
+
         closed_trade = None
 
         # Step: monitor open position (mark price / unrealized PnL / leaning) --
