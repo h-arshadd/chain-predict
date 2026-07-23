@@ -517,8 +517,10 @@ def load_strategies_from_yaml(conn, strategies_dir, pairs=None):
     strategies_dir : str or Path
         Path to the signals/strategies/ folder.
     pairs : list of (exchange, coin) tuples, optional
-        Which pairs to insert each strategy for. Defaults to
-        [("bybit", "btc")].
+        Which pairs to insert each strategy for. Defaults to every bybit
+        coin in data/bybit/config_bybit.yml (doge, sol, btc, eth, ada,
+        ltc, mina, sui) rather than just btc, so a strategy yaml is
+        registered against the whole tracked universe by default.
 
     Returns
     -------
@@ -529,7 +531,10 @@ def load_strategies_from_yaml(conn, strategies_dir, pairs=None):
     from pathlib import Path
 
     if pairs is None:
-        pairs = [("bybit", "btc")]
+        pairs = [
+            ("bybit", "doge"), ("bybit", "sol"), ("bybit", "btc"), ("bybit", "eth"),
+            ("bybit", "ada"), ("bybit", "ltc"), ("bybit", "mina"), ("bybit", "sui"),
+        ]
 
     strategies_dir = Path(strategies_dir)
     strategy_ids = []

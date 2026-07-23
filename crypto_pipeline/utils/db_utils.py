@@ -602,7 +602,7 @@ def save_simulator_state(conn, exchange, symbol, strategy_name, time_horizon, la
     logger.info(f"Saved simulator state: simulator.positions ({exchange}/{symbol}/{strategy_name})")
 
 
-def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger):
+def append_simulator_trades(conn, exchange, symbol, strategy_name, time_horizon, trade_ledger):
     """
     Append newly-closed trades to the simulator's running Trade Ledger.
     Unlike insert_trades() (backtest -- full rebuild every run), this is a
@@ -610,7 +610,15 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
     never dropped or replaced. The table is only created (not recreated) if
     missing, so it survives across runs.
 
-    Schema: simulator.{strategy_name}_trades
+    Schema: simulator.{exchange}_{symbol}_{strategy_name}_{time_horizon}_trades
+    -- same exchange+symbol+strategy+time_horizon naming execution's ledger
+    tables already use (see append_execution_trades). Previously this was
+    just simulator.{strategy_name}_trades with no exchange/symbol/
+    time_horizon in the name, which meant running the same strategy_name
+    against more than one coin (now that simulator runs all 8 bybit coins)
+    silently collided into the SAME table -- trades from different coins
+    got mixed into one ledger. Namespacing by exchange+symbol+time_horizon
+    fixes that.
 
     trade_ledger : DataFrame of newly-closed trades from this run only
     (same columns as one closed_trade dict from simulator.py: direction,
@@ -618,9 +626,9 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
     gross_pnl, commission, slippage, net_pnl, exit_reason, balance).
     Does nothing if trade_ledger is empty.
 
-    No exchange/symbol columns -- the table itself is already named per
-    exchange+symbol+strategy, so repeating them in every row would be
-    redundant.
+    No exchange/symbol/time_horizon columns -- the table itself is already
+    named per exchange+symbol+strategy+time_horizon, so repeating them in
+    every row would be redundant.
 
     trade_id : plain incrementing 1, 2, 3... column, added here (not by
     the caller) so it can continue counting across every past run's
@@ -648,7 +656,8 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
 
     cursor = conn.cursor()
     safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
-    table_name = f"{safe_strategy_name}_trades"
+    safe_time_horizon = re.sub(r"[^0-9a-zA-Z_]", "_", time_horizon)
+    table_name = f"{exchange}_{symbol}_{safe_strategy_name}_{safe_time_horizon}_trades"
 
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS simulator"))
 
@@ -695,16 +704,17 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
     _copy_dataframe(conn, trade_ledger, "simulator", table_name)
     logger.info(f"Appended {len(trade_ledger)} trade(s) to simulator.{table_name}")
 
-def get_simulator_summary(conn, exchange, symbol, strategy_name):
+def get_simulator_summary(conn, exchange, symbol, strategy_name, time_horizon):
     """
-    Roll up the simulator's Trade Ledger for one exchange+symbol+strategy
-    into the summary fields the Simulator Module spec requires as output:
-    Final Account Balance, Total Profit/Loss, Total Number of Trades, and
-    a Win/Loss Summary -- same shape as run_backtest()'s return dict
-    (final_balance, total_net_profit, total_trades, win_loss), just read
-    back from the DB instead of computed in-memory from a fresh run.
+    Roll up the simulator's Trade Ledger for one
+    exchange+symbol+strategy+time_horizon into the summary fields the
+    Simulator Module spec requires as output: Final Account Balance,
+    Total Profit/Loss, Total Number of Trades, and a Win/Loss Summary --
+    same shape as run_backtest()'s return dict (final_balance,
+    total_net_profit, total_trades, win_loss), just read back from the DB
+    instead of computed in-memory from a fresh run.
 
-    Schema read: simulator.{strategy_name}_trades
+    Schema read: simulator.{exchange}_{symbol}_{strategy_name}_{time_horizon}_trades
     (see append_simulator_trades) for the ledger, and simulator.positions
     (see get_simulator_state) for the current balance/position.
 
@@ -743,13 +753,14 @@ def get_simulator_summary(conn, exchange, symbol, strategy_name):
 
     cursor = conn.cursor()
     safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
-    trades_table = f"{safe_strategy_name}_trades"
+    safe_time_horizon = re.sub(r"[^0-9a-zA-Z_]", "_", time_horizon)
+    trades_table = f"{exchange}_{symbol}_{safe_strategy_name}_{safe_time_horizon}_trades"
 
     # to_regclass() takes a plain string that Postgres parses like any
     # other identifier reference: unquoted, it folds to lowercase before
     # the catalog lookup. But the table was created via sql.Identifier(),
     # which always emits a double-quoted, case-preserved identifier (e.g.
-    # CREATE TABLE simulator."RSI_14_reversal_trades"). Any
+    # CREATE TABLE simulator."bybit_btc_RSI_14_reversal_3min_trades"). Any
     # strategy_name with uppercase letters (RSI_14_reversal,
     # SMA_20_price_cross, ...) then has a table to_regclass can never
     # find -- table_exists comes back False even though the table exists
@@ -827,10 +838,11 @@ def get_simulator_summary(conn, exchange, symbol, strategy_name):
 # ============================================================
 
 
-def build_equity_curve_from_ledger(conn, exchange, symbol, strategy_name, initial_balance):
+def build_equity_curve_from_ledger(conn, exchange, symbol, strategy_name, time_horizon, initial_balance):
     """
     Reconstruct a datetime-indexed equity curve from the simulator's own
-    Trade Ledger table (simulator.{strategy_name}_trades),
+    Trade Ledger table
+    (simulator.{exchange}_{symbol}_{strategy_name}_{time_horizon}_trades),
     the same shape run_backtest() already returns as "equity_curve" (flat
     between trades, steps at each exit) -- this is what
     crypto_pipeline.stats.calculator.compute_stats() requires as input.
@@ -849,7 +861,8 @@ def build_equity_curve_from_ledger(conn, exchange, symbol, strategy_name, initia
     """
     cursor = conn.cursor()
     safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
-    trades_table = f"{safe_strategy_name}_trades"
+    safe_time_horizon = re.sub(r"[^0-9a-zA-Z_]", "_", time_horizon)
+    trades_table = f"{exchange}_{symbol}_{safe_strategy_name}_{safe_time_horizon}_trades"
 
     qualified_name = sql.SQL(".").join(
         [sql.Identifier("simulator"), sql.Identifier(trades_table)]
@@ -1632,9 +1645,16 @@ def save_execution_state(conn, exchange, symbol, strategy_name, time_horizon, la
 
 
 def _execution_trades_table(exchange, symbol, strategy_name):
-    """Shared table-name builder so open/close/append all agree on it."""
+    """
+    Shared table-name builder so open/close/append all agree on it.
+
+    exchange is accepted but NOT included in the table name (execution
+    is bybit-only right now) -- table is execution.{symbol}_{strategy_name}_trades.
+    If a second exchange is ever added for a symbol+strategy already
+    running here, this will collide both exchanges into the same table.
+    """
     safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
-    return f"{exchange}_{symbol}_{safe_strategy_name}_trades"
+    return f"{symbol}_{safe_strategy_name}_trades"
 
 
 def _ensure_execution_trades_table(conn, table_name):
