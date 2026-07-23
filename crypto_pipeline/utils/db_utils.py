@@ -1899,6 +1899,15 @@ def get_execution_summary(conn, exchange, symbol, strategy_name):
             "open_position": open_position,
         }
 
+    # NOTE: filtered to status = 'closed' -- open_execution_trade() inserts
+    # a row the moment a position OPENS (exit_date_time/net_pnl/balance
+    # still NULL until it closes). Without this filter, COUNT(*) counts
+    # that still-open row as a completed trade (inflating total_trades by
+    # one for every currently-open position), even though net_pnl <= 0
+    # over a NULL value is unknown/false in SQL and so doesn't get counted
+    # as a "loss" either -- it would just silently vanish from wins+losses
+    # while still padding total_trades.
+    #
     # NOTE: starting_balance must come from the EARLIEST trade specifically
     # (ordered by trade_id, which is a plain incrementing counter assigned
     # in chronological append order -- see append_execution_trades), NOT
@@ -1915,7 +1924,8 @@ def get_execution_summary(conn, exchange, symbol, strategy_name):
         "COUNT(*) FILTER (WHERE net_pnl > 0), "
         "COUNT(*) FILTER (WHERE net_pnl <= 0), "
         "(ARRAY_AGG(balance - net_pnl ORDER BY trade_id ASC))[1] "
-        "FROM {schema}.{table}"
+        "FROM {schema}.{table} "
+        "WHERE status = 'closed'"
     ).format(
         schema=sql.Identifier("execution"),
         table=sql.Identifier(trades_table)
@@ -1980,7 +1990,15 @@ def build_execution_equity_curve_from_ledger(conn, exchange, symbol, strategy_na
     after each trade, with one synthetic point at the very start
     (index = first trade's entry_date_time, value = initial_balance) so
     the curve doesn't start mid-air. Returns None if the ledger table
-    doesn't exist yet or has no rows.
+    doesn't exist yet or has no CLOSED rows.
+
+    Only status = 'closed' rows are read. open_execution_trade() inserts
+    a row the moment a position OPENS (see that function), with
+    exit_date_time/balance still NULL until close_execution_trade() fills
+    them in -- an unfiltered SELECT picks up that still-open row too and
+    float()s a NULL balance. A currently-open position has no realized
+    balance yet, so it has nothing to contribute to an equity curve
+    anyway.
     """
     cursor = conn.cursor()
     safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
@@ -1998,6 +2016,7 @@ def build_execution_equity_curve_from_ledger(conn, exchange, symbol, strategy_na
 
     cursor.execute(sql.SQL(
         "SELECT entry_date_time, exit_date_time, balance FROM {schema}.{table} "
+        "WHERE status = 'closed' "
         "ORDER BY exit_date_time ASC"
     ).format(
         schema=sql.Identifier("execution"),
