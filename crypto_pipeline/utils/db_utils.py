@@ -610,15 +610,18 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, time_horizon,
     never dropped or replaced. The table is only created (not recreated) if
     missing, so it survives across runs.
 
-    Schema: simulator.{exchange}_{symbol}_{strategy_name}_{time_horizon}_trades
-    -- same exchange+symbol+strategy+time_horizon naming execution's ledger
-    tables already use (see append_execution_trades). Previously this was
-    just simulator.{strategy_name}_trades with no exchange/symbol/
-    time_horizon in the name, which meant running the same strategy_name
-    against more than one coin (now that simulator runs all 8 bybit coins)
+    Schema: simulator.{symbol}_{strategy_name}_{time_horizon}_trades --
+    no exchange in the table name (simulator is bybit-only right now; if
+    a second exchange is ever added for a symbol+strategy already
+    running here, its trades would collide into the same table since
+    there's no exchange column to tell them apart). Previously this was
+    just simulator.{strategy_name}_trades with no symbol/time_horizon in
+    the name either, which meant running the same strategy_name against
+    more than one coin (now that simulator runs all 8 bybit coins)
     silently collided into the SAME table -- trades from different coins
-    got mixed into one ledger. Namespacing by exchange+symbol+time_horizon
-    fixes that.
+    got mixed into one ledger. Namespacing by symbol+time_horizon fixes
+    that (exchange param is still accepted/used elsewhere in this
+    function's callers, just not included in the table name itself).
 
     trade_ledger : DataFrame of newly-closed trades from this run only
     (same columns as one closed_trade dict from simulator.py: direction,
@@ -626,9 +629,9 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, time_horizon,
     gross_pnl, commission, slippage, net_pnl, exit_reason, balance).
     Does nothing if trade_ledger is empty.
 
-    No exchange/symbol/time_horizon columns -- the table itself is already
-    named per exchange+symbol+strategy+time_horizon, so repeating them in
-    every row would be redundant.
+    No symbol/time_horizon columns -- the table itself is already named
+    per symbol+strategy+time_horizon, so repeating them in every row
+    would be redundant.
 
     trade_id : plain incrementing 1, 2, 3... column, added here (not by
     the caller) so it can continue counting across every past run's
@@ -657,7 +660,7 @@ def append_simulator_trades(conn, exchange, symbol, strategy_name, time_horizon,
     cursor = conn.cursor()
     safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
     safe_time_horizon = re.sub(r"[^0-9a-zA-Z_]", "_", time_horizon)
-    table_name = f"{exchange}_{symbol}_{safe_strategy_name}_{safe_time_horizon}_trades"
+    table_name = f"{symbol}_{safe_strategy_name}_{safe_time_horizon}_trades"
 
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS simulator"))
 
@@ -754,7 +757,7 @@ def get_simulator_summary(conn, exchange, symbol, strategy_name, time_horizon):
     cursor = conn.cursor()
     safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
     safe_time_horizon = re.sub(r"[^0-9a-zA-Z_]", "_", time_horizon)
-    trades_table = f"{exchange}_{symbol}_{safe_strategy_name}_{safe_time_horizon}_trades"
+    trades_table = f"{symbol}_{safe_strategy_name}_{safe_time_horizon}_trades"
 
     # to_regclass() takes a plain string that Postgres parses like any
     # other identifier reference: unquoted, it folds to lowercase before
@@ -862,7 +865,7 @@ def build_equity_curve_from_ledger(conn, exchange, symbol, strategy_name, time_h
     cursor = conn.cursor()
     safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
     safe_time_horizon = re.sub(r"[^0-9a-zA-Z_]", "_", time_horizon)
-    trades_table = f"{exchange}_{symbol}_{safe_strategy_name}_{safe_time_horizon}_trades"
+    trades_table = f"{symbol}_{safe_strategy_name}_{safe_time_horizon}_trades"
 
     qualified_name = sql.SQL(".").join(
         [sql.Identifier("simulator"), sql.Identifier(trades_table)]
