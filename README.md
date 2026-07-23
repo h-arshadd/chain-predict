@@ -1,20 +1,23 @@
 # chain-predict
 
-A production-grade quantitative trading pipeline combining **market data** and **social sentiment analysis**.
+A production-grade quantitative trading pipeline combining **market data**, **social sentiment analysis**, **machine learning**, and **live/paper trade execution on Bybit**.
 
-## Two Core Modules
+## Core Modules
 
-### 1. **crypto_pipeline** — OHLCV Data & Technical Indicators
-Fetches, cleans, and stores historical candlestick data from Binance and Bybit exchanges into PostgreSQL. Includes 134 TA-Lib indicators with look-ahead bias prevention. Built as the data foundation for training quantitative ML models on crypto markets.
+### 1. **crypto_pipeline** — Data, Signals, ML, Backtesting & Live Trading
+Started as an OHLCV + technical-indicator foundation and has grown into the full stack: fetches and stores historical candlestick data from Binance and Bybit, generates strategy signals, trains ML models, backtests and paper-trades strategies, and places real orders on Bybit. See [crypto_pipeline in depth](#crypto_pipeline-in-depth) below for the full module breakdown.
 
 ### 2. **sentiment_pipeline** — Reddit Sentiment Analysis  
 Fetches Reddit posts, analyzes sentiment (Bullish/Bearish/Neutral) using CryptoBERT, classifies which coin they mention, extracts tickers and entities, and aggregates engagement-weighted sentiment scores per coin. Stores raw and cleaned data in separate PostgreSQL schemas for downstream analysis and portfolio signals.
+
+### 3. **frontend** — Dashboard (early stage)
+A React + Vite dashboard scaffolded with Tailwind, shadcn/ui, Ant Design, and Recharts for visualizing pipeline output — pages for Dashboard, Backtests, Models, Strategies, Wallets, Sentiment, Deployment, and Execution are stubbed in `frontend/src/pages/`. Not yet wired up to a backend API.
 
 ---
 
 ## Features
 
-### crypto_pipeline
+### crypto_pipeline — data & indicators
 - Fetches 1-minute OHLCV data for 8 coins: DOGE, SOL, BTC, ETH, ADA, LTC, MINA, SUI
 - Supports both Binance (spot) and Bybit (linear perpetuals)
 - Smart resume — tracks last stored timestamp and fetches only new data on each run
@@ -25,6 +28,21 @@ Fetches Reddit posts, analyzes sentiment (Bullish/Bearish/Neutral) using CryptoB
 - Interactive Plotly charts with candlestick, overlays, and indicator subplots
 - Configurable via YAML — no hardcoded values
 - Full logging to console and file with configurable retry logic
+
+### crypto_pipeline — signals, backtesting & trading
+- Strategy signal generation from YAML files or DB-backed rows, shared across backtest/simulator/execution so every stage runs off the same strategy definition
+- 15 example strategies included: RSI reversal, golden cross, MACD crossover, EMA trend cross, doji/engulfing reversal, weighted multi-indicator confluence, majority vote, and more
+- Vectorized backtesting engine with configurable position sizing, commission, and slippage — trade ledger stored per symbol in Postgres
+- Paper-trading simulator that runs every strategy against every active pair, walking forward candle by candle with persisted state, designed to run repeatedly via Task Scheduler
+- Live execution on Bybit: real market orders, native TP/SL registered with Bybit's own engine, ledger built from actual fill data (not candle prices), auto-reconciles any Bybit-side auto-close before making new decisions
+- Bybit account-level history and stats: pulls fill history live from Bybit and computes ~85 pooled account stats (realized PnL via FIFO, win rate, profit factor, streaks, drawdown, per-symbol breakdown, etc.)
+
+### crypto_pipeline — ML & research
+- End-to-end ML pipeline (data → features → sentiment merge → target → feature selection → split → preprocessing → training → signals → evaluation) driven by one config file
+- Regression, classification, and timeseries model types, each with several sklearn/boosting/deep-learning algorithms plus `darts`-based timeseries models (N-BEATS, TCN, StatsForecast)
+- Preprocessing experimentation lab for comparing scaling/differencing/stationarity transforms against a live dataset
+- Target validation module that backtests ML-generated targets to confirm they're profitable before trusting them as training labels
+- Standalone statistics module (Sharpe, Sortino, Calmar, max drawdown, CAGR, profit factor, win rate, recovery factor, risk of ruin) that works off any backtest result dict, independent of the ML module
 
 ### sentiment_pipeline
 - Fetches Reddit posts from configurable subreddits per coin
@@ -47,16 +65,82 @@ chain-predict/
 │   │   ├── binance/
 │   │   │   ├── config_binance.yml      # Binance pipeline config
 │   │   │   ├── exchange_binance.py     # Binance API fetcher
-│   │   │   └── main.py                # Binance pipeline entry point
+│   │   │   └── main.py                 # Binance pipeline entry point
 │   │   ├── bybit/
 │   │   │   ├── config_bybit.yml        # Bybit pipeline config
 │   │   │   ├── exchange_bybit.py       # Bybit API fetcher
 │   │   │   └── main.py                 # Bybit pipeline entry point
 │   │   └── data_downloader.py          # Core orchestrator: parse, clean, resample, store
+│   │
 │   ├── indicators/
 │   │   └── talib_indicators.py         # 134 TA-Lib indicators, all look-ahead safe
+│   │
+│   ├── signals/
+│   │   ├── config.yaml                 # Default indicator config
+│   │   ├── main.py                     # generate_signals() entry point
+│   │   ├── signal_helpers.py           # Indicator calculation for signals
+│   │   ├── conditions.py               # Condition evaluation
+│   │   ├── rules.py                    # Rule application → final signal
+│   │   └── strategies/                 # 15 example strategy YAML files
+│   │
+│   ├── backtest/
+│   │   ├── config.yaml                 # Date range, balance, sizing, commission, slippage
+│   │   ├── backtest.py                 # Vectorized backtest engine
+│   │   └── main.py                     # Entry point: pulls data, signals, runs backtest, stores ledger
+│   │
+│   ├── simulator/
+│   │   ├── simulator.py                # step_candle() paper-fill logic, TP/SL checks
+│   │   └── main.py                     # Entry point (Task Scheduler): walks every active pair/strategy
+│   │
+│   ├── execution/
+│   │   ├── bybit_client.py             # Bybit API client, order placement, symbol helpers
+│   │   └── main.py                     # Entry point (Task Scheduler): live trading on Bybit
+│   │
+│   ├── accounts/
+│   │   ├── accounts_utils.py           # accounts.api_keys / .history / .stats DB logic
+│   │   ├── ledger_stats.py             # get_ledger_stats() — ~85-stat FIFO-based ledger stats
+│   │   └── run_accounts.py             # Entry point (Task Scheduler): refresh account history/stats
+│   │
+│   ├── ml/
+│   │   ├── config.yaml                 # Single config for the whole ML module
+│   │   ├── main.py                     # Top-level entry point, routes by model_type
+│   │   ├── data_prep/                  # Dataset/feature/sentiment/target pipelines
+│   │   ├── preprocessing/              # Feature selection, scaling, stationarity
+│   │   ├── pipeline/                   # Regression/classification/timeseries pipeline runners
+│   │   ├── regressors/                 # Ridge, Lasso, ElasticNet, SVR, RF, XGBoost, LightGBM, CatBoost...
+│   │   ├── classifiers/                # Logistic Regression, KNN, Naive Bayes, SVM, RF, boosting...
+│   │   ├── deep_learning/              # MLP, LSTM, GRU (shared trainer/callbacks/losses)
+│   │   ├── timeseries/                 # N-BEATS, TCN, StatsForecast, sklearn-classifier wrapper
+│   │   ├── signals/                    # Convert model predictions into trading signals
+│   │   ├── evaluation/                 # Regression/classification metrics, evaluator
+│   │   ├── persistence/                # Model/artifact saving and loading
+│   │   ├── inference/                  # Inference sanity checks
+│   │   └── utils/                      # ML-specific logging
+│   │
+│   ├── preprocessing_lab/
+│   │   ├── config.yaml                 # Which methods + target types to run
+│   │   ├── main.py                     # run_experiment.py — applies registry methods, saves CSVs
+│   │   ├── registry.py                 # PREPROCESSING_REGISTRY
+│   │   ├── scalers.py / stationarity.py / distribution.py
+│   │   ├── analysis/                   # Stationarity + trend-preservation analysis
+│   │   └── model_evaluation/           # Backtests transformed features
+│   │
+│   ├── validation/
+│   │   ├── config.yaml
+│   │   ├── validate_targets.py         # Backtests ML targets to confirm they're profitable
+│   │   └── threshold_analysis.py
+│   │
+│   ├── stats/
+│   │   ├── config.yaml
+│   │   ├── calculator.py               # compute_stats()
+│   │   ├── metrics.py                  # Sharpe, Sortino, Calmar, drawdown, CAGR, etc.
+│   │   ├── plots.py
+│   │   ├── stats_runner.py             # Batch driver: run() over backtest results
+│   │   └── utils.py
+│   │
 │   └── utils/
 │       ├── db_utils.py                 # PostgreSQL connection, schema, insert, query
+│       ├── metadata_utils.py           # metadata.strategy reads/writes
 │       └── pipeline_utils.py           # Logging setup, config loading, date parsing
 │
 ├── sentiment_pipeline/
@@ -74,6 +158,18 @@ chain-predict/
 │   ├── .env                            # DB + Reddit API credentials (not committed)
 │   └── requirements.txt
 │
+├── frontend/                           # React + Vite dashboard (early stage, not yet wired to a backend)
+│   └── src/
+│       ├── pages/                      # Dashboard, Backtests, Models, Strategies, Wallets, Sentiment, Deployment, Execution
+│       ├── components/
+│       └── layouts/
+│
+├── run_pipeline.bat                    # Task Scheduler: Binance + Bybit data pipelines
+├── run_simulator.bat                   # Task Scheduler: paper-trading simulator
+├── run_execution.bat                   # Task Scheduler: live Bybit execution
+├── run_accounts.bat                    # Task Scheduler: Bybit account history/stats refresh
+├── plot_indicators.py                  # Standalone Plotly indicator chart script
+├── setup.py                            # Makes crypto_pipeline pip-installable (pip install -e .)
 ├── .env                                # Shared DB credentials (not committed)
 └── requirements.txt
 ```
