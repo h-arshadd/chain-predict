@@ -37,3 +37,17 @@ crypto_pipeline/preprocessing_lab/outputs/
 crypto_pipeline/backtest/backtest_outputs
 crypto_pipeline/signals/signal_outputs
 crypto_pipeline/validation/outputs
+
+# Frontend (React/Vite)
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/*.local
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# Backend (FastAPI, once created)
+backend/__pycache__/
+backend/*.pyc
+backend/.env
