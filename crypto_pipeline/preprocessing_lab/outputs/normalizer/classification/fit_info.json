@@ -1,5 +1,0 @@
-{
-  "method": "normalizer",
-  "norm": "l2",
-  "note": "row-wise, not reversible, no fit_mask used"
-}

@@ -1,5 +1,0 @@
-{
-  "method": "quantile_transformer",
-  "n_quantiles": 1000,
-  "output_distribution": "uniform"
-}

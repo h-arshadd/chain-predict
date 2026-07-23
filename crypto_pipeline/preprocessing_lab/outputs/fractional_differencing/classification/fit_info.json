@@ -1,7 +1,0 @@
-{
-  "method": "fractional_differencing",
-  "d": 0.2,
-  "threshold": 0.001,
-  "weight_length": 73,
-  "note": "first 72 rows are NaN by construction (not enough history). Drop these rows before training."
-}
