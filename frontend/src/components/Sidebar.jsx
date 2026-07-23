@@ -1,6 +1,4 @@
-import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu } from 'antd';
 import {
   DashboardOutlined,
   LineChartOutlined,
@@ -8,9 +6,9 @@ import {
   RocketOutlined,
   ExperimentOutlined,
   FundOutlined,
+  SettingOutlined,
+  QuestionCircleOutlined,
 } from '@ant-design/icons';
-
-const { Sider } = Layout;
 
 const menuItems = [
   { key: '/', icon: <DashboardOutlined />, label: 'Dashboard' },
@@ -22,39 +20,108 @@ const menuItems = [
 ];
 
 export default function Sidebar() {
-  const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
   return (
-    <Sider
-      collapsible
-      collapsed={collapsed}
-      onCollapse={setCollapsed}
-      width={240}
-      style={{ borderRight: '1px solid #E5E4E7' }}
+    <aside
+      style={{
+        width: 264,
+        flexShrink: 0,
+        background: 'rgba(18, 22, 27, 0.7)',
+        backdropFilter: 'blur(20px)',
+        borderRight: '1px solid rgba(255,255,255,0.06)',
+        display: 'flex',
+        flexDirection: 'column',
+        padding: '24px 16px',
+        height: '100vh',
+        position: 'sticky',
+        top: 0,
+      }}
     >
+      {/* Logo */}
       <div
         style={{
-          height: 56,
-          margin: 16,
           display: 'flex',
           alignItems: 'center',
-          justifyContent: collapsed ? 'center' : 'flex-start',
-          fontWeight: 600,
-          fontSize: collapsed ? 18 : 20,
-          color: '#6C5CE7',
+          gap: 10,
+          padding: '0 8px',
+          marginBottom: 32,
         }}
       >
-        {collapsed ? 'CP' : 'ChainPredict'}
+        <div
+          style={{
+            width: 30,
+            height: 30,
+            borderRadius: 9,
+            background: 'radial-gradient(circle at 30% 30%, #3DDC97, #1F9E6B)',
+            boxShadow: '0 0 16px rgba(61, 220, 151, 0.5)',
+          }}
+        />
+        <span style={{ fontSize: 19, fontWeight: 700, color: '#F5F6F7', letterSpacing: -0.3 }}>
+          ChainPredict
+        </span>
       </div>
-      <Menu
-        mode="inline"
-        selectedKeys={[location.pathname]}
-        items={menuItems}
-        onClick={({ key }) => navigate(key)}
-        style={{ borderRight: 'none' }}
-      />
-    </Sider>
+
+      {/* Nav */}
+      <nav style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+        {menuItems.map((item) => {
+          const active = location.pathname === item.key;
+          return (
+            <button
+              key={item.key}
+              onClick={() => navigate(item.key)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                width: '100%',
+                padding: '12px 16px',
+                borderRadius: 14,
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: 14.5,
+                fontWeight: 600,
+                textAlign: 'left',
+                transition: 'background 0.15s, color 0.15s',
+                background: active ? '#3DDC97' : 'transparent',
+                color: active ? '#0B0E11' : '#9096A0',
+              }}
+              onMouseEnter={(e) => {
+                if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+              }}
+              onMouseLeave={(e) => {
+                if (!active) e.currentTarget.style.background = 'transparent';
+              }}
+            >
+              <span style={{ fontSize: 17, display: 'flex' }}>{item.icon}</span>
+              {item.label}
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* Bottom links */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 24 }}>
+        <button
+          style={{
+            display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
+            borderRadius: 14, border: 'none', background: 'transparent',
+            color: '#6B7280', fontSize: 14.5, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
+          }}
+        >
+          <SettingOutlined style={{ fontSize: 17 }} /> Settings
+        </button>
+        <button
+          style={{
+            display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
+            borderRadius: 14, border: 'none', background: 'transparent',
+            color: '#6B7280', fontSize: 14.5, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
+          }}
+        >
+          <QuestionCircleOutlined style={{ fontSize: 17 }} /> Help
+        </button>
+      </div>
+    </aside>
   );
 }
