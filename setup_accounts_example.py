@@ -15,14 +15,15 @@ Each run does two things:
      can leave them as-is afterward.
 
   2. Refreshes accounts.history and accounts.stats from EVERY
-     (exchange, symbol) pair currently in execution.config -- rebuilds
-     accounts.history by pulling this account's fill history LIVE from
-     Bybit (get_executions) for each symbol, then recomputes
-     accounts.stats (trade facts + a live wallet snapshot + quantstats)
-     from that combined history. Safe to run repeatedly (a full rebuild
-     each time, not an append), and safe to run whether or not Bybit has
-     any fills yet for a given symbol (it just does nothing for combos
-     with no fills).
+     (exchange, symbol, strategy) combo currently in execution.config --
+     rebuilds accounts.history by pulling this account's fill history
+     LIVE from Bybit (get_executions) for each symbol, then recomputes
+     accounts.stats -- ONE ROW PER COMBO (trade facts + a live wallet
+     snapshot + quantstats, computed from just that combo's own symbol
+     history). Safe to run repeatedly (a full rebuild each time, not an
+     append), and safe to run whether or not Bybit has any fills yet for
+     a given symbol (it just writes a zero-trade row for combos with no
+     fills).
 
 Run this after execution/main.py (or on its own schedule) so
 accounts.history/accounts.stats stay current -- it does not place any
@@ -44,7 +45,6 @@ from crypto_pipeline.utils.metadata_utils import (
 from crypto_pipeline.utils.accounts_utils import (
     get_account_api_key,
     save_account_api_key,
-    save_account_combos,
     refresh_account_history,
     refresh_account_stats,
 )
@@ -79,17 +79,11 @@ def _get_strategy_combos(conn):
                                 symbol, strategy_name, initial_balance,
                                 position_size, commission, slippage, ...)
                                 merged with exchange/symbol/strategy_name
-                                -- what save_account_combos() writes as
-                                plain rows to accounts.combos so the
-                                account's makeup is visible before any
-                                trade closes.
-        total_initial_balance : combined initial_balance across every
-                                combo, used as the account's overall
-                                starting point for total_net_profit.
+                                -- what refresh_account_stats() writes as
+                                one row per combo in accounts.stats.
     """
     combos = []
     combo_configs = []
-    total_initial_balance = 0.0
 
     metadata_conn = get_metadata_connection()
     try:
@@ -118,11 +112,10 @@ def _get_strategy_combos(conn):
 
             combos.append((exchange, symbol, strategy_name))
             combo_configs.append({"exchange": exchange, "symbol": symbol, "strategy_name": strategy_name, **config})
-            total_initial_balance += float(config["initial_balance"])
     finally:
         metadata_conn.close()
 
-    return combos, combo_configs, total_initial_balance
+    return combos, combo_configs
 
 
 def _load_stats_config():
@@ -149,8 +142,8 @@ def main():
             print(f"Account {ACCOUNT_NAME!r} already registered (updated_at={existing['updated_at']}) -- not overwriting its stored key.")
 
         # Step 2: every (exchange, symbol, strategy) combo execution
-        # currently tracks, plus their combined initial_balance.
-        combos, combo_configs, total_initial_balance = _get_strategy_combos(conn)
+        # currently tracks.
+        combos, combo_configs = _get_strategy_combos(conn)
 
         if not combos:
             print("No (exchange, symbol) pairs found in execution.config -- nothing to refresh.")
@@ -158,17 +151,13 @@ def main():
 
         print(f"Refreshing history/stats for {len(combos)} combo(s): {combos}")
 
-        # Step 3: rewrite accounts.combos -- plain rows, one per
-        # (exchange, symbol, strategy) pair this account trades.
-        save_account_combos(conn, ACCOUNT_NAME, combo_configs)
-
-        # Step 4: rebuild accounts.history from every combo's
+        # Step 3: rebuild accounts.history from every combo's
         # execution.*_trades table.
         refresh_account_history(conn, ACCOUNT_NAME, combos)
 
-        # Step 5: recompute accounts.stats from that refreshed history.
+        # Step 4: recompute accounts.stats -- one row per combo.
         stats_config = _load_stats_config()
-        refresh_account_stats(conn, ACCOUNT_NAME, total_initial_balance, stats_config)
+        refresh_account_stats(conn, ACCOUNT_NAME, stats_config, combo_configs)
 
         print(f"accounts.history and accounts.stats refreshed for {ACCOUNT_NAME!r}.")
 

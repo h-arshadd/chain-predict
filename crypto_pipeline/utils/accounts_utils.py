@@ -25,23 +25,28 @@ Three tables:
                          tagged with account_name/exchange/symbol, with
                          Bybit's own fields kept close to as-is (order id,
                          exec id, price, qty, fee, side, exec type, etc).
-    accounts.combos   -- one row per (exchange, symbol, strategy_name)
-                         pair this account trades, plain columns (exchange,
-                         symbol, strategy_name, initial_balance,
-                         position_size_type, position_size_value,
-                         commission, slippage, allow_long, allow_short,
-                         max_open_positions) -- no JSON. Rewritten in full
-                         each refresh (old rows for this account deleted
-                         first, so a pair dropped from execution.config
-                         also disappears here).
-    accounts.stats    -- one row per account: initial_balance, a block of
-                         plain trade facts (total trades, wins, losses,
-                         win_rate, total fees, total volume, per-coin
-                         breakdown, best/worst trade, ...), a live wallet
-                         snapshot (equity/available balance/unrealized
-                         pnl, pulled from Bybit right now), and every
-                         quantstats metric computed over the account's
-                         combined fill history.
+    accounts.stats    -- one row per (account_name, exchange, symbol,
+                         strategy_name) combo this account trades: that
+                         combo's initial_balance, a block of plain trade
+                         facts computed from just that symbol's fills
+                         (total trades, wins, losses, win_rate, total
+                         fees, total volume, best/worst trade, ...), a
+                         live account-level wallet snapshot (equity/
+                         available balance/unrealized pnl, pulled from
+                         Bybit right now -- same across every row for
+                         that account, since Bybit reports it per
+                         account, not per symbol), and every quantstats
+                         metric computed over that combo's own equity
+                         curve.
+
+    NOTE on strategy_name here: Bybit's fills (accounts.history) are
+    tagged by symbol only, not by strategy -- Bybit has no concept of
+    "which strategy" placed an order. So if two strategies trade the
+    SAME (exchange, symbol) on the same account, their fills can't be
+    told apart and the trade-facts/quantstats numbers for both of that
+    account's rows will be identical (computed from the same pooled
+    symbol history). strategy_name is carried along for display/lookup
+    only in that case.
 
 Why get_executions (fill-level) instead of get_closed_pnl (closed-trade
 level): get_closed_pnl is documented by Bybit as NOT supported on demo
@@ -65,7 +70,7 @@ import re
 
 import pandas as pd
 from psycopg2 import sql
-from psycopg2.extras import Json, RealDictCursor
+from psycopg2.extras import RealDictCursor
 
 from crypto_pipeline.utils.db_utils import _pg_type_for, _copy_dataframe
 from crypto_pipeline.execution.bybit_client import get_client, to_bybit_symbol, utcnow_from_ms
@@ -184,82 +189,6 @@ def _get_bybit_client(conn, account_name):
     if account is None:
         raise ValueError(f"Account {account_name!r} is not registered in accounts.api_keys.")
     return get_client(api_key=account["api_key"], api_secret=account["api_secret"], demo=account["demo"])
-
-
-# ==========================================================
-# accounts.combos -- plain columns, one row per (exchange, symbol, strategy)
-# ==========================================================
-
-def save_account_combos(conn, account_name, combo_configs):
-    """
-    Rewrite accounts.combos for one account: one row per (exchange,
-    symbol, strategy_name) pair it trades, as plain columns (no JSON).
-
-    combo_configs : list of dicts, one per combo, each shaped like
-        {"exchange": ..., "symbol": ..., "strategy_name": ...,
-         "initial_balance": ..., "position_size_type": ...,
-         "position_size_value": ..., "commission": ..., "slippage": ...,
-         "allow_long": ..., "allow_short": ..., "max_open_positions": ...}
-        (exactly what _get_strategy_combos() in setup_accounts_example.py
-        builds -- execution.config's fields plus the looked-up
-        strategy_name).
-
-    Full rewrite each call (old rows for this account deleted first, new
-    ones inserted) -- always reflects exactly what execution.config +
-    metadata.strategy currently say this account trades, nothing stale
-    left behind from a pair that was later removed.
-    """
-    cursor = conn.cursor()
-    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS accounts"))
-    conn.commit()
-
-    cursor.execute(sql.SQL("""
-        CREATE TABLE IF NOT EXISTS accounts.combos (
-            id                   SERIAL PRIMARY KEY,
-            account_name         TEXT NOT NULL,
-            exchange             TEXT NOT NULL,
-            symbol               TEXT NOT NULL,
-            strategy_name        TEXT NOT NULL,
-            initial_balance      DOUBLE PRECISION,
-            position_size_type   TEXT,
-            position_size_value  DOUBLE PRECISION,
-            commission           DOUBLE PRECISION,
-            slippage             DOUBLE PRECISION,
-            allow_long           BOOLEAN,
-            allow_short          BOOLEAN,
-            max_open_positions   INTEGER,
-            updated_at           TIMESTAMP NOT NULL DEFAULT now()
-        )
-    """))
-    conn.commit()
-
-    cursor.execute(sql.SQL("DELETE FROM accounts.combos WHERE account_name = %s"), (account_name,))
-
-    for combo in combo_configs:
-        position_size = combo.get("position_size") or {}
-        cursor.execute(sql.SQL("""
-            INSERT INTO accounts.combos (
-                account_name, exchange, symbol, strategy_name, initial_balance,
-                position_size_type, position_size_value, commission, slippage,
-                allow_long, allow_short, max_open_positions, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
-        """), (
-            account_name,
-            combo.get("exchange"),
-            combo.get("symbol"),
-            combo.get("strategy_name"),
-            combo.get("initial_balance"),
-            position_size.get("type") if position_size else combo.get("position_size_type"),
-            position_size.get("value") if position_size else combo.get("position_size_value"),
-            combo.get("commission"),
-            combo.get("slippage"),
-            combo.get("allow_long"),
-            combo.get("allow_short"),
-            combo.get("max_open_positions"),
-        ))
-
-    conn.commit()
-    cursor.close()
 
 
 # ==========================================================
@@ -466,42 +395,50 @@ def _fetch_wallet_snapshot(client):
     return snapshot
 
 
-def refresh_account_stats(conn, account_name, initial_balance, stats_config):
+def refresh_account_stats(conn, account_name, stats_config, combo_configs):
     """
-    Recompute accounts.stats for one account from accounts.history (must
-    be refreshed first via refresh_account_history() in the same run),
-    plus a live wallet snapshot pulled from Bybit right now.
+    Recompute accounts.stats for one account: ONE ROW PER (exchange,
+    symbol, strategy_name) combo in combo_configs, not one row per
+    account. accounts.history (must be refreshed first via
+    refresh_account_history() in the same run) is filtered down to just
+    that combo's symbol before computing its trade facts/quantstats, so
+    each row reflects only that combo, not the account blended together.
 
-    Three blocks end up in the one row written:
-      1. Plain trade facts, derived from accounts.history -- total fills,
-         wins/losses (by exec-level realized value where determinable),
-         total fees paid, total volume traded, per-coin breakdown, best/
-         worst fill by value, average fill size, first/last trade time.
+    combo_configs : list of dicts, one per combo -- same shape
+        _get_strategy_combos() in setup_accounts_example.py builds:
+        {"exchange": ..., "symbol": ..., "strategy_name": ...,
+         "initial_balance": ..., ...}. Also written into this table as
+         plain columns (exchange, symbol, strategy_name, initial_balance).
+
+    Per combo row, three blocks:
+      1. Plain trade facts, derived from that symbol's slice of
+         accounts.history -- total fills, wins/losses (by exec-level
+         realized value where determinable), total fees paid, total
+         volume traded, best/worst fill by value, average fill size,
+         first/last trade time.
       2. Live wallet snapshot -- current equity/available balance/
          unrealized PnL etc, fetched from Bybit at refresh time (see
-         _fetch_wallet_snapshot). Reflects right now, not history.
+         _fetch_wallet_snapshot). This is ACCOUNT-level, not per-symbol
+         (Bybit reports it per account) -- so it's identical across
+         every combo row for this account.
       3. Every quantstats metric (sharpe, sortino, max_drawdown, ...)
-         computed over an approximate equity curve built by walking
-         accounts.history's net cash flow (exec_value net of fees,
-         signed by side) forward from initial_balance. This is an
-         approximation of the account's trade-level P&L curve since
-         fill-level data doesn't carry a "closed trade" P&L the way
-         execution.*_trades does -- treat the quantstats block as
-         directionally useful, not as precise as execution.stats'
-         own per-strategy version (which is still trade-level and
-         untouched by this file).
+         computed over an approximate equity curve built by walking that
+         combo's own net cash flow (exec_value net of fees, signed by
+         side) forward from that combo's own initial_balance.
 
-    initial_balance : this account's starting balance (caller decides
-        what this means -- sum of contributing execution.config
-        initial_balances, or your own account-level number).
-    stats_config    : same dict compute_stats() takes everywhere else
+    NOTE: Bybit's fills are tagged by symbol only, not by strategy (see
+    module docstring) -- if two strategies in combo_configs share the
+    same (exchange, symbol), their two rows here will have identical
+    trade-facts/quantstats numbers (computed from the same pooled symbol
+    history), since Bybit fills can't be attributed to one strategy vs
+    the other.
+
+    stats_config : same dict compute_stats() takes everywhere else
         (loaded from stats/config.yaml).
 
-    Which (exchange, symbol, strategy) combos this account trades no
-    longer lives on this row -- see save_account_combos() / accounts.combos.
-
-    Always writes a row, even with zero fills yet, so the account shows
-    up in accounts.stats immediately after registration.
+    Full rewrite each call (old rows for this account deleted first, so
+    a combo dropped from execution.config also disappears here). If
+    combo_configs is empty, nothing is written (no combos to report).
     """
     from crypto_pipeline.stats.calculator import compute_stats
 
@@ -509,89 +446,113 @@ def refresh_account_stats(conn, account_name, initial_balance, stats_config):
     client = _get_bybit_client(conn, account_name)
     wallet_snapshot = _fetch_wallet_snapshot(client)
 
-    if history.empty:
-        stats_row = {
-            "total_trades": 0,
-            "wins": 0,
-            "losses": 0,
-            "win_rate": 0.0,
-            "total_fees_paid": 0.0,
-            "total_volume": 0.0,
-            "avg_trade_size": 0.0,
-            "best_trade_value": None,
-            "worst_trade_value": None,
-            "coins_traded": Json([]),
-            "first_trade_time": None,
-            "last_trade_time": None,
-            "final_balance": float(initial_balance),
-            "total_net_profit": 0.0,
-        }
-    else:
-        history = history.sort_values("trade_time")
+    stats_rows = []
+    for combo in combo_configs:
+        exchange = combo.get("exchange")
+        symbol = combo.get("symbol")
+        strategy_name = combo.get("strategy_name")
+        initial_balance = float(combo.get("initial_balance") or 0.0)
 
-        total_trades = len(history)
-        total_fees_paid = float(history["exec_fee"].fillna(0).sum())
-        total_volume = float(history["exec_value"].fillna(0).sum())
-        avg_trade_size = float(history["exec_value"].fillna(0).mean())
+        combo_history = history[
+            (history["exchange"] == exchange) & (history["symbol"] == symbol)
+        ] if not history.empty else history
 
-        # Net cash flow per fill: negative for Buy (cash out), positive
-        # for Sell (cash in), fee always a cost -- a rough per-fill P&L
-        # proxy since fill-level data has no direct "this trade won/lost"
-        # flag the way a closed-trade ledger row does.
-        signed_value = history.apply(
-            lambda r: (r["exec_value"] if r["side"] == "Sell" else -r["exec_value"]) - r["exec_fee"]
-            if pd.notna(r["exec_value"]) else 0.0,
-            axis=1,
-        )
-        wins = int((signed_value > 0).sum())
-        losses = int((signed_value <= 0).sum())
-        win_rate = wins / total_trades if total_trades > 0 else 0.0
+        if combo_history.empty:
+            stats_row = {
+                "total_trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "win_rate": 0.0,
+                "total_fees_paid": 0.0,
+                "total_volume": 0.0,
+                "avg_trade_size": 0.0,
+                "best_trade_value": None,
+                "worst_trade_value": None,
+                "first_trade_time": None,
+                "last_trade_time": None,
+                "final_balance": initial_balance,
+                "total_net_profit": 0.0,
+            }
+        else:
+            combo_history = combo_history.sort_values("trade_time")
 
-        best_trade_value = float(signed_value.max()) if total_trades > 0 else None
-        worst_trade_value = float(signed_value.min()) if total_trades > 0 else None
+            total_trades = len(combo_history)
+            total_fees_paid = float(combo_history["exec_fee"].fillna(0).sum())
+            total_volume = float(combo_history["exec_value"].fillna(0).sum())
+            avg_trade_size = float(combo_history["exec_value"].fillna(0).mean())
 
-        coins_traded = sorted(history["symbol"].dropna().unique().tolist())
+            # Net cash flow per fill: negative for Buy (cash out), positive
+            # for Sell (cash in), fee always a cost -- a rough per-fill P&L
+            # proxy since fill-level data has no direct "this trade won/lost"
+            # flag the way a closed-trade ledger row does.
+            signed_value = combo_history.apply(
+                lambda r: (r["exec_value"] if r["side"] == "Sell" else -r["exec_value"]) - r["exec_fee"]
+                if pd.notna(r["exec_value"]) else 0.0,
+                axis=1,
+            )
+            wins = int((signed_value > 0).sum())
+            losses = int((signed_value <= 0).sum())
+            win_rate = wins / total_trades if total_trades > 0 else 0.0
 
-        equity_values = float(initial_balance) + signed_value.cumsum()
-        final_balance = float(equity_values.iloc[-1])
-        total_net_profit = final_balance - float(initial_balance)
+            best_trade_value = float(signed_value.max()) if total_trades > 0 else None
+            worst_trade_value = float(signed_value.min()) if total_trades > 0 else None
 
-        equity_index = pd.to_datetime(history["trade_time"])
-        equity = pd.Series(equity_values.values, index=equity_index)
-        equity = equity[~equity.index.duplicated(keep="last")].sort_index()
+            equity_values = initial_balance + signed_value.cumsum()
+            final_balance = float(equity_values.iloc[-1])
+            total_net_profit = final_balance - initial_balance
 
-        stats_dict = compute_stats(
-            {"equity_curve": equity, "total_trades": total_trades},
-            stats_config,
-        )
-        stats_row = dict(stats_dict["metrics"])
-        stats_row["total_trades"] = total_trades
-        stats_row["wins"] = wins
-        stats_row["losses"] = losses
-        stats_row["win_rate"] = win_rate
-        stats_row["total_fees_paid"] = total_fees_paid
-        stats_row["total_volume"] = total_volume
-        stats_row["avg_trade_size"] = avg_trade_size
-        stats_row["best_trade_value"] = best_trade_value
-        stats_row["worst_trade_value"] = worst_trade_value
-        stats_row["coins_traded"] = Json(coins_traded)
-        stats_row["first_trade_time"] = history["trade_time"].iloc[0]
-        stats_row["last_trade_time"] = history["trade_time"].iloc[-1]
-        stats_row["final_balance"] = final_balance
-        stats_row["total_net_profit"] = total_net_profit
+            equity_index = pd.to_datetime(combo_history["trade_time"])
+            equity = pd.Series(equity_values.values, index=equity_index)
+            equity = equity[~equity.index.duplicated(keep="last")].sort_index()
 
-    stats_row["initial_balance"] = float(initial_balance)
-    stats_row.update(wallet_snapshot)
+            stats_dict = compute_stats(
+                {"equity_curve": equity, "total_trades": total_trades},
+                stats_config,
+            )
+            stats_row = dict(stats_dict["metrics"])
+            stats_row["total_trades"] = total_trades
+            stats_row["wins"] = wins
+            stats_row["losses"] = losses
+            stats_row["win_rate"] = win_rate
+            stats_row["total_fees_paid"] = total_fees_paid
+            stats_row["total_volume"] = total_volume
+            stats_row["avg_trade_size"] = avg_trade_size
+            stats_row["best_trade_value"] = best_trade_value
+            stats_row["worst_trade_value"] = worst_trade_value
+            stats_row["first_trade_time"] = combo_history["trade_time"].iloc[0]
+            stats_row["last_trade_time"] = combo_history["trade_time"].iloc[-1]
+            stats_row["final_balance"] = final_balance
+            stats_row["total_net_profit"] = total_net_profit
+
+        stats_row["exchange"] = exchange
+        stats_row["symbol"] = symbol
+        stats_row["strategy_name"] = strategy_name
+        stats_row["initial_balance"] = initial_balance
+        stats_row.update(wallet_snapshot)
+        stats_rows.append(stats_row)
+
+    if not stats_rows:
+        return
 
     def _pg_type_for_stats_col(col, val):
-        # coins_traded is Json-wrapped -- _pg_type_for() only understands
-        # plain pandas dtypes, so route it to JSONB directly instead of
-        # letting it fall through to TEXT.
-        if col == "coins_traded":
-            return "JSONB"
         if col in ("first_trade_time", "last_trade_time"):
             return "TIMESTAMP"
         return _pg_type_for(pd.Series([val]))
+
+    # Union of columns across all rows (a combo with zero fills has fewer
+    # keys than one with fills) -- every row gets every column, missing
+    # ones filled with None, so the table has one consistent shape.
+    all_columns = []
+    for row in stats_rows:
+        for col in row.keys():
+            if col not in all_columns:
+                all_columns.append(col)
+
+    sample_values = {}
+    for row in stats_rows:
+        for col in all_columns:
+            if col in row and row[col] is not None:
+                sample_values.setdefault(col, row[col])
 
     cursor = conn.cursor()
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS accounts"))
@@ -600,22 +561,23 @@ def refresh_account_stats(conn, account_name, initial_balance, stats_config):
     column_defs = sql.SQL(", ").join(
         sql.SQL("{col} {pg_type}").format(
             col=sql.Identifier(col),
-            pg_type=sql.SQL(_pg_type_for_stats_col(col, val))
+            pg_type=sql.SQL(_pg_type_for_stats_col(col, sample_values.get(col)))
         )
-        for col, val in stats_row.items()
+        for col in all_columns
     )
     cursor.execute(sql.SQL("""
         CREATE TABLE IF NOT EXISTS accounts.stats (
-            account_name TEXT PRIMARY KEY,
+            account_name TEXT NOT NULL,
             updated_at   TIMESTAMP NOT NULL DEFAULT now(),
-            {column_defs}
+            {column_defs},
+            PRIMARY KEY (account_name, exchange, symbol, strategy_name)
         )
     """).format(column_defs=column_defs))
     conn.commit()
 
     # Self-heal: add any metric columns that didn't exist yet (e.g. a new
     # quantstats metric, or a new wallet/facts field added later).
-    for col, val in stats_row.items():
+    for col in all_columns:
         cursor.execute(sql.SQL("""
             DO $$
             BEGIN
@@ -628,34 +590,38 @@ def refresh_account_stats(conn, account_name, initial_balance, stats_config):
             END $$;
         """).format(
             col=sql.Identifier(col),
-            pg_type=sql.SQL(_pg_type_for_stats_col(col, val))
+            pg_type=sql.SQL(_pg_type_for_stats_col(col, sample_values.get(col)))
         ), (col,))
     conn.commit()
 
-    columns = ["account_name"] + list(stats_row.keys())
-    values = [account_name] + list(stats_row.values())
+    cursor.execute(sql.SQL("DELETE FROM accounts.stats WHERE account_name = %s"), (account_name,))
+
+    columns = ["account_name"] + all_columns
     update_clause = sql.SQL(", ").join(
         sql.SQL("{col} = EXCLUDED.{col}").format(col=sql.Identifier(col))
-        for col in stats_row.keys()
+        for col in all_columns
     )
 
-    cursor.execute(sql.SQL("""
-        INSERT INTO accounts.stats ({columns}, updated_at)
-        VALUES ({placeholders}, now())
-        ON CONFLICT (account_name) DO UPDATE SET
-            {update_clause},
-            updated_at = now()
-    """).format(
-        columns=sql.SQL(", ").join(sql.Identifier(c) for c in columns),
-        placeholders=sql.SQL(", ").join(sql.Placeholder() for _ in columns),
-        update_clause=update_clause
-    ), values)
+    for row in stats_rows:
+        values = [account_name] + [row.get(col) for col in all_columns]
+        cursor.execute(sql.SQL("""
+            INSERT INTO accounts.stats ({columns}, updated_at)
+            VALUES ({placeholders}, now())
+            ON CONFLICT (account_name, exchange, symbol, strategy_name) DO UPDATE SET
+                {update_clause},
+                updated_at = now()
+        """).format(
+            columns=sql.SQL(", ").join(sql.Identifier(c) for c in columns),
+            placeholders=sql.SQL(", ").join(sql.Placeholder() for _ in columns),
+            update_clause=update_clause
+        ), values)
+
     conn.commit()
     cursor.close()
 
 
 def get_account_stats(conn, account_name):
-    """Return this account's stats row as a dict, or None if never computed."""
+    """Return this account's stats rows (one per combo) as a list of dicts."""
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS accounts"))
     conn.commit()
@@ -664,9 +630,9 @@ def get_account_stats(conn, account_name):
     ))
     if cursor.fetchone()[0] is None:
         cursor.close()
-        return None
+        return []
 
-    cursor.execute(sql.SQL("SELECT * FROM accounts.stats WHERE account_name = %s"), (account_name,))
-    row = cursor.fetchone()
+    cursor.execute(sql.SQL("SELECT * FROM accounts.stats WHERE account_name = %s ORDER BY exchange, symbol, strategy_name"), (account_name,))
+    rows = cursor.fetchall()
     cursor.close()
-    return dict(row) if row else None
+    return [dict(r) for r in rows]

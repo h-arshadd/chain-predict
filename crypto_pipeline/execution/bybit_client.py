@@ -311,11 +311,19 @@ def get_open_position(client: HTTP, symbol: str) -> dict:
     symbol -- used by run_execution()'s reconciliation step to detect a
     Bybit-side auto-close (native TP/SL hit) that happened between runs,
     which this script's own candle walk would otherwise have no way of
-    knowing about.
+    knowing about. Also used to ADOPT a live Bybit position into
+    execution.positions when our own DB state has drifted out of sync
+    with Bybit (e.g. a previous run placed a real order and then crashed
+    before saving state) -- see run_execution()'s DB-vs-Bybit check.
 
     Returns None if flat (size == 0 or no row), else a dict: side
-    ("Buy"/"Sell"), size (float), avg_price (float) -- Bybit's own view
-    of the currently open position, not this script's DB state.
+    ("Buy"/"Sell"), size (float), avg_price (float), take_profit (float
+    or None), stop_loss (float or None), created_time (naive UTC
+    datetime or None) -- Bybit's own view of the currently open
+    position, not this script's DB state. take_profit/stop_loss/
+    created_time come straight off the same position row (Bybit returns
+    them whenever they were set natively at order time, same as
+    place_market_order does).
     """
     bybit_symbol = to_bybit_symbol(symbol)
     response = client.get_positions(category="linear", symbol=bybit_symbol)
@@ -325,10 +333,21 @@ def get_open_position(client: HTTP, symbol: str) -> dict:
         return None
 
     row = rows[0]
+
+    def _f(key):
+        val = row.get(key)
+        return float(val) if val not in (None, "") else None
+
+    created_time_ms = row.get("createdTime")
+    created_time = utcnow_from_ms(int(created_time_ms)) if created_time_ms not in (None, "", "0") else None
+
     return {
         "side": row["side"],
         "size": float(row["size"]),
         "avg_price": float(row["avgPrice"]),
+        "take_profit": _f("takeProfit"),
+        "stop_loss": _f("stopLoss"),
+        "created_time": created_time,
     }
 
 

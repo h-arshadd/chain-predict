@@ -385,6 +385,63 @@ def run_execution(client, exchange, symbol, config, strategy_name, time_horizon,
             f"net PnL {reconciled_trade['net_pnl']:.4f}."
         )
 
+    # Sanity check: our DB says flat, but does Bybit actually agree?
+    # This catches the case where a PRIOR run placed a real opening order
+    # on Bybit and then crashed (network error, timestamp/recv_window
+    # error, or any other exception) before save_execution_state()/
+    # open_execution_trade() ran -- Bybit is holding a real position that
+    # our DB never recorded. Without this check, this run would see
+    # position is None, generate a signal, and place ANOTHER real opening
+    # order on top of the one Bybit already has open.
+    #
+    # Fix: ADOPT Bybit's live position into our own `position`/DB state
+    # instead of placing a new order. No new real order goes out for a
+    # symbol that already has one open -- this run just catches up to
+    # reality first, then continues normally (direction-change close/
+    # TP-SL reconciliation on later runs behave exactly as if this
+    # process had been the one to open it).
+    if position is None:
+        live_position = get_open_position(client, symbol)
+        if live_position is not None:
+            adopted_direction = "long" if live_position["side"] == "Buy" else "short"
+            entry_time = live_position["created_time"] or datetime.utcnow()
+            entry_price = live_position["avg_price"]
+            take_profit = live_position["take_profit"]
+            stop_loss = live_position["stop_loss"]
+
+            position = {
+                "direction": adopted_direction,
+                "entry_time": entry_time,
+                "entry_price": round(entry_price, 4),
+                "quantity": round(live_position["size"], 4),
+                "take_profit": round(take_profit, 4) if take_profit is not None else None,
+                "stop_loss": round(stop_loss, 4) if stop_loss is not None else None,
+                "entry_fee": None,  # unknown -- this process didn't place the order; _close_live_position() estimates it from config["commission"] if this position closes.
+                "current_price": round(entry_price, 4),
+                "unrealized_pnl": 0.0,
+                "leaning": _leaning(entry_price, take_profit, stop_loss) if take_profit is not None and stop_loss is not None else None,
+                "status": "open",
+            }
+
+            # Make sure the Trade Ledger has an open row for this trade too
+            # (ON CONFLICT DO NOTHING if a prior crashed run already wrote
+            # it) -- otherwise close_execution_trade() would later find no
+            # matching entry_date_time and fall back to inserting a
+            # close-only row instead of updating this one.
+            conn = get_db_connection()
+            try:
+                open_execution_trade(conn, exchange, symbol, strategy_name, position)
+            finally:
+                conn.close()
+
+            print(
+                f"{exchange} {symbol} ({strategy_name}): DB state said flat, but Bybit shows "
+                f"an OPEN {position['direction']} position (entry_price={position['entry_price']}, "
+                f"qty={position['quantity']}) -- adopting it into execution.positions instead of "
+                f"placing a new order. This usually means a previous run placed a real order and "
+                f"then crashed before saving state."
+            )
+
     # Pull recent live candles straight from Bybit -- enough bars to cover
     # both the 1-minute walk-forward and the resample window the strategy's
     # time_horizon needs (e.g. 200 1-minute candles comfortably covers a
