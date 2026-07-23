@@ -25,24 +25,23 @@ Three tables:
                          tagged with account_name/exchange/symbol, with
                          Bybit's own fields kept close to as-is (order id,
                          exec id, price, qty, fee, side, exec type, etc).
-    accounts.stats    -- one row per (account_name, exchange, symbol,
-                         strategy_name) combo this account trades: that
-                         combo's initial_balance plus the 85-stat block
-                         from ledger_stats.get_ledger_stats(), computed
-                         from just that combo's own symbol fills
-                         (FIFO-derived realized PnL, win rate, profit
-                         factor, streaks, drawdown, fees, volume, holding
-                         time, time-of-day/day-of-week breakdowns, a
-                         per_symbol sub-dict, ...).
+    accounts.stats    -- ONE ROW PER ACCOUNT (true overall, not per
+                         symbol/strategy): the 85-stat block from
+                         ledger_stats.get_ledger_stats(), computed over
+                         this account's ENTIRE accounts.history pooled
+                         together across every (exchange, symbol) pair it
+                         trades (FIFO-derived realized PnL, win rate,
+                         profit factor, streaks, drawdown, fees, volume,
+                         holding time, time-of-day/day-of-week
+                         breakdowns, and a per_symbol sub-dict for
+                         coin-level detail within that one row).
 
-    NOTE on strategy_name here: Bybit's fills (accounts.history) are
-    tagged by symbol only, not by strategy -- Bybit has no concept of
-    "which strategy" placed an order. So if two strategies trade the
-    SAME (exchange, symbol) on the same account, their fills can't be
-    told apart and the ledger_stats numbers for both of that account's
-    rows will be identical (computed from the same pooled symbol
-    history). strategy_name is carried along for display/lookup only in
-    that case.
+    NOTE: accounts.history is still tagged with exchange/symbol per fill
+    (Bybit has no concept of "which strategy" placed an order, so
+    strategy_name never appears in accounts.history at all). accounts.stats
+    pools everything for the account together into one row -- if you need
+    a coin-level view, use that row's per_symbol sub-dict rather than
+    looking for separate rows per symbol/strategy.
 
 Why get_executions (fill-level) instead of get_closed_pnl (closed-trade
 level): get_closed_pnl is documented by Bybit as NOT supported on demo
@@ -360,100 +359,54 @@ def get_account_history(conn, account_name):
 # ==========================================================
 
 
-def refresh_account_stats(conn, account_name, combo_configs):
+def refresh_account_stats(conn, account_name):
     """
-    Recompute accounts.stats for one account: ONE ROW PER (exchange,
-    symbol, strategy_name) combo in combo_configs, not one row per
-    account. accounts.history (must be refreshed first via
-    refresh_account_history() in the same run) is filtered down to just
-    that combo's symbol before computing its ledger_stats block, so each
-    row reflects only that combo, not the account blended together.
+    Recompute accounts.stats for one account: ONE ROW PER ACCOUNT (true
+    overall, not per combo/symbol) -- the 85-stat block from
+    ledger_stats.get_ledger_stats(), computed over this account's ENTIRE
+    accounts.history pooled together across every (exchange, symbol) pair
+    it trades. accounts.history must be refreshed first via
+    refresh_account_history() in the same run.
 
-    combo_configs : list of dicts, one per combo -- same shape
-        _get_strategy_combos() in setup_accounts_example.py builds:
-        {"exchange": ..., "symbol": ..., "strategy_name": ...,
-         "initial_balance": ..., ...}. Also written into this table as
-         plain columns (exchange, symbol, strategy_name, initial_balance).
+    Per-coin detail isn't lost: ledger_stats' own per_symbol sub-dict
+    (one of the 85 stats) already breaks trade_count/total_qty/
+    total_value/total_fees/avg_price/realized_pnl/win_rate_pct down by
+    symbol, computed from this same pooled history -- so a per-coin view
+    is still available inside this one row, without a separate row per
+    combo.
 
-    Per combo row: the 85-stat block from ledger_stats.get_ledger_stats(),
-    computed from just that symbol's slice of accounts.history --
-    FIFO-derived realized PnL, win rate, profit factor, expectancy,
-    streaks, max drawdown, fees (total/maker/taker), volume, price stats,
-    long vs short PnL, holding time, time-of-day/day-of-week breakdowns,
-    and a per_symbol sub-dict. Plus exchange/symbol/strategy_name/
-    initial_balance so each row can be identified and joined back to
-    execution.config.
-
-    NOTE: Bybit's fills are tagged by symbol only, not by strategy (see
-    module docstring) -- if two strategies in combo_configs share the
-    same (exchange, symbol), their two rows here will have identical
-    ledger_stats numbers (computed from the same pooled symbol history),
-    since Bybit fills can't be attributed to one strategy vs the other.
-
-    Full rewrite each call (old rows for this account deleted first, so
-    a combo dropped from execution.config also disappears here). If
-    combo_configs is empty, nothing is written (no combos to report).
+    Full rewrite each call (old row for this account deleted first). If
+    accounts.history has no rows for this account, a single row of
+    all-zero/empty stats is still written (so accounts.stats always has
+    exactly one row per registered account).
     """
     from crypto_pipeline.utils.ledger_stats import get_ledger_stats
 
     history = get_account_history(conn, account_name)
 
-    stats_rows = []
-    for combo in combo_configs:
-        exchange = combo.get("exchange")
-        symbol = combo.get("symbol")
-        strategy_name = combo.get("strategy_name")
-        initial_balance = float(combo.get("initial_balance") or 0.0)
+    if history.empty:
+        stats_row = {"row_count": 0}
+    else:
+        stats_row = get_ledger_stats(history.sort_values("trade_time"))
 
-        combo_history = history[
-            (history["exchange"] == exchange) & (history["symbol"] == symbol)
-        ] if not history.empty else history
-
-        if combo_history.empty:
-            stats_row = {"row_count": 0}
-        else:
-            stats_row = get_ledger_stats(combo_history.sort_values("trade_time"))
-
-        stats_row["exchange"] = exchange
-        stats_row["symbol"] = symbol
-        stats_row["strategy_name"] = strategy_name
-        stats_row["initial_balance"] = initial_balance
-
-        # ledger_stats returns a handful of dict/list-valued fields
-        # (per_symbol, symbols_traded, trades_by_hour_of_day,
-        # trades_by_day_of_week, trades_by_date) that _pg_type_for can't
-        # infer a scalar column type for -- store those as JSON text so
-        # the rest of the row still writes as plain scalar columns.
-        import json as _json
-        for _col in ("per_symbol", "symbols_traded", "trades_by_hour_of_day",
-                     "trades_by_day_of_week", "trades_by_date"):
-            if _col in stats_row and not isinstance(stats_row[_col], (str, type(None))):
-                stats_row[_col] = _json.dumps(stats_row[_col], default=str)
-
-        stats_rows.append(stats_row)
-
-    if not stats_rows:
-        return
+    # ledger_stats returns a handful of dict/list-valued fields
+    # (per_symbol, symbols_traded, trades_by_hour_of_day,
+    # trades_by_day_of_week, trades_by_date) that _pg_type_for can't
+    # infer a scalar column type for -- store those as JSON text so the
+    # rest of the row still writes as plain scalar columns.
+    import json as _json
+    for _col in ("per_symbol", "symbols_traded", "trades_by_hour_of_day",
+                 "trades_by_day_of_week", "trades_by_date"):
+        if _col in stats_row and not isinstance(stats_row[_col], (str, type(None))):
+            stats_row[_col] = _json.dumps(stats_row[_col], default=str)
 
     def _pg_type_for_stats_col(col, val):
         if col in ("first_trade_time", "last_trade_time"):
             return "TIMESTAMP"
         return _pg_type_for(pd.Series([val]))
 
-    # Union of columns across all rows (a combo with zero fills has fewer
-    # keys than one with fills) -- every row gets every column, missing
-    # ones filled with None, so the table has one consistent shape.
-    all_columns = []
-    for row in stats_rows:
-        for col in row.keys():
-            if col not in all_columns:
-                all_columns.append(col)
-
-    sample_values = {}
-    for row in stats_rows:
-        for col in all_columns:
-            if col in row and row[col] is not None:
-                sample_values.setdefault(col, row[col])
+    all_columns = list(stats_row.keys())
+    sample_values = {col: stats_row[col] for col in all_columns if stats_row[col] is not None}
 
     cursor = conn.cursor()
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS accounts"))
@@ -471,13 +424,13 @@ def refresh_account_stats(conn, account_name, combo_configs):
             account_name TEXT NOT NULL,
             updated_at   TIMESTAMP NOT NULL DEFAULT now(),
             {column_defs},
-            PRIMARY KEY (account_name, exchange, symbol, strategy_name)
+            PRIMARY KEY (account_name)
         )
     """).format(column_defs=column_defs))
     conn.commit()
 
     # Self-heal: add any metric columns that didn't exist yet (e.g. a new
-    # ledger_stats field, or a new wallet field added later).
+    # ledger_stats field added later).
     for col in all_columns:
         cursor.execute(sql.SQL("""
             DO $$
@@ -495,34 +448,31 @@ def refresh_account_stats(conn, account_name, combo_configs):
         ), (col,))
     conn.commit()
 
-    cursor.execute(sql.SQL("DELETE FROM accounts.stats WHERE account_name = %s"), (account_name,))
-
     columns = ["account_name"] + all_columns
     update_clause = sql.SQL(", ").join(
         sql.SQL("{col} = EXCLUDED.{col}").format(col=sql.Identifier(col))
         for col in all_columns
     )
+    values = [account_name] + [stats_row.get(col) for col in all_columns]
 
-    for row in stats_rows:
-        values = [account_name] + [row.get(col) for col in all_columns]
-        cursor.execute(sql.SQL("""
-            INSERT INTO accounts.stats ({columns}, updated_at)
-            VALUES ({placeholders}, now())
-            ON CONFLICT (account_name, exchange, symbol, strategy_name) DO UPDATE SET
-                {update_clause},
-                updated_at = now()
-        """).format(
-            columns=sql.SQL(", ").join(sql.Identifier(c) for c in columns),
-            placeholders=sql.SQL(", ").join(sql.Placeholder() for _ in columns),
-            update_clause=update_clause
-        ), values)
+    cursor.execute(sql.SQL("""
+        INSERT INTO accounts.stats ({columns}, updated_at)
+        VALUES ({placeholders}, now())
+        ON CONFLICT (account_name) DO UPDATE SET
+            {update_clause},
+            updated_at = now()
+    """).format(
+        columns=sql.SQL(", ").join(sql.Identifier(c) for c in columns),
+        placeholders=sql.SQL(", ").join(sql.Placeholder() for _ in columns),
+        update_clause=update_clause
+    ), values)
 
     conn.commit()
     cursor.close()
 
 
 def get_account_stats(conn, account_name):
-    """Return this account's stats rows (one per combo) as a list of dicts."""
+    """Return this account's single overall stats row as a dict, or None if not yet computed."""
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS accounts"))
     conn.commit()
@@ -531,9 +481,9 @@ def get_account_stats(conn, account_name):
     ))
     if cursor.fetchone()[0] is None:
         cursor.close()
-        return []
+        return None
 
-    cursor.execute(sql.SQL("SELECT * FROM accounts.stats WHERE account_name = %s ORDER BY exchange, symbol, strategy_name"), (account_name,))
-    rows = cursor.fetchall()
+    cursor.execute(sql.SQL("SELECT * FROM accounts.stats WHERE account_name = %s"), (account_name,))
+    row = cursor.fetchone()
     cursor.close()
-    return [dict(r) for r in rows]
+    return dict(row) if row else None

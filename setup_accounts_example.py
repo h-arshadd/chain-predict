@@ -18,12 +18,12 @@ Each run does two things:
      (exchange, symbol, strategy) combo currently in execution.config --
      rebuilds accounts.history by pulling this account's fill history
      LIVE from Bybit (get_executions) for each symbol, then recomputes
-     accounts.stats -- ONE ROW PER COMBO (the ~85-stat ledger_stats
-     block + a live wallet snapshot, computed from just that combo's own
-     symbol history). Safe to run repeatedly (a full rebuild each time,
-     not an append), and safe to run whether or not Bybit has any fills
-     yet for a given symbol (it just writes a zero-trade row for combos
-     with no fills).
+     accounts.stats -- ONE ROW FOR THE WHOLE ACCOUNT (the 85-stat
+     ledger_stats block, computed over all of that account's history
+     pooled together, not split per symbol/strategy). Safe to run
+     repeatedly (a full rebuild each time, not an append), and safe to
+     run even if Bybit has no fills yet for any symbol (writes a
+     zero-trade row in that case).
 
 Run this after execution/main.py (or on its own schedule) so
 accounts.history/accounts.stats stay current -- it does not place any
@@ -146,8 +146,8 @@ def main():
         # execution.*_trades table.
         refresh_account_history(conn, ACCOUNT_NAME, combos)
 
-        # Step 4: recompute accounts.stats -- one row per combo.
-        refresh_account_stats(conn, ACCOUNT_NAME, combo_configs)
+        # Step 4: recompute accounts.stats -- one overall row for the account.
+        refresh_account_stats(conn, ACCOUNT_NAME)
 
         print(f"accounts.history and accounts.stats refreshed for {ACCOUNT_NAME!r}.")
 
