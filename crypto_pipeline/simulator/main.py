@@ -325,7 +325,7 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
         cumulative_pnl = round(balance - config["initial_balance"], 4)
         save_simulator_state(conn, exchange, symbol, strategy_name, time_horizon, last_candle_time, round(balance, 4), position, cumulative_pnl)
         trade_ledger = pd.DataFrame(closed_trades)
-        append_simulator_trades(conn, exchange, symbol, strategy_name, trade_ledger)
+        append_simulator_trades(conn, exchange, symbol, strategy_name, time_horizon, trade_ledger)
     finally:
         conn.close()
 
@@ -341,7 +341,7 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
     # strategy's full history, not just this run's candles.
     conn = get_db_connection()
     try:
-        summary = get_simulator_summary(conn, exchange, symbol, strategy_name)
+        summary = get_simulator_summary(conn, exchange, symbol, strategy_name, time_horizon)
     finally:
         conn.close()
 
@@ -370,7 +370,7 @@ def run_simulator(exchange, symbol, config, strategy_name, time_horizon, strateg
         conn = get_db_connection()
         try:
             equity_curve = build_equity_curve_from_ledger(
-                conn, exchange, symbol, strategy_name, config["initial_balance"]
+                conn, exchange, symbol, strategy_name, time_horizon, config["initial_balance"]
             )
         finally:
             conn.close()
