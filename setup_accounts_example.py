@@ -18,12 +18,12 @@ Each run does two things:
      (exchange, symbol, strategy) combo currently in execution.config --
      rebuilds accounts.history by pulling this account's fill history
      LIVE from Bybit (get_executions) for each symbol, then recomputes
-     accounts.stats -- ONE ROW PER COMBO (trade facts + a live wallet
-     snapshot + quantstats, computed from just that combo's own symbol
-     history). Safe to run repeatedly (a full rebuild each time, not an
-     append), and safe to run whether or not Bybit has any fills yet for
-     a given symbol (it just writes a zero-trade row for combos with no
-     fills).
+     accounts.stats -- ONE ROW PER COMBO (the ~85-stat ledger_stats
+     block + a live wallet snapshot, computed from just that combo's own
+     symbol history). Safe to run repeatedly (a full rebuild each time,
+     not an append), and safe to run whether or not Bybit has any fills
+     yet for a given symbol (it just writes a zero-trade row for combos
+     with no fills).
 
 Run this after execution/main.py (or on its own schedule) so
 accounts.history/accounts.stats stay current -- it does not place any
@@ -118,15 +118,6 @@ def _get_strategy_combos(conn):
     return combos, combo_configs
 
 
-def _load_stats_config():
-    import yaml
-    import crypto_pipeline
-    from pathlib import Path
-    stats_config_path = Path(crypto_pipeline.__file__).parent / "stats" / "config.yaml"
-    with open(stats_config_path, "r") as f:
-        return yaml.safe_load(f)
-
-
 def main():
     conn = get_db_connection()
     try:
@@ -156,8 +147,7 @@ def main():
         refresh_account_history(conn, ACCOUNT_NAME, combos)
 
         # Step 4: recompute accounts.stats -- one row per combo.
-        stats_config = _load_stats_config()
-        refresh_account_stats(conn, ACCOUNT_NAME, stats_config, combo_configs)
+        refresh_account_stats(conn, ACCOUNT_NAME, combo_configs)
 
         print(f"accounts.history and accounts.stats refreshed for {ACCOUNT_NAME!r}.")
 
