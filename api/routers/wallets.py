@@ -108,12 +108,18 @@ def _wallet_expandable_row(conn, account_name: str) -> dict:
     """
     Real strategies/positions/executions for this wallet, filtered from
     executions_repo.list_executions() down to whichever pairs have this
-    account_name assigned in execution.config. "Open Orders" is left
-    empty -- this codebase places TP/SL natively on the exchange-side
-    position (see bybit_client.set_trading_stop), there is no separate
-    "pending order" concept to list per wallet; ExecutionDetail's
-    live_position field is the honest equivalent, shown on the drill-down
-    page instead of invented here.
+    account_name assigned in execution.config.
+
+    "Open Orders" stays empty -- this codebase places TP/SL natively on
+    the exchange-side position (see bybit_client.set_trading_stop),
+    there is no separate resting "pending order" concept to list. What
+    WAS missing here wasn't orders, it was visibility into the open
+    positions that already exist: those now carry a real "Open" status
+    plus a live mark price, fetched via executions_repo._live_bybit_position
+    -- one Bybit call per open position ON THIS WALLET ONLY. Expanding a
+    wallet row is a single-wallet, user-initiated action (not part of
+    the list endpoint), so this doesn't multiply into N calls across
+    every wallet the way it would if done in list_executions/list_wallets.
     """
     all_executions = [e for e in executions_repo.list_executions(conn) if e.get("account_name") == account_name]
 
@@ -126,21 +132,34 @@ def _wallet_expandable_row(conn, account_name: str) -> dict:
         for e in all_executions if e["strategy_name"] != "—"
     ]
 
-    positions = [
-        {
+    positions = []
+    for e in all_executions:
+        if e.get("position") is None:
+            continue
+        entry_price = e["position"]["entry_price"] or 0.0
+        # Real live position + mark price for this specific pair -- same
+        # live fetch ExecutionDetail's live_position already makes,
+        # reused here rather than duplicated. None if Bybit errors, the
+        # wallet has no credentials, or it's actually flat (e.g. closed
+        # since execution.positions was last written) -- entry price is
+        # still shown as the fallback mark so the row never blanks out.
+        live = executions_repo._live_bybit_position(account_name, conn, e["symbol"])
+        mark_price = live["mark_price"] if live and live.get("mark_price") is not None else entry_price
+        positions.append({
             "symbol": e["symbol"],
             "side": "Long" if e["position"]["direction"] == "long" else "Short",
             "size": e["position"]["quantity"] or 0.0,
-            "entry": e["position"]["entry_price"] or 0.0,
-            # No live mark price fetched here (would be one Bybit call per
-            # open position on every wallet-list expand) -- entry price is
-            # shown as both fields' fallback; ExecutionDetail's live_position
-            # has the real live/mark data for this pair if needed.
-            "mark": e["position"]["entry_price"] or 0.0,
+            "entry": entry_price,
+            "mark": mark_price,
             "pnl": e["cumulative_pnl"] or 0.0,
-        }
-        for e in all_executions if e.get("position") is not None
-    ]
+            # "Open" = confirmed still open on Bybit right now (live is
+            # not None); "Open (unconfirmed)" = our DB thinks it's open
+            # but the live Bybit check didn't confirm it (error, no
+            # wallet creds, or it already closed since the last DB
+            # write) -- surfaces the gap instead of silently claiming a
+            # position is live when we couldn't actually verify it.
+            "status": "Open" if live is not None else "Open (unconfirmed)",
+        })
 
     executions = [
         {

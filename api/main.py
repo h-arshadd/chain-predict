@@ -10,9 +10,9 @@ from the repo root (same level as crypto_pipeline/ and api/), so that
 convention as the pipeline's own run_*.bat scripts -- run from repo root.
 
 Routers are added one per module (per spec: "each module should own its
-routes"). Only wallets exists so far -- strategies/backtests/models/
-executions/nlp/dashboard land here the same way as we build them, no
-restructuring needed.
+routes"). wallets, executions, and sentiment exist so far --
+strategies/backtests/models/dashboard land here the same way as we
+build them, no restructuring needed.
 
 No /api/users, /api/auth -- intentionally absent per instructions, this
 is a single-operator tool with no login.
@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from api.routers import wallets, executions
+from api.routers import wallets, executions, sentiment
 
 app = FastAPI(title="Trading Platform API")
 
@@ -46,6 +46,7 @@ async def validation_exception_handler(request, exc):
 
 app.include_router(wallets.router)
 app.include_router(executions.router)
+app.include_router(sentiment.router)
 
 
 @app.get("/api/health")

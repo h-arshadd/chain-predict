@@ -353,13 +353,15 @@ def get_open_position(client: HTTP, symbol: str) -> dict:
     before saving state) -- see run_execution()'s DB-vs-Bybit check.
 
     Returns None if flat (size == 0 or no row), else a dict: side
-    ("Buy"/"Sell"), size (float), avg_price (float), take_profit (float
-    or None), stop_loss (float or None), created_time (naive UTC
-    datetime or None) -- Bybit's own view of the currently open
-    position, not this script's DB state. take_profit/stop_loss/
-    created_time come straight off the same position row (Bybit returns
-    them whenever they were set natively at order time, same as
-    place_market_order does).
+    ("Buy"/"Sell"), size (float), avg_price (float), mark_price (float
+    or None), take_profit (float or None), stop_loss (float or None),
+    created_time (naive UTC datetime or None) -- Bybit's own view of the
+    currently open position, not this script's DB state. take_profit/
+    stop_loss/created_time come straight off the same position row
+    (Bybit returns them whenever they were set natively at order time,
+    same as place_market_order does). mark_price is Bybit's live mark
+    (used for unrealized PnL, not just the entry fill) -- same response,
+    no extra call, it was previously read off this row and discarded.
     """
     bybit_symbol = to_bybit_symbol(symbol)
     response = client.get_positions(category="linear", symbol=bybit_symbol)
@@ -381,6 +383,7 @@ def get_open_position(client: HTTP, symbol: str) -> dict:
         "side": row["side"],
         "size": float(row["size"]),
         "avg_price": float(row["avgPrice"]),
+        "mark_price": _f("markPrice"),
         "take_profit": _f("takeProfit"),
         "stop_loss": _f("stopLoss"),
         "created_time": created_time,
