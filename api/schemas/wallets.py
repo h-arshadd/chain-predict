@@ -64,13 +64,16 @@ class WalletStrategyAssignment(BaseModel):
 class WalletPosition(BaseModel):
     """
     One open position for this wallet, derived from execution.positions
-    (see routers/wallets.py's _wallet_expandable_row). `mark` currently
-    mirrors `entry` -- no live mark price is fetched per position on the
-    wallet list (would be one extra Bybit call per open position on every
-    expand); `pnl` is the real, already-computed cumulative PnL for that
-    pair (execution.positions.cumulative_pnl), so it does not depend on
-    `mark` being live. See ExecutionDetail.live_position on the Execution
-    Details drill-down for the real live/mark price.
+    (see routers/wallets.py's _wallet_expandable_row). `mark` is a real
+    live mark price fetched from Bybit for this specific pair when the
+    wallet row is expanded (falls back to `entry` only if that live call
+    errors or returns nothing). `status` is "Open" when Bybit confirms
+    the position is still live right now, or "Open (unconfirmed)" if our
+    DB thinks it's open but the live check couldn't verify it (no
+    wallet credentials, a Bybit error, or it already closed since
+    execution.positions was last written). `pnl` is the real,
+    already-computed cumulative PnL for that pair
+    (execution.positions.cumulative_pnl).
     """
     symbol: str
     side: str
@@ -78,6 +81,7 @@ class WalletPosition(BaseModel):
     entry: float
     mark: float
     pnl: float
+    status: str
 
 
 class WalletOpenOrder(BaseModel):

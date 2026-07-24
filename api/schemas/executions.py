@@ -115,6 +115,7 @@ class LivePosition(BaseModel):
     side: str
     size: float
     avg_price: float
+    mark_price: Optional[float] = None
     take_profit: Optional[float] = None
     stop_loss: Optional[float] = None
     created_time: Optional[datetime] = None
