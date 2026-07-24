@@ -101,17 +101,39 @@ export default function Models() {
 
   const columns = [
     {
-      title: 'Run ID', dataIndex: 'run_id', key: 'run_id',
+      title: 'Run', dataIndex: 'run_id', key: 'run_id',
       sorter: (a, b) => a.run_id.localeCompare(b.run_id),
       render: (t, row) => (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
           <div style={{
             width: 30, height: 30, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center',
             background: 'rgba(61,220,151,0.12)', color: MINT, flexShrink: 0,
           }}>
             <ExperimentOutlined style={{ fontSize: 14 }} />
           </div>
-          <span style={{ fontWeight: 600, color: '#F5F6F7', fontFamily: 'ui-monospace, monospace', fontSize: 12.5 }}>{t}</span>
+          <div style={{ minWidth: 0 }}>
+            {/* Friendly label only -- run_id itself isn't shown, per
+                request. Exchange + horizon are folded in alongside
+                symbol/model_type/algorithm specifically so two runs never
+                render identically: e.g. once Binance- and Bybit-trained
+                BTC classification xgboost runs both exist side by side
+                (see ml_repo.py -- exchange is baked into run_id/folder
+                naming), this line is still what tells them apart. The
+                raw run_id is still the row's React key and still what
+                the click navigates on -- just not rendered.
+            */}
+            <div style={{ fontWeight: 600, color: '#F5F6F7', fontSize: 13.5, whiteSpace: 'nowrap' }}>
+              {row.symbol ? row.symbol.toUpperCase() : '—'}
+              {' · '}
+              {row.model_type ? row.model_type[0].toUpperCase() + row.model_type.slice(1) : '—'}
+              {' · '}
+              {algorithmLabel(row.algorithm)}
+            </div>
+            <div style={{ color: '#6B7280', fontSize: 11.5, whiteSpace: 'nowrap' }}>
+              {row.exchange ? row.exchange[0].toUpperCase() + row.exchange.slice(1) : '—'}
+              {row.horizon != null && <> · horizon {row.horizon}</>}
+            </div>
+          </div>
         </div>
       ),
     },
@@ -204,8 +226,12 @@ export default function Models() {
         </div>
       </div>
 
-      {/* Table */}
-      <div style={{ ...panel, padding: 20 }}>
+      {/* Table -- overflow: hidden keeps the table's own corners/scrollbar
+          inside the panel's rounded border instead of the table bleeding
+          past it; scroll.x lets the (now wider, two-line) Run column and
+          the rest of the columns scroll horizontally within the panel on
+          narrow viewports rather than overflowing it. */}
+      <div style={{ ...panel, padding: 20, overflow: 'hidden' }}>
         {loading ? (
           <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
             <Spin size="large" />
@@ -215,6 +241,7 @@ export default function Models() {
             columns={columns}
             dataSource={filtered.map((r) => ({ ...r, key: r.run_id }))}
             pagination={{ pageSize: 10 }}
+            scroll={{ x: 'max-content' }}
             locale={{ emptyText: 'No trained runs match your filters.' }}
             onRow={(row) => ({
               onClick: () => navigate(`/models/${row.run_id}`),
