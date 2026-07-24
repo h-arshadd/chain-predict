@@ -37,11 +37,11 @@ export default function Strategies() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   // Deep-link support: Deployment/ExecutionDetails' "no strategy enabled
-  // for this pair" link lands here with ?exchange=&coin= pre-filled, so
-  // the person sees exactly the pair that needs a strategy enabled
-  // instead of the full unfiltered list.
-  const [search, setSearch] = useState(searchParams.get('coin') || '');
-  const [exchangeFilter, setExchangeFilter] = useState(searchParams.get('exchange') || 'All');
+  // for this pair" link lands here with ?coin= pre-filled, so the person
+  // sees exactly the pair that needs a strategy enabled instead of the
+  // full unfiltered list.
+  const [search, setSearch] = useState('');
+  const [coinFilter, setCoinFilter] = useState(searchParams.get('coin') || 'All');
 
   const load = useCallback(() => {
     setLoading(true);
@@ -56,16 +56,16 @@ export default function Strategies() {
     load();
   }, [load]);
 
-  const exchangeOptions = [
-    { value: 'All', label: 'All exchanges' },
-    ...[...new Set(strategies.map((s) => s.exchange))].map((e) => ({ value: e, label: e })),
+  const coinOptions = [
+    { value: 'All', label: 'All coins' },
+    ...[...new Set(strategies.map((s) => s.coin))].sort().map((c) => ({ value: c, label: c.toUpperCase() })),
   ];
 
   const filtered = strategies.filter((s) => {
     const q = search.toLowerCase();
-    const matchesSearch = s.strategy_name.toLowerCase().includes(q) || s.coin.toLowerCase().includes(q);
-    const matchesExchange = exchangeFilter === 'All' || s.exchange === exchangeFilter;
-    return matchesSearch && matchesExchange;
+    const matchesSearch = s.strategy_name.toLowerCase().includes(q);
+    const matchesCoin = coinFilter === 'All' || s.coin === coinFilter;
+    return matchesSearch && matchesCoin;
   });
 
   const applyToggle = (strategyId, nextEnabled) => {
@@ -91,7 +91,7 @@ export default function Strategies() {
       .then(() => {
         message.success(
           nextEnabled
-            ? `${target.strategy_name} is now live for ${target.exchange}/${target.coin.toUpperCase()}`
+            ? `${target.strategy_name} is now live for ${target.coin.toUpperCase()}`
             : `${target.strategy_name} disabled`
         );
         load(); // refresh pair_status/is_live_for_pair for every affected row
@@ -122,7 +122,7 @@ export default function Strategies() {
       title: 'Switch the live strategy for this pair?',
       content: (
         <span>
-          <strong>{conflicting.strategy_name}</strong> is currently live for {row.exchange}/{row.coin.toUpperCase()}.
+          <strong>{conflicting.strategy_name}</strong> is currently live for {row.coin.toUpperCase()}.
           Enabling <strong>{row.strategy_name}</strong> will disable it — only one strategy can be live per pair.
           This takes effect immediately.
         </span>
@@ -140,7 +140,6 @@ export default function Strategies() {
       render: (t) => <span style={{ fontWeight: 600, color: '#F5F6F7' }}>{t}</span>,
     },
     { title: 'Symbol', dataIndex: 'coin', key: 'coin', render: (t) => <span style={{ color: '#9096A0' }}>{t.toUpperCase()}</span> },
-    { title: 'Exchange', dataIndex: 'exchange', key: 'exchange', render: (t) => <span style={{ color: '#9096A0', textTransform: 'capitalize' }}>{t}</span> },
     { title: 'Timeframe', dataIndex: 'time_horizon', key: 'time_horizon', render: (t) => <span style={{ color: '#9096A0' }}>{t}</span> },
     {
       title: 'Current Status', dataIndex: 'pair_status', key: 'pair_status',
@@ -219,13 +218,13 @@ export default function Strategies() {
       {/* Filters */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
         <Input
-          placeholder="Search by name or symbol"
+          placeholder="Search by strategy name"
           prefix={<SearchOutlined style={{ color: '#6B7280', marginRight: 4 }} />}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{ maxWidth: 280, borderRadius: 999 }}
         />
-        <Select value={exchangeFilter} onChange={setExchangeFilter} options={exchangeOptions} style={{ width: 180 }} />
+        <Select value={coinFilter} onChange={setCoinFilter} options={coinOptions} style={{ width: 160 }} />
       </div>
 
       <div style={{ ...panel, padding: 20 }}>

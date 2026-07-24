@@ -187,7 +187,7 @@ export default function ExecutionDetails() {
           </div>
           {data.status === 'unassigned' && (
             <button
-              onClick={() => navigate(`/strategies?exchange=${data.exchange}&coin=${data.symbol}`)}
+              onClick={() => navigate(`/strategies?coin=${data.symbol}`)}
               style={{ ...linkBtnStyle, marginTop: 6 }}
             >
               No strategy enabled for this pair &rarr; go enable one
