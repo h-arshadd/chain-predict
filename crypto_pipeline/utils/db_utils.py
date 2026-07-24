@@ -1889,8 +1889,7 @@ def get_execution_summary(conn, exchange, symbol, strategy_name):
     open_position = state["position"]
 
     cursor = conn.cursor()
-    safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
-    trades_table = f"{exchange}_{symbol}_{safe_strategy_name}_trades"
+    trades_table = _execution_trades_table(exchange, symbol, strategy_name)
 
     # to_regclass() takes a plain string that Postgres parses like any
     # other identifier reference: unquoted, it folds to lowercase before
@@ -2024,8 +2023,7 @@ def build_execution_equity_curve_from_ledger(conn, exchange, symbol, strategy_na
     anyway.
     """
     cursor = conn.cursor()
-    safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
-    trades_table = f"{exchange}_{symbol}_{safe_strategy_name}_trades"
+    trades_table = _execution_trades_table(exchange, symbol, strategy_name)
 
     qualified_name = sql.SQL(".").join(
         [sql.Identifier("execution"), sql.Identifier(trades_table)]

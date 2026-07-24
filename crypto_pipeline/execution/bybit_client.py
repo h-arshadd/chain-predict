@@ -229,8 +229,7 @@ def get_order_fill(client: HTTP, bybit_symbol: str, order_id: str,
     )
 
 
-def place_market_order(client: HTTP, symbol: str, direction: str, quantity: float,
-                        take_profit: float = None, stop_loss: float = None) -> dict:
+def place_market_order(client: HTTP, symbol: str, direction: str, quantity: float) -> dict:
     """
     Send a real market order on Bybit, then read back its actual fill.
 
@@ -240,16 +239,16 @@ def place_market_order(client: HTTP, symbol: str, direction: str, quantity: floa
         whichever direction the trade needs at that moment.
     quantity  : float -- desired order size in base currency (e.g. BTC
         amount), from the sizing math in simulator.py.
-    take_profit, stop_loss : float, optional -- absolute price levels.
-        Only meaningful on an OPENING order (main.py never passes these
-        on a closing order). When set, Bybit registers them as native
-        exchange-side TP/SL on the position itself (same as the "+ Add"
-        button under TP/SL on the Positions tab) -- Bybit's own engine
-        then watches price and auto-closes on hit, independent of
-        whether this script is running. main.py no longer needs to
-        candle-check TP/SL itself once these are passed (see
-        run_execution()'s reconciliation step, which detects a Bybit-
-        side auto-close on the next run).
+
+    take_profit/stop_loss are NOT sent here. They used to be attached
+    to this same market order, computed off the pre-fill candle-open
+    estimate -- but a market order's real fill price can move away from
+    that estimate by the time Bybit processes it, and if price moves
+    enough, the pre-computed SL/TP can end up on the wrong side of the
+    real fill (Bybit then rejects the whole order with e.g. "StopLoss
+    should be lower than base_price" for a Buy). TP/SL are now attached
+    AFTER the fill, priced off the real fill price, via
+    set_trading_stop() -- see main.py's _open_live_position().
 
     Returns dict: order_id, side, avg_price, filled_qty, fee -- the REAL
     numbers Bybit filled at, not the requested quantity or any candle
@@ -286,10 +285,6 @@ def place_market_order(client: HTTP, symbol: str, direction: str, quantity: floa
         orderType="Market",
         qty=qty_str,
     )
-    if take_profit is not None:
-        order_kwargs["takeProfit"] = str(take_profit)
-    if stop_loss is not None:
-        order_kwargs["stopLoss"] = str(stop_loss)
 
     order_response = client.place_order(**order_kwargs)
 
@@ -303,6 +298,47 @@ def place_market_order(client: HTTP, symbol: str, direction: str, quantity: floa
         "filled_qty": fill["filled_qty"],
         "fee": fill["fee"],
     }
+
+
+def set_trading_stop(client: HTTP, symbol: str, take_profit: float = None,
+                      stop_loss: float = None) -> dict:
+    """
+    Attach native exchange-side TP/SL to a position that's already open,
+    via Bybit's POST /v5/position/trading-stop endpoint (pybit:
+    client.set_trading_stop(...)).
+
+    Called right after place_market_order()'s fill is confirmed, with
+    TP/SL computed off the REAL fill price (position["entry_price"]),
+    not the pre-fill candle-open estimate that used to be embedded in
+    the opening order itself -- that stale price could cross the live
+    market by fill time and get the whole order rejected (e.g. "StopLoss
+    should be lower than base_price" for a Buy, when the market had
+    moved between candle-open and actual fill).
+
+    take_profit/stop_loss : float, optional -- absolute price levels.
+    Passing both is normal for an opening position; pass only one to
+    update just that side. Bybit registers these as native exchange-
+    side TP/SL on the position (same as the "+ Add" button under TP/SL
+    on the Positions tab) -- Bybit's own engine then watches price and
+    auto-closes on hit, independent of whether this script is running.
+
+    Raises if the API call itself errors -- a position opened without
+    its protective TP/SL attached is a real risk, so this should not be
+    swallowed silently by the caller.
+    """
+    bybit_symbol = to_bybit_symbol(symbol)
+
+    trading_stop_kwargs = dict(
+        category="linear",
+        symbol=bybit_symbol,
+        positionIdx=0,
+    )
+    if take_profit is not None:
+        trading_stop_kwargs["takeProfit"] = str(take_profit)
+    if stop_loss is not None:
+        trading_stop_kwargs["stopLoss"] = str(stop_loss)
+
+    return client.set_trading_stop(**trading_stop_kwargs)
 
 
 def get_open_position(client: HTTP, symbol: str) -> dict:
