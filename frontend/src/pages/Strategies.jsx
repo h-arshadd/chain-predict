@@ -1,29 +1,12 @@
-import { useState, useMemo } from 'react';
-import { Table, Tag, Input, Select } from 'antd';
-import { useNavigate } from 'react-router-dom';
-import { SearchOutlined, PlusOutlined } from '@ant-design/icons';
-import { ResponsiveContainer, LineChart, Line } from 'recharts';
+import { useState, useEffect, useCallback } from 'react';
+import { Table, Tag, Switch, Modal, Input, Select, Spin, Alert, message, Tooltip } from 'antd';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { SearchOutlined } from '@ant-design/icons';
+import { api } from '../lib/api';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
-
-// ---- placeholder data — replace with GET /api/strategies once backend exists ----
-const strategyData = [
-  { key: '1', id: 1, name: 'BTC Momentum', symbol: 'BTCUSDT', exchange: 'Bybit', timeframe: '4h', status: 'Active', return: 12.4, sharpe: 1.8, winRate: 61 },
-  { key: '2', id: 2, name: 'ETH Mean Reversion', symbol: 'ETHUSDT', exchange: 'Binance', timeframe: '1h', status: 'Active', return: -3.2, sharpe: 0.6, winRate: 47 },
-  { key: '3', id: 3, name: 'SOL Breakout', symbol: 'SOLUSDT', exchange: 'Bybit', timeframe: '15m', status: 'Paused', return: 8.1, sharpe: 1.3, winRate: 55 },
-  { key: '4', id: 4, name: 'ADA Trend Follow', symbol: 'ADAUSDT', exchange: 'Binance', timeframe: '1d', status: 'Stopped', return: -1.1, sharpe: 0.2, winRate: 44 },
-  { key: '5', id: 5, name: 'XRP Scalper', symbol: 'XRPUSDT', exchange: 'Bybit', timeframe: '5m', status: 'Active', return: 5.7, sharpe: 1.1, winRate: 58 },
-  { key: '6', id: 6, name: 'DOGE Volatility Break', symbol: 'DOGEUSDT', exchange: 'Binance', timeframe: '1h', status: 'Paused', return: -6.4, sharpe: -0.2, winRate: 39 },
-  { key: '7', id: 7, name: 'MATIC Grid', symbol: 'MATICUSDT', exchange: 'Bybit', timeframe: '4h', status: 'Active', return: 3.3, sharpe: 0.9, winRate: 52 },
-  { key: '8', id: 8, name: 'LINK Trend Rider', symbol: 'LINKUSDT', exchange: 'Binance', timeframe: '1d', status: 'Stopped', return: 1.8, sharpe: 0.4, winRate: 49 },
-];
-
-const sparkline = (seed) =>
-  Array.from({ length: 8 }, (_, i) => ({
-    x: i,
-    v: seed + Math.sin(i + seed) * 8 + i * (seed > 0 ? 1.5 : -1.2),
-  }));
+const AMBER = '#FF8A5C';
 
 const panel = {
   background: 'linear-gradient(155deg, rgba(30, 36, 34, 0.8) 0%, rgba(19, 23, 27, 0.8) 100%)',
@@ -32,100 +15,184 @@ const panel = {
   borderRadius: 20,
 };
 
-const statusColors = {
-  Active: { bg: 'rgba(61,220,151,0.12)', fg: MINT },
-  Paused: { bg: 'rgba(255,138,92,0.14)', fg: '#FF8A5C' },
-  Stopped: { bg: 'rgba(255,255,255,0.06)', fg: '#9096A0' },
+// Real pair_status values from the backend (strategies_repo._pair_status):
+//   "live"        - this strategy is THE one execution runs for its pair
+//   "disabled"    - execution_enabled is off for this row (paused)
+//   "conflicted"  - this row + a sibling are both enabled for the same
+//                   pair, so execution/main.py treats the pair as
+//                   misconfigured and skips it entirely (nobody's live)
+const STATUS_META = {
+  live: { label: 'Live', bg: 'rgba(61,220,151,0.12)', fg: MINT },
+  disabled: { label: 'Disabled', bg: 'rgba(255,255,255,0.06)', fg: '#9096A0' },
+  conflicted: { label: 'Conflicted', bg: 'rgba(240,70,107,0.14)', fg: RED },
 };
 
-const statusFilterOptions = [
-  { value: 'All', label: 'All statuses' },
-  { value: 'Active', label: 'Active' },
-  { value: 'Paused', label: 'Paused' },
-  { value: 'Stopped', label: 'Stopped' },
-];
+const fmtPct = (v) => (v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`);
+const pnlColor = (v) => (v == null ? '#6B7280' : v > 0 ? MINT : v < 0 ? RED : '#9096A0');
 
-const exchangeFilterOptions = [
-  { value: 'All', label: 'All exchanges' },
-  { value: 'Bybit', label: 'Bybit' },
-  { value: 'Binance', label: 'Binance' },
-];
+export default function Strategies() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [strategies, setStrategies] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  // Deep-link support: Deployment/ExecutionDetails' "no strategy enabled
+  // for this pair" link lands here with ?exchange=&coin= pre-filled, so
+  // the person sees exactly the pair that needs a strategy enabled
+  // instead of the full unfiltered list.
+  const [search, setSearch] = useState(searchParams.get('coin') || '');
+  const [exchangeFilter, setExchangeFilter] = useState(searchParams.get('exchange') || 'All');
 
-function buildColumns() {
-  return [
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    api.get('/api/strategies?limit=500')
+      .then((res) => setStrategies(res.data))
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const exchangeOptions = [
+    { value: 'All', label: 'All exchanges' },
+    ...[...new Set(strategies.map((s) => s.exchange))].map((e) => ({ value: e, label: e })),
+  ];
+
+  const filtered = strategies.filter((s) => {
+    const q = search.toLowerCase();
+    const matchesSearch = s.strategy_name.toLowerCase().includes(q) || s.coin.toLowerCase().includes(q);
+    const matchesExchange = exchangeFilter === 'All' || s.exchange === exchangeFilter;
+    return matchesSearch && matchesExchange;
+  });
+
+  const applyToggle = (strategyId, nextEnabled) => {
+    // Optimistic: flip this row locally, and if turning ON, also
+    // optimistically flip off any other enabled row on the same pair --
+    // matches what the backend is about to do atomically. Rolled back
+    // for everyone touched if the request fails.
+    const target = strategies.find((s) => s.strategy_id === strategyId);
+    if (!target) return;
+
+    const previous = strategies;
+    setStrategies((prev) =>
+      prev.map((s) => {
+        if (s.strategy_id === strategyId) return { ...s, execution_enabled: nextEnabled };
+        if (nextEnabled && s.exchange === target.exchange && s.coin === target.coin && s.execution_enabled) {
+          return { ...s, execution_enabled: false };
+        }
+        return s;
+      })
+    );
+
+    api.patch(`/api/strategies/${strategyId}/enabled`, { execution_enabled: nextEnabled })
+      .then(() => {
+        message.success(
+          nextEnabled
+            ? `${target.strategy_name} is now live for ${target.exchange}/${target.coin.toUpperCase()}`
+            : `${target.strategy_name} disabled`
+        );
+        load(); // refresh pair_status/is_live_for_pair for every affected row
+      })
+      .catch((err) => {
+        setStrategies(previous);
+        message.error(err.message);
+      });
+  };
+
+  const toggleEnabled = (row, nextEnabled) => {
+    if (!nextEnabled) {
+      // Turning off is never destructive to another strategy -- no confirm needed.
+      applyToggle(row.strategy_id, false);
+      return;
+    }
+
+    const conflicting = strategies.find(
+      (s) => s.strategy_id !== row.strategy_id && s.exchange === row.exchange && s.coin === row.coin && s.execution_enabled
+    );
+
+    if (!conflicting) {
+      applyToggle(row.strategy_id, true);
+      return;
+    }
+
+    Modal.confirm({
+      title: 'Switch the live strategy for this pair?',
+      content: (
+        <span>
+          <strong>{conflicting.strategy_name}</strong> is currently live for {row.exchange}/{row.coin.toUpperCase()}.
+          Enabling <strong>{row.strategy_name}</strong> will disable it — only one strategy can be live per pair.
+          This takes effect immediately.
+        </span>
+      ),
+      okText: 'Switch strategy',
+      okButtonProps: { danger: true },
+      onOk: () => applyToggle(row.strategy_id, true),
+    });
+  };
+
+  const columns = [
     {
-      title: 'Strategy Name', dataIndex: 'name', key: 'name',
-      sorter: (a, b) => a.name.localeCompare(b.name),
+      title: 'Strategy Name', dataIndex: 'strategy_name', key: 'strategy_name',
+      sorter: (a, b) => a.strategy_name.localeCompare(b.strategy_name),
       render: (t) => <span style={{ fontWeight: 600, color: '#F5F6F7' }}>{t}</span>,
     },
-    { title: 'Symbol', dataIndex: 'symbol', key: 'symbol', render: (t) => <span style={{ color: '#9096A0' }}>{t}</span> },
-    { title: 'Exchange', dataIndex: 'exchange', key: 'exchange', render: (t) => <span style={{ color: '#9096A0' }}>{t}</span> },
-    { title: 'Timeframe', dataIndex: 'timeframe', key: 'timeframe', render: (t) => <span style={{ color: '#9096A0' }}>{t}</span> },
+    { title: 'Symbol', dataIndex: 'coin', key: 'coin', render: (t) => <span style={{ color: '#9096A0' }}>{t.toUpperCase()}</span> },
+    { title: 'Exchange', dataIndex: 'exchange', key: 'exchange', render: (t) => <span style={{ color: '#9096A0', textTransform: 'capitalize' }}>{t}</span> },
+    { title: 'Timeframe', dataIndex: 'time_horizon', key: 'time_horizon', render: (t) => <span style={{ color: '#9096A0' }}>{t}</span> },
     {
-      title: 'Current Status', dataIndex: 'status', key: 'status',
+      title: 'Current Status', dataIndex: 'pair_status', key: 'pair_status',
       filters: [
-        { text: 'Active', value: 'Active' },
-        { text: 'Paused', value: 'Paused' },
-        { text: 'Stopped', value: 'Stopped' },
+        { text: 'Live', value: 'live' },
+        { text: 'Disabled', value: 'disabled' },
+        { text: 'Conflicted', value: 'conflicted' },
       ],
-      onFilter: (value, record) => record.status === value,
+      onFilter: (value, record) => record.pair_status === value,
       render: (status) => {
-        const c = statusColors[status] || statusColors.Stopped;
-        return (
+        const c = STATUS_META[status] || STATUS_META.disabled;
+        const tag = (
           <Tag style={{ background: c.bg, color: c.fg, border: 'none', borderRadius: 8, fontWeight: 600 }}>
-            {status}
+            {c.label}
           </Tag>
         );
+        return status === 'conflicted' ? (
+          <Tooltip title="Another strategy on this pair is also enabled — execution skips this pair entirely until only one is enabled.">
+            {tag}
+          </Tooltip>
+        ) : tag;
       },
     },
     {
-      title: 'Latest Return', dataIndex: 'return', key: 'return',
-      sorter: (a, b) => a.return - b.return,
-      render: (val) => (
-        <span style={{ color: val >= 0 ? MINT : RED, fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}>
-          {val >= 0 ? '+' : ''}{val}%
+      title: 'Latest Return', dataIndex: 'latest_return_pct', key: 'latest_return_pct',
+      sorter: (a, b) => (a.latest_return_pct ?? -Infinity) - (b.latest_return_pct ?? -Infinity),
+      render: (v) => (
+        <span style={{ color: pnlColor(v), fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}>
+          {fmtPct(v)}
         </span>
       ),
     },
     {
-      title: 'Sharpe Ratio', dataIndex: 'sharpe', key: 'sharpe',
-      sorter: (a, b) => a.sharpe - b.sharpe,
-      render: (v) => <span style={{ fontFamily: 'ui-monospace, monospace', color: '#F5F6F7' }}>{v}</span>,
+      title: 'Sharpe Ratio', dataIndex: 'sharpe_ratio', key: 'sharpe_ratio',
+      render: (v) => <span style={{ fontFamily: 'ui-monospace, monospace', color: '#F5F6F7' }}>{v == null ? '—' : v.toFixed(2)}</span>,
     },
     {
-      title: 'Win Rate', dataIndex: 'winRate', key: 'winRate',
-      sorter: (a, b) => a.winRate - b.winRate,
-      render: (v) => <span style={{ fontFamily: 'ui-monospace, monospace', color: '#F5F6F7' }}>{v}%</span>,
+      title: 'Win Rate', dataIndex: 'win_rate_pct', key: 'win_rate_pct',
+      sorter: (a, b) => (a.win_rate_pct ?? -Infinity) - (b.win_rate_pct ?? -Infinity),
+      render: (v) => <span style={{ fontFamily: 'ui-monospace, monospace', color: '#F5F6F7' }}>{v == null ? '—' : `${v.toFixed(1)}%`}</span>,
     },
     {
-      title: 'Trend', key: 'trend',
+      title: 'Execution Enabled', key: 'execution_enabled',
       render: (_, row) => (
-        <ResponsiveContainer width={90} height={32}>
-          <LineChart data={sparkline(row.return)}>
-            <Line type="monotone" dataKey="v" stroke={row.return >= 0 ? MINT : RED} strokeWidth={2} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
+        <Switch
+          checked={row.execution_enabled}
+          onChange={(checked) => toggleEnabled(row, checked)}
+          onClick={(_, e) => e.stopPropagation()}
+        />
       ),
     },
   ];
-}
-
-export default function Strategies() {
-  const navigate = useNavigate();
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('All');
-  const [exchangeFilter, setExchangeFilter] = useState('All');
-
-  const filtered = useMemo(() => {
-    return strategyData.filter((s) => {
-      const matchesSearch =
-        s.name.toLowerCase().includes(search.toLowerCase()) ||
-        s.symbol.toLowerCase().includes(search.toLowerCase());
-      const matchesStatus = statusFilter === 'All' || s.status === statusFilter;
-      const matchesExchange = exchangeFilter === 'All' || s.exchange === exchangeFilter;
-      return matchesSearch && matchesStatus && matchesExchange;
-    });
-  }, [search, statusFilter, exchangeFilter]);
 
   return (
     <div style={{ paddingTop: 8 }}>
@@ -133,20 +200,21 @@ export default function Strategies() {
         <div>
           <h2 style={{ fontSize: 24, fontWeight: 700, color: '#F5F6F7', margin: 0 }}>Strategies</h2>
           <p style={{ color: '#9096A0', fontSize: 14, marginTop: 4 }}>
-            All configured strategies across exchanges. Select one to view full details.
+            All configured strategies. Only one strategy can be live for execution per coin — use the switch to change which one runs.
           </p>
         </div>
-        <button
-          style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            background: MINT, color: '#0B0E11', border: 'none',
-            fontSize: 14, fontWeight: 700, padding: '10px 18px',
-            borderRadius: 999, cursor: 'pointer',
-          }}
-        >
-          <PlusOutlined /> New Strategy
-        </button>
       </div>
+
+      {error && (
+        <Alert
+          type="error"
+          message="Couldn't load strategies"
+          description={error}
+          action={<button onClick={load} style={iconBtnStyle}>Retry</button>}
+          style={{ marginBottom: 20 }}
+          showIcon
+        />
+      )}
 
       {/* Filters */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
@@ -155,39 +223,35 @@ export default function Strategies() {
           prefix={<SearchOutlined style={{ color: '#6B7280', marginRight: 4 }} />}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          style={{
-            maxWidth: 280, borderRadius: 999,
-            background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)',
-            padding: '8px 16px',
-          }}
+          style={{ maxWidth: 280, borderRadius: 999 }}
         />
-        <Select
-          value={statusFilter}
-          onChange={setStatusFilter}
-          options={statusFilterOptions}
-          style={{ width: 160 }}
-        />
-        <Select
-          value={exchangeFilter}
-          onChange={setExchangeFilter}
-          options={exchangeFilterOptions}
-          style={{ width: 160 }}
-        />
+        <Select value={exchangeFilter} onChange={setExchangeFilter} options={exchangeOptions} style={{ width: 180 }} />
       </div>
 
-      {/* Table */}
       <div style={{ ...panel, padding: 20 }}>
-        <Table
-          columns={buildColumns()}
-          dataSource={filtered}
-          pagination={{ pageSize: 8 }}
-          locale={{ emptyText: 'No strategies match your filters.' }}
-          onRow={(row) => ({
-            onClick: () => navigate(`/strategies/${row.id}`),
-            style: { cursor: 'pointer' },
-          })}
-        />
+        {loading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
+            <Spin size="large" />
+          </div>
+        ) : (
+          <Table
+            columns={columns}
+            dataSource={filtered.map((s) => ({ ...s, key: s.strategy_id }))}
+            pagination={{ pageSize: 10 }}
+            locale={{ emptyText: 'No strategies configured yet.' }}
+            onRow={(row) => ({
+              onClick: () => navigate(`/strategies/${row.strategy_id}`),
+              style: { cursor: 'pointer' },
+            })}
+          />
+        )}
       </div>
     </div>
   );
 }
+
+const iconBtnStyle = {
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  width: 30, height: 30, borderRadius: 8, border: '1px solid rgba(255,255,255,0.08)',
+  background: 'rgba(255,255,255,0.03)', color: '#9096A0', cursor: 'pointer',
+};
