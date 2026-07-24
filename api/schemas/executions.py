@@ -18,9 +18,25 @@ meaningful while a position is open) or, if flat, the pair's status/
 last_processed time. ExecutionSummary.last_signal is best-effort from
 those, not a real signal history; a proper signal log is a future
 addition, not invented here.
+
+ExecutionDetail additionally carries:
+  - risk config (commission/slippage/allow_long/allow_short) straight
+    from execution.config -- the PDF's "Risk Statistics" panel.
+  - strategy_config: real entry/exit rule text + TP/SL, derived from
+    metadata.strategy.strategy_config (see executions_repo._describe_side).
+  - live_position: Bybit's own current position + native TP/SL for this
+    pair's wallet, fetched live (nothing here is stored in Postgres --
+    same reasoning as wallets_live.py's balance fetch).
+  - stats: the same {"metrics", "trade_summary", "plots", ...} shape
+    crypto_pipeline.stats.calculator.compute_stats() already returns for
+    backtests/simulator runs, computed here from execution's own equity
+    curve -- covers Equity Curve, Drawdown, Rolling Sharpe/Volatility,
+    Monthly/Yearly Returns, and Return Distribution in one field, left as
+    a loose dict (not modeled field-by-field) since its shape is exactly
+    whatever stats/config.yaml's `plots:` list currently produces.
 """
 
-from typing import Optional
+from typing import Optional, Any
 from datetime import datetime
 from pydantic import BaseModel
 
@@ -83,12 +99,45 @@ class EquityCurvePoint(BaseModel):
     balance: float
 
 
+class StrategyConfigDetail(BaseModel):
+    """Real entry/exit logic + TP/SL, derived from metadata.strategy.strategy_config."""
+    indicators: list[str] = []
+    entry_logic_long: Optional[str] = None
+    entry_logic_short: Optional[str] = None
+    take_profit_type: Optional[str] = None
+    take_profit_value: Optional[float] = None
+    stop_loss_type: Optional[str] = None
+    stop_loss_value: Optional[float] = None
+
+
+class LivePosition(BaseModel):
+    """Bybit's own current position for this pair -- see bybit_client.get_open_position()."""
+    side: str
+    size: float
+    avg_price: float
+    take_profit: Optional[float] = None
+    stop_loss: Optional[float] = None
+    created_time: Optional[datetime] = None
+
+
 class ExecutionDetail(ExecutionSummary):
     """Full detail for one (exchange, symbol, strategy) execution combo."""
     time_horizon: Optional[str] = None
     initial_balance: Optional[float] = None
+    commission: Optional[float] = None
+    slippage: Optional[float] = None
+    allow_long: Optional[bool] = None
+    allow_short: Optional[bool] = None
     total_net_profit: Optional[float] = None
     total_trades: int = 0
     win_loss: Optional[ExecutionWinLoss] = None
     equity_curve: list[EquityCurvePoint] = []
     trades: list[ExecutionTrade] = []
+    strategy_config: Optional[StrategyConfigDetail] = None
+    live_position: Optional[LivePosition] = None
+    # Loose dict, not modeled field-by-field -- shape mirrors
+    # compute_stats()'s output {"metrics", "trade_summary", "plots",
+    # "resample_freq_used", "insufficient_data", "returns_count"}, which
+    # is driven by stats/config.yaml's plot list, not something we want
+    # to hardcode into a schema and have to update in two places.
+    stats: Optional[dict[str, Any]] = None

@@ -62,6 +62,16 @@ class WalletStrategyAssignment(BaseModel):
 
 
 class WalletPosition(BaseModel):
+    """
+    One open position for this wallet, derived from execution.positions
+    (see routers/wallets.py's _wallet_expandable_row). `mark` currently
+    mirrors `entry` -- no live mark price is fetched per position on the
+    wallet list (would be one extra Bybit call per open position on every
+    expand); `pnl` is the real, already-computed cumulative PnL for that
+    pair (execution.positions.cumulative_pnl), so it does not depend on
+    `mark` being live. See ExecutionDetail.live_position on the Execution
+    Details drill-down for the real live/mark price.
+    """
     symbol: str
     side: str
     size: float
@@ -71,6 +81,14 @@ class WalletPosition(BaseModel):
 
 
 class WalletOpenOrder(BaseModel):
+    """
+    Always [] today -- this codebase has no "pending order" concept per
+    wallet (TP/SL is attached natively to the exchange-side position via
+    bybit_client.set_trading_stop, not placed as separate resting
+    orders). Kept as a real field/shape for forward-compatibility rather
+    than removed outright, in case a genuine pending-order feature is
+    added later.
+    """
     symbol: str
     side: str
     type: str

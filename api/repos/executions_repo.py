@@ -19,7 +19,27 @@ traded yet (no execution.positions row) -- these still show up in the
 Deployment list (status "never_run"), same as the PDF's "Display all
 deployed strategies" -- "deployed" means configured, not necessarily
 already filled.
+
+Execution Details additionally pulls in (all from data that already
+exists, nothing invented):
+  - strategy_config JSON (metadata.strategy.strategy_config) -- rendered
+    into human-readable entry/exit rule text via _describe_side(),
+    instead of a hand-written English sentence.
+  - live open position + native TP/SL straight from Bybit
+    (execution.bybit_client.get_open_position) -- this execution module
+    never stores open-order/position data in Postgres itself, it only
+    lives on the exchange, so there is nothing to "join" here, only a
+    live call, same pattern as wallets_live.py's balance fetch.
+  - full stats (metrics + chart data) via
+    crypto_pipeline.stats.calculator.compute_stats(), fed the same
+    equity curve build_execution_equity_curve_from_ledger() already
+    builds -- reuses the exact plot set (returns/drawdown/rolling
+    sharpe/rolling volatility/monthly heatmap/yearly returns/
+    distribution) stats/config.yaml already defines, no new plot code.
 """
+
+import yaml
+from pathlib import Path
 
 from psycopg2 import sql
 
@@ -33,6 +53,120 @@ from crypto_pipeline.utils.db_utils import (
 )
 from crypto_pipeline.utils.metadata_utils import get_strategies
 from crypto_pipeline.accounts.accounts_utils import get_account_api_key
+from crypto_pipeline.execution.bybit_client import get_client, get_open_position
+from crypto_pipeline.stats.calculator import compute_stats
+
+_STATS_CONFIG_PATH = Path(__file__).resolve().parents[2] / "crypto_pipeline" / "stats" / "config.yaml"
+_stats_config_cache = None
+
+
+def _stats_config() -> dict:
+    """Loaded once per process -- same config every backtest/simulator run uses."""
+    global _stats_config_cache
+    if _stats_config_cache is None:
+        with open(_STATS_CONFIG_PATH) as f:
+            _stats_config_cache = yaml.safe_load(f)
+    return _stats_config_cache
+
+
+_OPERATOR_TEXT = {
+    "cross_above": "crosses above",
+    "cross_below": "crosses below",
+    "greater_than": ">",
+    "less_than": "<",
+    "greater_equal": ">=",
+    "less_equal": "<=",
+    "equal": "==",
+}
+
+
+def _describe_condition(cond: dict) -> str:
+    left = cond.get("left", "?")
+    right = cond.get("right", "?")
+    op = _OPERATOR_TEXT.get(cond.get("operator"), cond.get("operator", "?"))
+    text = f"{left} {op} {right}"
+    if cond.get("persist_bars"):
+        text += f" (held {cond['persist_bars']} bars)"
+    return text
+
+
+def _describe_side(strategy_config: dict, side: str) -> str | None:
+    """
+    Render metadata.strategy.strategy_config["strategy"]["long"|"short"]
+    (rule + conditions list, same shape as signals/strategies/*.yaml) into
+    one readable line, e.g. "ind_sma_20 crosses above close" or
+    "A AND B" for multiple conditions. Returns None if this strategy has
+    no rule for that side (long-only/short-only strategies are common).
+    """
+    if not strategy_config:
+        return None
+    side_block = (strategy_config.get("strategy") or {}).get(side)
+    if not side_block:
+        return None
+
+    conditions = side_block.get("conditions") or []
+    if not conditions:
+        return None
+
+    rule = (side_block.get("rule") or "AND").upper()
+    parts = [_describe_condition(c) for c in conditions]
+    return f" {rule} ".join(parts)
+
+
+def _strategy_config_detail(strategy_row: dict | None) -> dict:
+    """
+    Real Entry Logic / Exit Logic / indicators-used text, built from the
+    actual stored strategy_config JSON -- not a hardcoded description.
+    "Exit logic" here means the short-side (flip/close) rule if the
+    strategy has one; take_profit/stop_loss are surfaced separately since
+    they're already their own columns.
+    """
+    if strategy_row is None:
+        return {
+            "indicators": [],
+            "entry_logic_long": None,
+            "entry_logic_short": None,
+            "take_profit_type": None,
+            "take_profit_value": None,
+            "stop_loss_type": None,
+            "stop_loss_value": None,
+        }
+
+    config = strategy_row.get("strategy_config") or {}
+    indicator_keys = [k for k in config.keys() if k != "strategy"]
+
+    return {
+        "indicators": indicator_keys,
+        "entry_logic_long": _describe_side(config, "long"),
+        "entry_logic_short": _describe_side(config, "short"),
+        "take_profit_type": strategy_row.get("take_profit_type"),
+        "take_profit_value": strategy_row.get("take_profit_value"),
+        "stop_loss_type": strategy_row.get("stop_loss_type"),
+        "stop_loss_value": strategy_row.get("stop_loss_value"),
+    }
+
+
+def _live_bybit_position(account_name: str | None, conn, symbol: str) -> dict | None:
+    """
+    Live open position straight from Bybit (side, size, avg_price, native
+    take_profit/stop_loss, created_time) for the wallet assigned to this
+    pair -- this is the real "current position / native TP-SL" source,
+    since execution/main.py never persists Bybit's own position rows in
+    Postgres (see bybit_client.get_open_position's docstring). Returns
+    None if no wallet is assigned, the wallet's credentials are missing,
+    or Bybit reports flat/errors -- callers should treat None as "no live
+    data available", not as an error.
+    """
+    if not account_name:
+        return None
+    wallet = get_account_api_key(conn, account_name)
+    if wallet is None:
+        return None
+    try:
+        client = get_client(api_key=wallet["api_key"], api_secret=wallet["api_secret"], demo=wallet["demo"])
+        return get_open_position(client, symbol)
+    except Exception:
+        return None
 
 
 def _current_strategy_for_pair(conn, exchange, symbol):
@@ -75,8 +209,12 @@ def list_executions(conn) -> list[dict]:
     return rows
 
 
-def get_execution_detail(conn, exchange, symbol) -> dict | None:
-    """Full detail for one pair: same summary fields plus trades + equity curve."""
+def get_execution_detail(conn, exchange, symbol):
+    """
+    Full detail for one pair: summary fields, risk config, strategy
+    config (real entry/exit logic + TP/SL), live Bybit position, trades,
+    and the full stats/plots bundle computed off the real trade ledger.
+    """
     config = get_execution_config(conn, exchange, symbol)
     if config is None:
         return None
@@ -87,11 +225,18 @@ def get_execution_detail(conn, exchange, symbol) -> dict | None:
     detail = dict(summary)
     detail["time_horizon"] = None
     detail["initial_balance"] = config.get("initial_balance")
+    detail["commission"] = config.get("commission")
+    detail["slippage"] = config.get("slippage")
+    detail["allow_long"] = config.get("allow_long")
+    detail["allow_short"] = config.get("allow_short")
     detail["total_net_profit"] = None
     detail["total_trades"] = 0
     detail["win_loss"] = None
     detail["equity_curve"] = []
     detail["trades"] = []
+    detail["strategy_config"] = _strategy_config_detail(strategy_row)
+    detail["live_position"] = _live_bybit_position(summary.get("account_name"), conn, symbol)
+    detail["stats"] = None
 
     if strategy_row is None:
         return detail
@@ -112,6 +257,18 @@ def get_execution_detail(conn, exchange, symbol) -> dict | None:
         detail["equity_curve"] = [
             {"timestamp": ts, "balance": float(val)} for ts, val in equity.items()
         ]
+        # Same compute_stats() the backtest/simulator paths use, fed this
+        # execution's own real equity curve -- gives metrics (55+
+        # quantstats stats) plus every configured plot's numeric data
+        # (returns/cumulative returns, drawdown series + periods, rolling
+        # sharpe, rolling volatility, monthly heatmap, yearly returns,
+        # return distribution) for free, no separate chart code needed.
+        try:
+            detail["stats"] = compute_stats({"equity_curve": equity}, _stats_config())
+        except Exception:
+            # Too little history / a quantstats edge case shouldn't break
+            # the whole page -- trades/equity curve above still render.
+            detail["stats"] = None
 
     detail["trades"] = _list_trades(conn, exchange, symbol, strategy_name)
 
