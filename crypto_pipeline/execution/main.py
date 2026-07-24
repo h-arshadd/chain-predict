@@ -75,6 +75,7 @@ from crypto_pipeline.execution.bybit_client import (
     get_client_from_env,
     get_live_ohlcv,
     place_market_order,
+    set_trading_stop,
     get_open_position,
     get_last_closed_pnl,
 )
@@ -164,29 +165,42 @@ def _open_live_position(client, symbol, direction, candle, balance, config,
     order exists -- but the position actually opened (entry_price,
     quantity, fee) reflects Bybit's real fill once placed.
 
-    take_profit/stop_loss are computed off estimate_price (candle open)
-    and sent to Bybit ON the opening order itself, so Bybit registers
-    them as native exchange-side TP/SL (visible on the Positions tab,
-    same as clicking "+ Add" under TP/SL) -- Bybit's own engine then
-    watches price and auto-closes on hit, independent of whether this
-    script is running. This is a deliberate change from computing
-    TP/SL off entry_price after the fact: it needs to be known BEFORE
-    placing the order so it can be attached to that same order.
-    Direction-change exits are unaffected -- Bybit has no concept of a
-    "signal", so those are still detected and closed by this script
-    itself, same as before (see run_execution()).
+    take_profit/stop_loss are computed off entry_price -- the REAL fill
+    price -- AFTER the order fills, then attached via a separate
+    set_trading_stop() call so Bybit registers them as native exchange-
+    side TP/SL (visible on the Positions tab, same as clicking "+ Add"
+    under TP/SL) -- Bybit's own engine then watches price and
+    auto-closes on hit, independent of whether this script is running.
+
+    This is deliberately NOT computed off the candle-open estimate and
+    sent as part of the opening order: a market order's real fill can
+    land away from that pre-fill estimate, and if price moves enough
+    between candle-open and the actual fill, an SL computed off the
+    stale estimate can end up on the wrong side of the live market price
+    -- Bybit then rejects the ENTIRE order (e.g. "StopLoss should be
+    lower than base_price" for a Buy), even though the order itself was
+    otherwise fine. Pricing off the real fill instead avoids that
+    failure mode entirely. Direction-change exits are unaffected --
+    Bybit has no concept of a "signal", so those are still detected and
+    closed by this script itself, same as before (see run_execution()).
     """
     estimate_price = float(candle["open"])
     target_quantity = _position_size(balance, config, estimate_price)
-    take_profit, stop_loss = _tp_sl_prices(estimate_price, direction, take_profit_pct, stop_loss_pct)
 
     order = place_market_order(
         client, symbol, "long" if direction == 1 else "short", target_quantity,
-        take_profit=round(float(take_profit), 4), stop_loss=round(float(stop_loss), 4),
     )
 
     entry_price = order["avg_price"]
     quantity = order["filled_qty"]
+
+    take_profit, stop_loss = _tp_sl_prices(entry_price, direction, take_profit_pct, stop_loss_pct)
+
+    set_trading_stop(
+        client, symbol,
+        take_profit=round(float(take_profit), 4),
+        stop_loss=round(float(stop_loss), 4),
+    )
 
     return {
         "direction": "long" if direction == 1 else "short",
