@@ -41,6 +41,10 @@ class ModelRunSummary(BaseModel):
     horizon: Optional[int] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    # UTC ISO 8601 timestamp of when this run was actually trained --
+    # None for runs trained before this field was added (older
+    # run_config.json files on disk won't have it; not backfilled).
+    trained_at: Optional[str] = None
     sharpe: Optional[float] = None
     win_rate: Optional[float] = None
     ml_metrics: dict = {}

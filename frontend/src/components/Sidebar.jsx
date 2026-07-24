@@ -7,8 +7,6 @@ import {
   ExperimentOutlined,
   FundOutlined,
   SmileOutlined,
-  SettingOutlined,
-  QuestionCircleOutlined,
 } from '@ant-design/icons';
 
 const menuItems = [
@@ -102,28 +100,6 @@ export default function Sidebar() {
           );
         })}
       </nav>
-
-      {/* Bottom links */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 24 }}>
-        <button
-          style={{
-            display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
-            borderRadius: 14, border: 'none', background: 'transparent',
-            color: '#6B7280', fontSize: 14.5, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
-          }}
-        >
-          <SettingOutlined style={{ fontSize: 17 }} /> Settings
-        </button>
-        <button
-          style={{
-            display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
-            borderRadius: 14, border: 'none', background: 'transparent',
-            color: '#6B7280', fontSize: 14.5, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
-          }}
-        >
-          <QuestionCircleOutlined style={{ fontSize: 17 }} /> Help
-        </button>
-      </div>
     </aside>
   );
 }

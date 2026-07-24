@@ -164,6 +164,15 @@ export default function Models() {
     },
     { title: 'Symbol', dataIndex: 'symbol', key: 'symbol', render: (t) => <span style={{ color: '#9096A0' }}>{t ? t.toUpperCase() : '—'}</span> },
     { title: 'Timeframe', dataIndex: 'timeframe', key: 'timeframe', render: (t) => <span style={{ color: '#9096A0' }}>{t || '—'}</span> },
+    {
+      title: 'Trained', dataIndex: 'trained_at', key: 'trained_at',
+      sorter: (a, b) => (a.trained_at || '').localeCompare(b.trained_at || ''),
+      // None for runs trained before artifact_manager.py started writing
+      // this field -- shown as "unknown" rather than a blank cell or a
+      // fabricated date, same honesty rule as every other missing field
+      // in this table.
+      render: (t) => <span style={{ color: t ? '#9096A0' : '#6B7280', fontSize: 12.5 }}>{t ? new Date(t).toLocaleString() : 'unknown'}</span>,
+    },
     { title: 'Horizon', dataIndex: 'horizon', key: 'horizon', render: (t) => <span style={{ color: '#9096A0' }}>{t != null ? t : '—'}</span> },
     {
       title: 'Sharpe', dataIndex: 'sharpe', key: 'sharpe',
