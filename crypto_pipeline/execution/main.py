@@ -32,10 +32,15 @@ file -- the universe (which (exchange, symbol) pairs to trade, and which
 single strategy to run per pair) is entirely DB-driven, same as
 simulator: every row in execution.config (see
 db_utils.get_execution_universe/get_execution_config/
-save_execution_config). The ONLY thing local to this machine is the
-Bybit API key/secret, read from .env (BYBIT_API_KEY/BYBIT_API_SECRET/
-BYBIT_DEMO) via bybit_client.get_client_from_env() -- secrets never
-go in the DB or a checked-in config file.
+save_execution_config). Bybit credentials are per-pair, not global: each
+execution.config row has an account_name pointing at a wallet in
+accounts.api_keys (managed by the Wallets module/API), and that wallet's
+own key/secret/demo flag build the client used for that pair
+(bybit_client.get_client()) -- never .env. A pair with no wallet
+assigned, or whose assigned wallet is disabled, is skipped entirely each
+run (see __main__ below) rather than falling back to any single global
+key, so disabling a wallet in the Wallets UI genuinely blocks new orders
+for every pair using it.
 
 Meant to be run repeatedly (Task Scheduler -> run_execution.bat), same as
 simulator. Each run, per registered (exchange, symbol) pair:
@@ -72,7 +77,7 @@ import pandas as pd
 from crypto_pipeline.simulator.simulator import _position_size, _tp_sl_prices, _leaning
 from crypto_pipeline.signals.main import generate_signals
 from crypto_pipeline.execution.bybit_client import (
-    get_client_from_env,
+    get_client,
     get_live_ohlcv,
     place_market_order,
     set_trading_stop,
@@ -96,6 +101,7 @@ from crypto_pipeline.utils.metadata_utils import (
     get_db_connection as get_metadata_connection,
     get_strategies,
 )
+from crypto_pipeline.accounts.accounts_utils import get_account_api_key
 from crypto_pipeline.stats.calculator import compute_stats
 
 # stats/config.yaml -- same config compute_stats() takes everywhere else,
@@ -706,11 +712,6 @@ def run_execution(client, exchange, symbol, config, strategy_name, time_horizon,
 
 if __name__ == "__main__":
 
-    # Bybit credentials only -- BYBIT_API_KEY/BYBIT_API_SECRET/BYBIT_DEMO
-    # in .env. Everything else (which pair, which strategy, execution
-    # settings) is DB-driven, read below.
-    client = get_client_from_env()
-
     # Universe: every (exchange, symbol) pair currently registered in
     # execution.config -- same DB-driven pattern as simulator/main.py's
     # get_simulator_universe(). Add a pair by calling
@@ -739,6 +740,37 @@ if __name__ == "__main__":
         if config is None:
             print(f"{exchange} {symbol}: no execution.config row -- skipping.")
             continue
+
+        # Which wallet places real orders for this pair -- account_name
+        # on execution.config, set via the Wallets UI/API (Strategy
+        # Deployment assigns a wallet per pair). Pairs configured before
+        # wallets existed have account_name=NULL; falling back to the
+        # single .env-based client would silently trade through
+        # whichever key happens to be in .env, which is exactly the
+        # ambiguity multi-wallet support exists to remove -- so an
+        # unassigned pair is skipped instead of guessing.
+        account_name = config.get("account_name")
+        if not account_name:
+            print(f"{exchange} {symbol}: no wallet assigned in execution.config -- skipping.")
+            continue
+
+        accounts_conn = get_db_connection()
+        try:
+            wallet = get_account_api_key(accounts_conn, account_name)
+        finally:
+            accounts_conn.close()
+
+        if wallet is None:
+            print(f"{exchange} {symbol}: assigned wallet '{account_name}' not found -- skipping.")
+            continue
+
+        if not wallet["enabled"]:
+            print(f"{exchange} {symbol}: wallet '{account_name}' is disabled -- skipping, no new orders.")
+            continue
+
+        client = get_client(
+            api_key=wallet["api_key"], api_secret=wallet["api_secret"], demo=wallet["demo"]
+        )
 
         # Which strategy to run for this pair is no longer pinned in
         # execution.config -- it's derived here from metadata.strategy

@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from api.routers import wallets
+from api.routers import wallets, executions
 
 app = FastAPI(title="Trading Platform API")
 
@@ -45,6 +45,7 @@ async def validation_exception_handler(request, exc):
 
 
 app.include_router(wallets.router)
+app.include_router(executions.router)
 
 
 @app.get("/api/health")

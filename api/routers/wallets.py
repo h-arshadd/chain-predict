@@ -31,7 +31,7 @@ from api.schemas.wallets import (
     WalletCreate, WalletUpdate, WalletEnabledUpdate,
     WalletSummary, WalletDetail,
 )
-from api.repos import wallets_repo, wallet_live
+from api.repos import wallets_repo, wallets_live as wallet_live
 from crypto_pipeline.accounts.accounts_utils import get_account_stats
 
 router = APIRouter(prefix="/api/wallets", tags=["wallets"])
