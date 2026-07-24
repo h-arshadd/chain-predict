@@ -1,80 +1,32 @@
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Tag, Table } from 'antd';
+import { Tag, Spin, Alert } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
-import {
-  LineChart, Line, BarChart, Bar, ResponsiveContainer,
-  XAxis, YAxis, CartesianGrid, Tooltip, Cell,
-} from 'recharts';
+import { api } from '../lib/api';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
 const AMBER = '#FF8A5C';
 
-// ---- placeholder data — replace with GET /api/models/{id} once backend exists ----
-const model = {
-  name: 'BTC-4h-LSTM-v3',
-  type: 'LSTM',
-  symbol: 'BTCUSDT',
-  timeframe: '4h',
-  status: 'Deployed',
-  trainingDate: '2026-07-18',
-  dataset: {
-    dataset: 'Bybit OHLCV + on-chain flow, 2019–2026',
-    features: ['Close', 'Volume', 'RSI(14)', 'EMA(20)', 'EMA(50)', 'ATR(14)', 'Funding Rate', 'OI Delta'],
-    target: 'Next 4h close direction (up/down)',
-    dateRange: '2019-01-01 → 2026-06-30',
-    trainTestSplit: '80% train / 20% test (walk-forward)',
-  },
-  training: {
-    algorithm: 'LSTM (2-layer, 128 hidden units)',
-    hyperparameters: { learningRate: 0.0008, batchSize: 64, epochs: 120, dropout: 0.2, sequenceLength: 60 },
-    preprocessing: 'Missing-value forward fill, outlier clipping at 3σ',
-    featureEngineering: 'Log returns, rolling volatility, lagged indicators (t-1, t-2, t-3)',
-    scaling: 'Min-max scaling per feature, fit on train split only',
-    stationarity: 'ADF test passed after first-order differencing on price series',
-  },
-  evaluation: {
-    mlMetrics: { accuracy: 68.4, precision: 66.1, recall: 71.2, f1: 68.5, auc: 0.74 },
-    backtestMetrics: { sharpe: 1.7, sortino: 2.1, maxDrawdown: -11.2, winRate: 62.3, totalReturn: 27.8 },
-    predictionSummary: { totalPredictions: 3240, correctPredictions: 2216, avgConfidence: 71.4 },
-  },
+const KIND_LABELS = {
+  regressor: 'Traditional Regressor',
+  classifier: 'Traditional Classifier',
+  deep_learning_regressor: 'Deep Learning Regressor',
+  deep_learning_classifier: 'Deep Learning Classifier',
 };
 
-const accuracyHistory = Array.from({ length: 20 }, (_, i) => ({
-  epoch: i * 6,
-  train: 50 + i * 1.1 + Math.sin(i / 3) * 1.5,
-  val: 48 + i * 0.9 + Math.sin(i / 3 + 1) * 2,
-}));
-
-const confusionCounts = [
-  { name: 'True Positive', value: 1120 },
-  { name: 'True Negative', value: 1096 },
-  { name: 'False Positive', value: 512 },
-  { name: 'False Negative', value: 512 },
-];
-
-const predictionHistory = [
-  { id: 1, timestamp: '2026-07-22 12:00', predicted: 'Up', actual: 'Up', confidence: 74.2, correct: true },
-  { id: 2, timestamp: '2026-07-22 08:00', predicted: 'Down', actual: 'Down', confidence: 68.9, correct: true },
-  { id: 3, timestamp: '2026-07-22 04:00', predicted: 'Up', actual: 'Down', confidence: 55.1, correct: false },
-  { id: 4, timestamp: '2026-07-22 00:00', predicted: 'Up', actual: 'Up', confidence: 81.6, correct: true },
-  { id: 5, timestamp: '2026-07-21 20:00', predicted: 'Down', actual: 'Down', confidence: 70.3, correct: true },
-];
+const KIND_COLORS = {
+  regressor: { bg: 'rgba(61,220,151,0.12)', fg: MINT },
+  classifier: { bg: 'rgba(61,220,151,0.12)', fg: MINT },
+  deep_learning_regressor: { bg: 'rgba(255,138,92,0.14)', fg: AMBER },
+  deep_learning_classifier: { bg: 'rgba(255,138,92,0.14)', fg: AMBER },
+};
 
 const panel = {
   background: 'rgba(21, 26, 31, 0.75)',
   backdropFilter: 'blur(16px)',
   border: '1px solid rgba(255,255,255,0.07)',
   borderRadius: 22,
-};
-
-const tooltipStyle = { background: '#161B21', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, fontSize: 12 };
-const axisStyle = { fill: '#6B7280', fontSize: 11 };
-
-const statusColors = {
-  Deployed: { bg: 'rgba(61,220,151,0.12)', fg: MINT },
-  Training: { bg: 'rgba(255,138,92,0.14)', fg: AMBER },
-  Archived: { bg: 'rgba(255,255,255,0.06)', fg: '#9096A0' },
 };
 
 function Panel({ title, children, style }) {
@@ -91,7 +43,7 @@ function KeyValue({ label, value, mono }) {
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
       <span style={{ color: '#9096A0', fontSize: 13, flexShrink: 0 }}>{label}</span>
       <span style={{ color: '#F5F6F7', fontSize: 13, fontWeight: 600, fontFamily: mono ? 'ui-monospace, monospace' : undefined, textAlign: 'right' }}>
-        {value}
+        {value ?? '—'}
       </span>
     </div>
   );
@@ -108,189 +60,282 @@ function StatBox({ label, value, positive }) {
   );
 }
 
+function PillList({ items, color, mono }) {
+  if (!items || items.length === 0) {
+    return <span style={{ color: '#6B7280', fontSize: 13 }}>None recorded.</span>;
+  }
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+      {items.map((it, i) => (
+        <span
+          key={i}
+          style={{
+            background: color ? `${color}14` : 'rgba(255,255,255,0.05)',
+            border: `1px solid ${color ? `${color}33` : 'rgba(255,255,255,0.08)'}`,
+            color: color || '#F5F6F7', fontSize: 12.5, fontWeight: 600, padding: '6px 12px', borderRadius: 999,
+            fontFamily: mono ? 'ui-monospace, monospace' : undefined,
+          }}
+        >
+          {it}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+const fmtMetricName = (k) => k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+const fmtNum = (v, digits = 4) => (typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(digits)) : (v ?? '—'));
+const fmtPct = (v) => (v == null ? '—' : `${(v * 100).toFixed(2)}%`);
+
+function algorithmLabel(algo) {
+  if (!algo) return '—';
+  const upper = new Set(['mlp', 'gru', 'knn', 'svm', 'svr']);
+  return algo.split('_').map((w) => (upper.has(w.toLowerCase()) ? w.toUpperCase() : w.toLowerCase() === 'lstm' ? 'LSTM' : w[0].toUpperCase() + w.slice(1))).join(' ');
+}
+
 export default function ModelDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const statusStyle = statusColors[model.status] || statusColors.Archived;
-  const hp = model.training.hyperparameters;
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    api.get(`/api/ml-models/${id}`)
+      .then((res) => setData(res.data))
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, [id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '100px 0' }}>
+        <Spin size="large" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{ paddingTop: 8 }}>
+        <Alert
+          type="error"
+          message="Couldn't load this model run"
+          description={error}
+          action={<button onClick={load} style={backBtnStyle}>Retry</button>}
+          showIcon
+        />
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const kindStyle = KIND_COLORS[data.model_kind] || KIND_COLORS.regressor;
+  const dataPrep = data.data_prep || {};
+  const split = data.split || {};
+  const preprocessing = data.preprocessing || {};
+  const model = data.model || {};
+  const evaluation = data.evaluation || {};
+
+  const mlMetrics = evaluation.ml_metrics || {};
+  const tradingMetrics = evaluation.trading_metrics_summary || {};
+  const tradeSummary = evaluation.trade_summary || {};
+  const signalCounts = evaluation.signal_counts || {};
+  const winLoss = tradeSummary.win_loss || {};
+
+  const featureColumns = preprocessing.feature_columns || [];
+  const steps = preprocessing.steps || [];
+  const hyperparameters = model.hyperparameters || model.configured_overrides || {};
+  const architecture = model.architecture || null;
+  const training = model.training || null;
+  const classes = model.classes || null;
 
   return (
     <div style={{ paddingTop: 8 }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 24 }}>
-        <button
-          onClick={() => navigate(-1)}
-          style={{
-            width: 36, height: 36, borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)',
-            background: 'rgba(255,255,255,0.04)', color: '#F5F6F7', cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}
-        >
+        <button onClick={() => navigate(-1)} style={backBtnStyle}>
           <ArrowLeftOutlined />
         </button>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <h2 style={{ fontSize: 22, fontWeight: 700, color: '#F5F6F7', margin: 0 }}>{model.name}</h2>
-            <Tag style={{ background: statusStyle.bg, color: statusStyle.fg, border: 'none', borderRadius: 8, fontWeight: 600 }}>
-              {model.status}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <h2 style={{ fontSize: 20, fontWeight: 700, color: '#F5F6F7', margin: 0, fontFamily: 'ui-monospace, monospace' }}>
+              {data.run_id}
+            </h2>
+            <Tag style={{ background: kindStyle.bg, color: kindStyle.fg, border: 'none', borderRadius: 8, fontWeight: 600 }}>
+              {KIND_LABELS[data.model_kind] || data.model_kind}
             </Tag>
           </div>
           <div style={{ color: '#9096A0', fontSize: 13, marginTop: 2 }}>
-            {model.type} &middot; {model.symbol} &middot; {model.timeframe} &middot; Trained {model.trainingDate} &middot; Model ID {id}
+            {algorithmLabel(data.algorithm)} · {data.symbol ? data.symbol.toUpperCase() : '—'} · {data.exchange || '—'} · {data.timeframe || '—'}
+            {data.horizon != null && <> · horizon {data.horizon}</>}
           </div>
         </div>
       </div>
 
-      {/* Evaluation summary strip */}
+      {/* Evaluation summary strip -- ml_metrics keys differ by model_type
+          (mae/rmse for regression, accuracy/f1 for classification), so
+          these are rendered generically off whatever keys are actually
+          present rather than hardcoding one metric set. */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 14, marginBottom: 20 }}>
-        <StatBox label="Accuracy" value={`${model.evaluation.mlMetrics.accuracy}%`} positive />
-        <StatBox label="F1 Score" value={model.evaluation.mlMetrics.f1} />
-        <StatBox label="AUC" value={model.evaluation.mlMetrics.auc} />
-        <StatBox label="Backtest Sharpe" value={model.evaluation.backtestMetrics.sharpe} />
-        <StatBox label="Backtest Return" value={`+${model.evaluation.backtestMetrics.totalReturn}%`} positive />
-        <StatBox label="Max Drawdown" value={`${model.evaluation.backtestMetrics.maxDrawdown}%`} positive={false} />
+        {Object.entries(mlMetrics).map(([k, v]) => (
+          <StatBox key={k} label={fmtMetricName(k)} value={fmtNum(v)} />
+        ))}
+        <StatBox
+          label="Sharpe"
+          value={fmtNum(tradingMetrics.sharpe, 2)}
+          positive={tradingMetrics.sharpe == null ? undefined : tradingMetrics.sharpe >= 0}
+        />
+        <StatBox
+          label="Total Return"
+          value={fmtPct(tradingMetrics.comp)}
+          positive={tradingMetrics.comp == null ? undefined : tradingMetrics.comp >= 0}
+        />
+        <StatBox
+          label="Max Drawdown"
+          value={fmtPct(tradingMetrics.max_drawdown)}
+          positive={false}
+        />
       </div>
 
       {/* Dataset Information + Training Information */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
         <Panel title="Dataset Information">
-          <KeyValue label="Dataset" value={model.dataset.dataset} />
-          <KeyValue label="Target" value={model.dataset.target} />
-          <KeyValue label="Date Range" value={model.dataset.dateRange} />
-          <KeyValue label="Train/Test Split" value={model.dataset.trainTestSplit} />
+          <KeyValue label="Dataset" value={dataPrep.dataset_name} mono />
+          <KeyValue label="Date Range" value={dataPrep.data ? `${dataPrep.data.start_date} → ${dataPrep.data.end_date}` : null} />
+          <KeyValue label="Total Rows" value={dataPrep.total_rows} mono />
+          <KeyValue label="Target Horizon" value={dataPrep.target?.horizon} mono />
+          <KeyValue label="Noise Filter" value={dataPrep.target?.filter_noise != null ? (dataPrep.target.filter_noise ? `Yes (threshold ${dataPrep.target.noise_threshold})` : 'No') : null} />
+          <KeyValue
+            label="Train / Val / Test"
+            value={
+              split.train || split.test
+                ? `${split.train?.rows ?? '—'} / ${split.validation?.rows ?? '—'} / ${split.test?.rows ?? '—'} rows`
+                : null
+            }
+            mono
+          />
           <div style={{ marginTop: 14 }}>
-            <div style={{ color: '#9096A0', fontSize: 13, marginBottom: 8 }}>Features</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {model.dataset.features.map((f) => (
-                <span
-                  key={f}
-                  style={{
-                    background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)',
-                    color: '#F5F6F7', fontSize: 12.5, fontWeight: 600, padding: '6px 12px', borderRadius: 999,
-                  }}
-                >
-                  {f}
-                </span>
-              ))}
-            </div>
+            <div style={{ color: '#9096A0', fontSize: 13, marginBottom: 8 }}>Feature Columns ({featureColumns.length})</div>
+            <PillList items={featureColumns} mono />
           </div>
         </Panel>
 
-        <Panel title="Training Information">
-          <KeyValue label="Algorithm" value={model.training.algorithm} />
-          <KeyValue label="Preprocessing" value={model.training.preprocessing} />
-          <KeyValue label="Feature Engineering" value={model.training.featureEngineering} />
-          <KeyValue label="Scaling" value={model.training.scaling} />
-          <KeyValue label="Stationarity" value={model.training.stationarity} />
+        <Panel title="Preprocessing & Model Configuration">
+          <KeyValue label="Algorithm" value={algorithmLabel(data.algorithm)} />
+          <KeyValue label="Serialization Format" value={model.serialization_format} mono />
+          <KeyValue label="Random Seed" value={model.random_seed} mono />
+          {classes && <KeyValue label="Classes" value={classes.join(', ')} mono />}
           <div style={{ marginTop: 14 }}>
-            <div style={{ color: '#9096A0', fontSize: 13, marginBottom: 8 }}>Hyperparameters</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {Object.entries(hp).map(([k, v]) => (
-                <span
-                  key={k}
-                  style={{
-                    background: 'rgba(61,220,151,0.08)', border: '1px solid rgba(61,220,151,0.18)',
-                    color: MINT, fontSize: 12.5, fontWeight: 600, padding: '6px 12px', borderRadius: 999,
-                    fontFamily: 'ui-monospace, monospace',
-                  }}
-                >
-                  {k}: {v}
-                </span>
-              ))}
-            </div>
+            <div style={{ color: '#9096A0', fontSize: 13, marginBottom: 8 }}>Preprocessing Steps (fit order)</div>
+            <PillList items={steps.map((s) => s.method)} color={MINT} />
           </div>
         </Panel>
       </div>
 
-      {/* ML Metrics + Backtest Metrics */}
+      {/* Hyperparameters / Architecture */}
+      <div style={{ display: 'grid', gridTemplateColumns: architecture ? '1fr 1fr' : '1fr', gap: 20, marginBottom: 20 }}>
+        <Panel title={architecture ? 'Training Hyperparameters' : 'Hyperparameters'}>
+          {Object.keys(hyperparameters).length > 0 ? (
+            <PillList
+              items={Object.entries(hyperparameters)
+                .filter(([, v]) => v !== null)
+                .map(([k, v]) => `${k}: ${v}`)}
+              color={MINT}
+              mono
+            />
+          ) : (
+            <span style={{ color: '#6B7280', fontSize: 13 }}>No hyperparameters recorded.</span>
+          )}
+        </Panel>
+
+        {architecture && (
+          <Panel title="Network Architecture">
+            <KeyValue label="Hidden Layers" value={architecture.hidden_layers} mono />
+            <KeyValue label="Hidden Units" value={architecture.hidden_units} mono />
+            <KeyValue label="Activation" value={architecture.activation} mono />
+            <KeyValue label="Dropout" value={architecture.dropout} mono />
+            <KeyValue label="Batch Norm" value={architecture.batch_norm != null ? (architecture.batch_norm ? 'Yes' : 'No') : null} />
+            {training && (
+              <>
+                <KeyValue label="Optimizer" value={training.optimizer} mono />
+                <KeyValue label="Learning Rate" value={training.learning_rate} mono />
+                <KeyValue label="Batch Size" value={training.batch_size} mono />
+                <KeyValue label="Epochs" value={training.epochs} mono />
+                <KeyValue label="Early Stopping Patience" value={training.early_stopping_patience} mono />
+                <KeyValue label="Loss" value={training.loss} mono />
+              </>
+            )}
+          </Panel>
+        )}
+      </div>
+
+      {/* ML Metrics + Trading Metrics */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
         <Panel title="ML Metrics">
-          <KeyValue label="Accuracy" value={`${model.evaluation.mlMetrics.accuracy}%`} mono />
-          <KeyValue label="Precision" value={`${model.evaluation.mlMetrics.precision}%`} mono />
-          <KeyValue label="Recall" value={`${model.evaluation.mlMetrics.recall}%`} mono />
-          <KeyValue label="F1 Score" value={model.evaluation.mlMetrics.f1} mono />
-          <KeyValue label="AUC" value={model.evaluation.mlMetrics.auc} mono />
+          {Object.keys(mlMetrics).length > 0 ? (
+            Object.entries(mlMetrics).map(([k, v]) => (
+              <KeyValue key={k} label={fmtMetricName(k)} value={fmtNum(v)} mono />
+            ))
+          ) : (
+            <span style={{ color: '#6B7280', fontSize: 13 }}>No ML metrics recorded for this run.</span>
+          )}
         </Panel>
-        <Panel title="Backtest Metrics">
-          <KeyValue label="Sharpe Ratio" value={model.evaluation.backtestMetrics.sharpe} mono />
-          <KeyValue label="Sortino Ratio" value={model.evaluation.backtestMetrics.sortino} mono />
-          <KeyValue label="Max Drawdown" value={`${model.evaluation.backtestMetrics.maxDrawdown}%`} mono />
-          <KeyValue label="Win Rate" value={`${model.evaluation.backtestMetrics.winRate}%`} mono />
-          <KeyValue label="Total Return" value={`+${model.evaluation.backtestMetrics.totalReturn}%`} mono />
-        </Panel>
-      </div>
-
-      {/* Training Curve + Confusion Breakdown */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-        <Panel title="Training vs Validation Accuracy">
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={accuracyHistory} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-              <XAxis dataKey="epoch" tick={axisStyle} axisLine={false} tickLine={false} interval={3} />
-              <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={tooltipStyle} />
-              <Line type="monotone" dataKey="train" stroke={MINT} strokeWidth={2.5} dot={false} name="Train" />
-              <Line type="monotone" dataKey="val" stroke={AMBER} strokeWidth={2.5} dot={false} name="Validation" />
-            </LineChart>
-          </ResponsiveContainer>
-        </Panel>
-        <Panel title="Prediction Breakdown">
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={confusionCounts} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-              <XAxis dataKey="name" tick={{ ...axisStyle, fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={tooltipStyle} />
-              <Bar dataKey="value" radius={[6, 6, 6, 6]}>
-                {confusionCounts.map((entry, i) => (
-                  <Cell key={i} fill={entry.name.startsWith('True') ? MINT : RED} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+        <Panel title="Trading Metrics (signal-converted backtest)">
+          {Object.keys(tradingMetrics).length > 0 ? (
+            Object.entries(tradingMetrics).map(([k, v]) => (
+              <KeyValue
+                key={k}
+                label={fmtMetricName(k)}
+                value={k.includes('drawdown') || k === 'comp' || k === 'win_rate' ? fmtPct(v) : fmtNum(v, 2)}
+                mono
+              />
+            ))
+          ) : (
+            <span style={{ color: '#6B7280', fontSize: 13 }}>No trading metrics recorded for this run.</span>
+          )}
         </Panel>
       </div>
 
-      {/* Prediction Summary */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 20 }}>
-        <StatBox label="Total Predictions" value={model.evaluation.predictionSummary.totalPredictions} />
-        <StatBox label="Correct Predictions" value={model.evaluation.predictionSummary.correctPredictions} positive />
-        <StatBox label="Avg Confidence" value={`${model.evaluation.predictionSummary.avgConfidence}%`} />
-      </div>
-
-      {/* Recent Prediction History */}
-      <div style={{ marginBottom: 8 }}>
-        <Panel title="Recent Prediction History">
-          <Table
-            size="small"
-            pagination={false}
-            dataSource={predictionHistory.map((r) => ({ ...r, key: r.id }))}
-            columns={[
-              { title: 'Timestamp', dataIndex: 'timestamp', key: 'timestamp' },
-              {
-                title: 'Predicted', dataIndex: 'predicted', key: 'predicted',
-                render: (v) => <span style={{ color: v === 'Up' ? MINT : RED, fontWeight: 600 }}>{v}</span>,
-              },
-              {
-                title: 'Actual', dataIndex: 'actual', key: 'actual',
-                render: (v) => <span style={{ color: v === 'Up' ? MINT : RED, fontWeight: 600 }}>{v}</span>,
-              },
-              { title: 'Confidence', dataIndex: 'confidence', key: 'confidence', render: (v) => `${v}%` },
-              {
-                title: 'Result', dataIndex: 'correct', key: 'correct',
-                render: (v) => (
-                  <Tag style={{
-                    background: v ? 'rgba(61,220,151,0.12)' : 'rgba(240,70,107,0.14)',
-                    color: v ? MINT : RED, border: 'none', borderRadius: 8, fontWeight: 600,
-                  }}>
-                    {v ? 'Correct' : 'Incorrect'}
-                  </Tag>
-                ),
-              },
-            ]}
-          />
+      {/* Trade Summary + Signal Counts */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 8 }}>
+        <Panel title="Trade Summary">
+          {Object.keys(tradeSummary).length > 0 ? (
+            <>
+              <KeyValue label="Final Balance" value={fmtNum(tradeSummary.final_balance, 2)} mono />
+              <KeyValue label="Total Net Profit" value={fmtNum(tradeSummary.total_net_profit, 2)} mono />
+              <KeyValue label="Total Trades" value={tradeSummary.total_trades} mono />
+              <KeyValue label="Wins" value={winLoss.wins} mono />
+              <KeyValue label="Losses" value={winLoss.losses} mono />
+              <KeyValue label="Win Rate" value={fmtPct(winLoss.win_rate)} mono />
+            </>
+          ) : (
+            <span style={{ color: '#6B7280', fontSize: 13 }}>No trade summary recorded for this run.</span>
+          )}
+        </Panel>
+        <Panel title="Signal Counts">
+          {Object.keys(signalCounts).length > 0 ? (
+            Object.entries(signalCounts).map(([k, v]) => (
+              <KeyValue key={k} label={k} value={v} mono />
+            ))
+          ) : (
+            <span style={{ color: '#6B7280', fontSize: 13 }}>No signal counts recorded for this run.</span>
+          )}
         </Panel>
       </div>
     </div>
   );
 }
+
+const backBtnStyle = {
+  width: 36, height: 36, borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)',
+  background: 'rgba(255,255,255,0.04)', color: '#F5F6F7', cursor: 'pointer',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+};
