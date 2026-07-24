@@ -62,8 +62,24 @@ function buildColumns(navigate) {
       title: 'Status', dataIndex: 'status', key: 'status',
       filters: Object.entries(STATUS_META).map(([value, m]) => ({ text: m.label, value })),
       onFilter: (value, record) => record.status === value,
-      render: (status) => {
+      render: (status, record) => {
         const m = STATUS_META[status] || STATUS_META.never_run;
+        if (status === 'unassigned') {
+          return (
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate(`/strategies?exchange=${record.exchange}&coin=${record.symbol}`);
+              }}
+              style={{ cursor: 'pointer' }}
+              title="No strategy is enabled for this pair yet -- click to go enable one"
+            >
+              <Tag style={{ background: m.bg, color: m.fg, border: 'none', borderRadius: 8, fontWeight: 600 }}>
+                {m.label} &rarr; enable a strategy
+              </Tag>
+            </span>
+          );
+        }
         return <Tag style={{ background: m.bg, color: m.fg, border: 'none', borderRadius: 8, fontWeight: 600 }}>{m.label}</Tag>;
       },
     },

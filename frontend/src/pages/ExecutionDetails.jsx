@@ -185,6 +185,14 @@ export default function ExecutionDetails() {
           <div style={{ color: '#9096A0', fontSize: 13, marginTop: 2, textTransform: 'uppercase' }}>
             {data.symbol} &middot; {data.exchange} &middot; {data.account_name || 'No wallet assigned'}
           </div>
+          {data.status === 'unassigned' && (
+            <button
+              onClick={() => navigate(`/strategies?exchange=${data.exchange}&coin=${data.symbol}`)}
+              style={{ ...linkBtnStyle, marginTop: 6 }}
+            >
+              No strategy enabled for this pair &rarr; go enable one
+            </button>
+          )}
         </div>
       </div>
 
@@ -437,4 +445,9 @@ const backBtnStyle = {
   width: 36, height: 36, borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)',
   background: 'rgba(255,255,255,0.04)', color: '#F5F6F7', cursor: 'pointer',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
+};
+
+const linkBtnStyle = {
+  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+  color: '#3DDC97', fontSize: 12.5, fontWeight: 600, textDecoration: 'underline',
 };
