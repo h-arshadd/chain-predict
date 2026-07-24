@@ -1,88 +1,14 @@
-import { useState } from 'react';
-import { Table, Tag, Switch, Modal, Form, Input, Select, message, Tooltip } from 'antd';
+import { useState, useEffect, useCallback } from 'react';
+import { Table, Tag, Switch, Modal, Form, Input, Select, message, Tooltip, Spin, Alert } from 'antd';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, EyeInvisibleOutlined, EyeOutlined,
-  CheckCircleFilled, CloseCircleFilled, WalletOutlined,
+  WalletOutlined, WarningFilled,
 } from '@ant-design/icons';
+import { api } from '../lib/api';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
 const AMBER = '#FF8A5C';
-
-const COINS = ['BTC', 'ETH', 'SOL', 'DOGE', 'ADA', 'LTC', 'MINA', 'SUI'];
-
-// ---- placeholder data — replace with GET /api/wallets once backend exists ----
-const initialWallets = [
-  {
-    key: '1', id: 1, label: 'Main Trading', accountType: 'Unified Trading (UTA)',
-    apiKey: 'kQ7f...A93x', apiStatus: 'Connected', enabled: true,
-    balance: 24812.44, unrealizedPnl: 312.8, totalPnl: 4218.6,
-    strategies: [
-      { name: 'BTC Momentum', symbol: 'BTCUSDT', status: 'Active' },
-      { name: 'SOL Breakout', symbol: 'SOLUSDT', status: 'Active' },
-    ],
-    positions: [
-      { symbol: 'BTCUSDT', side: 'Long', size: 0.42, entry: 61240, mark: 62580, pnl: 562.8 },
-      { symbol: 'SOLUSDT', side: 'Short', size: 18, entry: 148.2, mark: 146.1, pnl: 37.8 },
-    ],
-    openOrders: [
-      { symbol: 'BTCUSDT', side: 'Sell', type: 'Limit', price: 64200, qty: 0.42 },
-      { symbol: 'ADAUSDT', side: 'Buy', type: 'Limit', price: 0.38, qty: 4200 },
-    ],
-    executions: [
-      { strategy: 'BTC Momentum', symbol: 'BTCUSDT', status: 'Running', uptime: '2d 4h' },
-      { strategy: 'SOL Breakout', symbol: 'SOLUSDT', status: 'Running', uptime: '14h 10m' },
-    ],
-  },
-  {
-    key: '2', id: 2, label: 'Altcoin Sub-Account', accountType: 'Spot',
-    apiKey: 'pT2m...C81z', apiStatus: 'Connected', enabled: true,
-    balance: 8734.12, unrealizedPnl: -84.3, totalPnl: 612.4,
-    strategies: [
-      { name: 'ADA Trend Follow', symbol: 'ADAUSDT', status: 'Active' },
-      { name: 'DOGE Volatility Break', symbol: 'DOGEUSDT', status: 'Paused' },
-    ],
-    positions: [
-      { symbol: 'ADAUSDT', side: 'Long', size: 3200, entry: 0.402, mark: 0.389, pnl: -41.6 },
-    ],
-    openOrders: [
-      { symbol: 'DOGEUSDT', side: 'Buy', type: 'Limit', price: 0.112, qty: 5000 },
-    ],
-    executions: [
-      { strategy: 'ADA Trend Follow', symbol: 'ADAUSDT', status: 'Running', uptime: '6d 2h' },
-      { strategy: 'DOGE Volatility Break', symbol: 'DOGEUSDT', status: 'Paused', uptime: '—' },
-    ],
-  },
-  {
-    key: '3', id: 3, label: 'Testnet Sandbox', accountType: 'Unified Trading (UTA)',
-    apiKey: 'zR4k...E22q', apiStatus: 'Disconnected', enabled: false,
-    balance: 1000.0, unrealizedPnl: 0, totalPnl: -18.2,
-    strategies: [],
-    positions: [],
-    openOrders: [],
-    executions: [],
-  },
-  {
-    key: '4', id: 4, label: 'MINA/SUI Desk', accountType: 'Unified Trading (UTA)',
-    apiKey: 'jH9v...F04w', apiStatus: 'Connected', enabled: true,
-    balance: 5340.9, unrealizedPnl: 55.2, totalPnl: 201.9,
-    strategies: [
-      { name: 'MINA Grid', symbol: 'MINAUSDT', status: 'Active' },
-      { name: 'SUI Scalper', symbol: 'SUIUSDT', status: 'Active' },
-    ],
-    positions: [
-      { symbol: 'MINAUSDT', side: 'Long', size: 1200, entry: 0.71, mark: 0.735, pnl: 30.0 },
-      { symbol: 'SUIUSDT', side: 'Long', size: 340, entry: 3.82, mark: 3.89, pnl: 23.8 },
-    ],
-    openOrders: [
-      { symbol: 'SUIUSDT', side: 'Sell', type: 'Limit', price: 4.05, qty: 340 },
-    ],
-    executions: [
-      { strategy: 'MINA Grid', symbol: 'MINAUSDT', status: 'Running', uptime: '3d 9h' },
-      { strategy: 'SUI Scalper', symbol: 'SUIUSDT', status: 'Running', uptime: '11h 40m' },
-    ],
-  },
-];
 
 const panel = {
   background: 'linear-gradient(155deg, rgba(30, 36, 34, 0.8) 0%, rgba(19, 23, 27, 0.8) 100%)',
@@ -98,9 +24,11 @@ const subPanel = {
 };
 
 const fmtUsd = (v) =>
-  v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  v == null
+    ? '—'
+    : v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const pnlColor = (v) => (v > 0 ? MINT : v < 0 ? RED : '#9096A0');
+const pnlColor = (v) => (v == null ? '#6B7280' : v > 0 ? MINT : v < 0 ? RED : '#9096A0');
 
 function SectionLabel({ children }) {
   return (
@@ -147,6 +75,10 @@ function MiniTable({ columns, data, emptyText }) {
   );
 }
 
+// Strategies/positions/open orders/executions are always [] for now --
+// the wallets API stubs these until the Strategy Deployment module is
+// wired up to join against them. The expandable row still renders
+// correctly with its own empty states in the meantime.
 function WalletExpandedRow({ wallet }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, padding: '4px 8px 16px' }}>
@@ -210,7 +142,7 @@ function WalletExpandedRow({ wallet }) {
             { key: 'price', title: 'Price', align: 'right' },
             { key: 'qty', title: 'Qty', align: 'right' },
           ]}
-          data={wallet.openOrders}
+          data={wallet.open_orders}
         />
       </div>
 
@@ -243,29 +175,52 @@ function WalletExpandedRow({ wallet }) {
 }
 
 export default function Wallets() {
-  const [wallets, setWallets] = useState(initialWallets);
-  const [revealedKeys, setRevealedKeys] = useState({});
+  const [wallets, setWallets] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [expandedRows, setExpandedRows] = useState({}); // account_name -> detail (fetched on expand)
   const [modalOpen, setModalOpen] = useState(false);
   const [editingWallet, setEditingWallet] = useState(null); // null = add mode
+  const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm();
 
-  const toggleReveal = (id) => setRevealedKeys((prev) => ({ ...prev, [id]: !prev[id] }));
+  const loadWallets = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    api.get('/api/wallets')
+      .then((res) => setWallets(res.data))
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, []);
 
-  const toggleEnabled = (id) => {
-    setWallets((prev) => prev.map((w) => (w.id === id ? { ...w, enabled: !w.enabled } : w)));
-    message.success('Wallet status updated');
+  useEffect(() => {
+    loadWallets();
+  }, [loadWallets]);
+
+  const toggleEnabled = (accountName, nextEnabled) => {
+    // Optimistic update so the switch feels instant; rolled back on failure.
+    setWallets((prev) => prev.map((w) => (w.account_name === accountName ? { ...w, enabled: nextEnabled } : w)));
+    api.patch(`/api/wallets/${accountName}/enabled`, { enabled: nextEnabled })
+      .then(() => message.success(nextEnabled ? 'Wallet enabled' : 'Wallet disabled — no new executions will open'))
+      .catch((err) => {
+        setWallets((prev) => prev.map((w) => (w.account_name === accountName ? { ...w, enabled: !nextEnabled } : w)));
+        message.error(err.message);
+      });
   };
 
-  const removeWallet = (id) => {
+  const removeWallet = (accountName) => {
     Modal.confirm({
       title: 'Remove this wallet?',
-      content: 'This will unlink the Bybit account and stop any running executions tied to it.',
+      content: 'This will delete the stored API credentials for this account. This cannot be undone.',
       okText: 'Remove',
       okButtonProps: { danger: true },
-      onOk: () => {
-        setWallets((prev) => prev.filter((w) => w.id !== id));
-        message.success('Wallet removed');
-      },
+      onOk: () =>
+        api.delete(`/api/wallets/${accountName}`)
+          .then(() => {
+            message.success('Wallet removed');
+            loadWallets();
+          })
+          .catch((err) => message.error(err.message)),
     });
   };
 
@@ -278,46 +233,55 @@ export default function Wallets() {
   const openEditModal = (wallet) => {
     setEditingWallet(wallet);
     form.setFieldsValue({
-      label: wallet.label,
-      accountType: wallet.accountType,
-      apiKey: '',
-      apiSecret: '',
-      coinFocus: wallet.coinFocus || [],
+      account_name: wallet.account_name,
+      exchange: wallet.exchange,
+      demo: wallet.demo,
+      api_key: '',
+      api_secret: '',
     });
     setModalOpen(true);
   };
 
   const handleSubmit = () => {
     form.validateFields().then((values) => {
-      if (editingWallet) {
-        setWallets((prev) =>
-          prev.map((w) =>
-            w.id === editingWallet.id
-              ? { ...w, label: values.label, accountType: values.accountType, coinFocus: values.coinFocus }
-              : w
-          )
-        );
-        message.success('Wallet updated');
-      } else {
-        const newWallet = {
-          key: String(Date.now()), id: Date.now(),
-          label: values.label, accountType: values.accountType,
-          apiKey: values.apiKey.slice(0, 4) + '...' + values.apiKey.slice(-4),
-          apiStatus: 'Connected', enabled: true,
-          balance: 0, unrealizedPnl: 0, totalPnl: 0,
-          coinFocus: values.coinFocus,
-          strategies: [], positions: [], openOrders: [], executions: [],
-        };
-        setWallets((prev) => [...prev, newWallet]);
-        message.success('Bybit wallet added');
-      }
-      setModalOpen(false);
+      setSubmitting(true);
+      const request = editingWallet
+        ? api.put(`/api/wallets/${editingWallet.account_name}`, {
+            exchange: values.exchange,
+            demo: values.demo,
+            // blank = keep current key/secret, matches placeholder copy below
+            api_key: values.api_key || null,
+            api_secret: values.api_secret || null,
+          })
+        : api.post('/api/wallets', {
+            account_name: values.account_name,
+            exchange: values.exchange,
+            demo: values.demo,
+            api_key: values.api_key,
+            api_secret: values.api_secret,
+          });
+
+      request
+        .then(() => {
+          message.success(editingWallet ? 'Wallet updated' : 'Wallet added');
+          setModalOpen(false);
+          loadWallets();
+        })
+        .catch((err) => message.error(err.message))
+        .finally(() => setSubmitting(false));
     });
+  };
+
+  const handleExpand = (expanded, row) => {
+    if (!expanded || expandedRows[row.account_name]) return;
+    api.get(`/api/wallets/${row.account_name}`)
+      .then((res) => setExpandedRows((prev) => ({ ...prev, [row.account_name]: res.data })))
+      .catch((err) => message.error(err.message));
   };
 
   const columns = [
     {
-      title: 'Wallet', key: 'label',
+      title: 'Wallet', key: 'account_name',
       render: (_, row) => (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{
@@ -327,55 +291,47 @@ export default function Wallets() {
             <WalletOutlined style={{ fontSize: 16 }} />
           </div>
           <div>
-            <div style={{ fontWeight: 600, color: '#F5F6F7' }}>{row.label}</div>
-            <div style={{ fontSize: 12, color: '#6B7280' }}>Bybit &middot; {row.accountType}</div>
+            <div style={{ fontWeight: 600, color: '#F5F6F7' }}>{row.account_name}</div>
+            <div style={{ fontSize: 12, color: '#6B7280' }}>
+              {row.exchange} &middot; {row.demo ? 'Demo' : 'Production'}
+            </div>
           </div>
         </div>
       ),
     },
     {
-      title: 'API Key', key: 'apiKey',
-      render: (_, row) => (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'ui-monospace, monospace', fontSize: 13, color: '#9096A0' }}>
-          {revealedKeys[row.id] ? row.apiKey.replace('...', '••••••••') : row.apiKey}
-          <span
-            onClick={(e) => { e.stopPropagation(); toggleReveal(row.id); }}
-            style={{ cursor: 'pointer', color: '#6B7280', display: 'flex' }}
-          >
-            {revealedKeys[row.id] ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-          </span>
-        </div>
-      ),
-    },
-    {
-      title: 'API Status', dataIndex: 'apiStatus', key: 'apiStatus',
-      render: (status) => (
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: status === 'Connected' ? MINT : RED, fontWeight: 600 }}>
-          {status === 'Connected' ? <CheckCircleFilled /> : <CloseCircleFilled />}
-          {status}
-        </span>
-      ),
+      title: 'API Key', dataIndex: 'api_key_masked', key: 'api_key_masked',
+      render: (v) => <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 13, color: '#9096A0' }}>{v}</span>,
     },
     {
       title: 'Account Balance', dataIndex: 'balance', key: 'balance',
-      sorter: (a, b) => a.balance - b.balance,
-      render: (v) => <span style={{ fontFamily: 'ui-monospace, monospace', color: '#F5F6F7', fontWeight: 600 }}>{fmtUsd(v)}</span>,
+      sorter: (a, b) => (a.balance ?? -Infinity) - (b.balance ?? -Infinity),
+      render: (v, row) =>
+        row.balance_error ? (
+          <Tooltip title={row.balance_error}>
+            <span style={{ color: RED, display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+              <WarningFilled /> Unavailable
+            </span>
+          </Tooltip>
+        ) : (
+          <span style={{ fontFamily: 'ui-monospace, monospace', color: '#F5F6F7', fontWeight: 600 }}>{fmtUsd(v)}</span>
+        ),
     },
     {
-      title: 'Unrealized PnL', dataIndex: 'unrealizedPnl', key: 'unrealizedPnl',
-      sorter: (a, b) => a.unrealizedPnl - b.unrealizedPnl,
+      title: 'Unrealized PnL', dataIndex: 'unrealized_pnl', key: 'unrealized_pnl',
+      sorter: (a, b) => (a.unrealized_pnl ?? -Infinity) - (b.unrealized_pnl ?? -Infinity),
       render: (v) => (
         <span style={{ fontFamily: 'ui-monospace, monospace', color: pnlColor(v), fontWeight: 600 }}>
-          {v >= 0 ? '+' : ''}{fmtUsd(v)}
+          {v == null ? '—' : `${v >= 0 ? '+' : ''}${fmtUsd(v)}`}
         </span>
       ),
     },
     {
-      title: 'Total PnL', dataIndex: 'totalPnl', key: 'totalPnl',
-      sorter: (a, b) => a.totalPnl - b.totalPnl,
+      title: 'Total PnL', dataIndex: 'total_pnl', key: 'total_pnl',
+      sorter: (a, b) => (a.total_pnl ?? -Infinity) - (b.total_pnl ?? -Infinity),
       render: (v) => (
         <span style={{ fontFamily: 'ui-monospace, monospace', color: pnlColor(v), fontWeight: 600 }}>
-          {v >= 0 ? '+' : ''}{fmtUsd(v)}
+          {v == null ? '—' : `${v >= 0 ? '+' : ''}${fmtUsd(v)}`}
         </span>
       ),
     },
@@ -384,7 +340,7 @@ export default function Wallets() {
       render: (_, row) => (
         <Switch
           checked={row.enabled}
-          onChange={() => toggleEnabled(row.id)}
+          onChange={(checked) => toggleEnabled(row.account_name, checked)}
           onClick={(_, e) => e.stopPropagation()}
         />
       ),
@@ -399,7 +355,7 @@ export default function Wallets() {
             </button>
           </Tooltip>
           <Tooltip title="Remove wallet">
-            <button onClick={() => removeWallet(row.id)} style={{ ...iconBtnStyle, color: RED }}>
+            <button onClick={() => removeWallet(row.account_name)} style={{ ...iconBtnStyle, color: RED }}>
               <DeleteOutlined />
             </button>
           </Tooltip>
@@ -408,10 +364,16 @@ export default function Wallets() {
     },
   ];
 
-  const totalBalance = wallets.reduce((s, w) => s + w.balance, 0);
-  const totalUnrealized = wallets.reduce((s, w) => s + w.unrealizedPnl, 0);
-  const totalPnl = wallets.reduce((s, w) => s + w.totalPnl, 0);
-  const connectedCount = wallets.filter((w) => w.apiStatus === 'Connected').length;
+  const totalBalance = wallets.reduce((s, w) => s + (w.balance ?? 0), 0);
+  const totalUnrealized = wallets.reduce((s, w) => s + (w.unrealized_pnl ?? 0), 0);
+  const totalPnl = wallets.reduce((s, w) => s + (w.total_pnl ?? 0), 0);
+  const enabledCount = wallets.filter((w) => w.enabled).length;
+
+  const tableData = wallets.map((w) => ({
+    ...w,
+    key: w.account_name,
+    ...(expandedRows[w.account_name] || {}),
+  }));
 
   return (
     <div style={{ paddingTop: 8 }}>
@@ -419,7 +381,7 @@ export default function Wallets() {
         <div>
           <h2 style={{ fontSize: 24, fontWeight: 700, color: '#F5F6F7', margin: 0 }}>Wallets</h2>
           <p style={{ color: '#9096A0', fontSize: 14, marginTop: 4 }}>
-            Manage your Bybit accounts, API connections, and per-wallet activity.
+            Manage your exchange accounts, API connections, and per-wallet activity.
           </p>
         </div>
         <button onClick={openAddModal} style={primaryBtnStyle}>
@@ -427,68 +389,90 @@ export default function Wallets() {
         </button>
       </div>
 
+      {error && (
+        <Alert
+          type="error"
+          message="Couldn't load wallets"
+          description={error}
+          action={<button onClick={loadWallets} style={iconBtnStyle}>Retry</button>}
+          style={{ marginBottom: 20 }}
+          showIcon
+        />
+      )}
+
       {/* Summary strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
         <SummaryCard label="Total Balance" value={fmtUsd(totalBalance)} />
         <SummaryCard label="Unrealized PnL" value={`${totalUnrealized >= 0 ? '+' : ''}${fmtUsd(totalUnrealized)}`} color={pnlColor(totalUnrealized)} />
         <SummaryCard label="Total PnL" value={`${totalPnl >= 0 ? '+' : ''}${fmtUsd(totalPnl)}`} color={pnlColor(totalPnl)} />
-        <SummaryCard label="Connected Accounts" value={`${connectedCount} / ${wallets.length}`} />
+        <SummaryCard label="Enabled Wallets" value={`${enabledCount} / ${wallets.length}`} />
       </div>
 
       <div style={{ ...panel, padding: 20 }}>
-        <Table
-          columns={columns}
-          dataSource={wallets}
-          pagination={false}
-          expandable={{
-            expandedRowRender: (row) => <WalletExpandedRow wallet={row} />,
-            expandRowByClick: true,
-          }}
-          locale={{ emptyText: 'No wallets connected yet.' }}
-        />
+        {loading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
+            <Spin size="large" />
+          </div>
+        ) : (
+          <Table
+            columns={columns}
+            dataSource={tableData}
+            pagination={false}
+            expandable={{
+              expandedRowRender: (row) => <WalletExpandedRow wallet={row} />,
+              onExpand: handleExpand,
+            }}
+            locale={{ emptyText: 'No wallets connected yet. Click "Add Wallet" to connect your first exchange account.' }}
+          />
+        )}
       </div>
 
       <Modal
-        title={editingWallet ? 'Edit Wallet' : 'Add Bybit Wallet'}
+        title={editingWallet ? 'Edit Wallet' : 'Add Wallet'}
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         onOk={handleSubmit}
+        confirmLoading={submitting}
         okText={editingWallet ? 'Save Changes' : 'Add Wallet'}
         destroyOnClose
       >
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item name="label" label="Wallet Label" rules={[{ required: true, message: 'Please enter a label' }]}>
-            <Input placeholder="e.g. Main Trading" />
+          <Form.Item
+            name="account_name"
+            label="Account Name"
+            rules={[{ required: true, message: 'Please enter a unique account name' }]}
+          >
+            <Input placeholder="e.g. main_trading" disabled={!!editingWallet} />
           </Form.Item>
-          <Form.Item name="accountType" label="Account Type" rules={[{ required: true }]} initialValue="Unified Trading (UTA)">
+          <Form.Item name="exchange" label="Exchange" rules={[{ required: true }]} initialValue="bybit">
             <Select
               options={[
-                { value: 'Unified Trading (UTA)', label: 'Unified Trading (UTA)' },
-                { value: 'Spot', label: 'Spot' },
-                { value: 'Derivatives', label: 'Derivatives (USDT Perpetual)' },
+                { value: 'bybit', label: 'Bybit' },
+                { value: 'binance', label: 'Binance' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="demo" label="Environment" rules={[{ required: true }]} initialValue={true}>
+            <Select
+              options={[
+                { value: true, label: 'Demo Trading' },
+                { value: false, label: 'Production (real funds)' },
               ]}
             />
           </Form.Item>
           <Form.Item
-            name="apiKey"
-            label="Bybit API Key"
+            name="api_key"
+            label="API Key"
             rules={editingWallet ? [] : [{ required: true, message: 'API key is required' }]}
           >
             <Input.Password placeholder={editingWallet ? 'Leave blank to keep current key' : 'Enter API key'} />
           </Form.Item>
           <Form.Item
-            name="apiSecret"
-            label="Bybit API Secret"
+            name="api_secret"
+            label="API Secret"
             rules={editingWallet ? [] : [{ required: true, message: 'API secret is required' }]}
           >
             <Input.Password placeholder={editingWallet ? 'Leave blank to keep current secret' : 'Enter API secret'} />
-          </Form.Item>
-          <Form.Item name="coinFocus" label="Coin Focus (optional)">
-            <Select
-              mode="multiple"
-              placeholder="Select coins traded on this wallet"
-              options={COINS.map((c) => ({ value: c, label: c }))}
-            />
           </Form.Item>
         </Form>
       </Modal>
