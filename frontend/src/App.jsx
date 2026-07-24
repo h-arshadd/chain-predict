@@ -25,7 +25,7 @@ function App() {
             <Route path="/strategies/:id" element={<StrategyDetails />} />
             <Route path="/wallets" element={<Wallets />} />
             <Route path="/deployment" element={<Deployment />} />
-            <Route path="/deployment/:id" element={<ExecutionDetails />} />
+            <Route path="/deployment/:exchange/:symbol" element={<ExecutionDetails />} />
             <Route path="/backtests" element={<Backtests />} />
             <Route path="/backtests/:id" element={<BacktestDetails />} />
             <Route path="/models" element={<Models />} />

@@ -17,10 +17,13 @@ Bybit's own fill record -- see accounts_utils.py). "Balance" and
 "Unrealized PnL" are live-only, fetched from Bybit per request since
 they aren't stored anywhere (see repos/wallet_live.py).
 
-Strategies/positions/open orders/executions per wallet are stubbed as
-empty lists for now -- that join lands with the Strategy Deployment
-module, not here. Wallets works standalone today; nothing here needs to
-change when that module is built, only the stub gets replaced.
+Strategies/positions/open orders/executions per wallet are now a real
+join against /api/executions's own data (executions_repo.list_executions),
+filtered down to whatever pairs have this account_name assigned in
+execution.config -- see _wallet_expandable_row() below. No new tables:
+same execution.config/positions/*_trades + metadata.strategy this router
+already re-derives for the Strategy Deployment page, just filtered to
+one wallet.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -31,7 +34,7 @@ from api.schemas.wallets import (
     WalletCreate, WalletUpdate, WalletEnabledUpdate,
     WalletSummary, WalletDetail,
 )
-from api.repos import wallets_repo, wallets_live as wallet_live
+from api.repos import wallets_repo, wallets_live as wallet_live, executions_repo
 from crypto_pipeline.accounts.accounts_utils import get_account_stats
 
 router = APIRouter(prefix="/api/wallets", tags=["wallets"])
@@ -86,6 +89,72 @@ def list_wallets(limit: int = 50, offset: int = 0, conn=Depends(get_conn)):
     return list_response([s.model_dump() for s in summaries], total, limit, offset)
 
 
+def _time_ago(dt) -> str:
+    if dt is None:
+        return "—"
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    seconds = (now - dt).total_seconds()
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        return f"{int(seconds // 60)}m"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}h"
+    return f"{int(seconds // 86400)}d"
+
+
+def _wallet_expandable_row(conn, account_name: str) -> dict:
+    """
+    Real strategies/positions/executions for this wallet, filtered from
+    executions_repo.list_executions() down to whichever pairs have this
+    account_name assigned in execution.config. "Open Orders" is left
+    empty -- this codebase places TP/SL natively on the exchange-side
+    position (see bybit_client.set_trading_stop), there is no separate
+    "pending order" concept to list per wallet; ExecutionDetail's
+    live_position field is the honest equivalent, shown on the drill-down
+    page instead of invented here.
+    """
+    all_executions = [e for e in executions_repo.list_executions(conn) if e.get("account_name") == account_name]
+
+    strategies = [
+        {
+            "name": e["strategy_name"],
+            "symbol": e["symbol"],
+            "status": "Active" if e["status"] == "running" else "Inactive",
+        }
+        for e in all_executions if e["strategy_name"] != "—"
+    ]
+
+    positions = [
+        {
+            "symbol": e["symbol"],
+            "side": "Long" if e["position"]["direction"] == "long" else "Short",
+            "size": e["position"]["quantity"] or 0.0,
+            "entry": e["position"]["entry_price"] or 0.0,
+            # No live mark price fetched here (would be one Bybit call per
+            # open position on every wallet-list expand) -- entry price is
+            # shown as both fields' fallback; ExecutionDetail's live_position
+            # has the real live/mark data for this pair if needed.
+            "mark": e["position"]["entry_price"] or 0.0,
+            "pnl": e["cumulative_pnl"] or 0.0,
+        }
+        for e in all_executions if e.get("position") is not None
+    ]
+
+    executions = [
+        {
+            "strategy": e["strategy_name"],
+            "symbol": e["symbol"],
+            "status": "Running" if e["status"] == "running" else e["status"].replace("_", " ").title(),
+            "uptime": _time_ago(e.get("last_processed")),
+        }
+        for e in all_executions if e["strategy_name"] != "—"
+    ]
+
+    return {"strategies": strategies, "positions": positions, "open_orders": [], "executions": executions}
+
+
 @router.get("/{account_name}")
 def get_wallet(account_name: str, conn=Depends(get_conn)):
     row = wallets_repo.get_wallet(conn, account_name)
@@ -93,13 +162,8 @@ def get_wallet(account_name: str, conn=Depends(get_conn)):
         raise HTTPException(status_code=404, detail=f"Wallet '{account_name}' not found")
 
     summary = _to_summary(conn, row)
-    detail = WalletDetail(
-        **summary.model_dump(),
-        strategies=[],
-        positions=[],
-        open_orders=[],
-        executions=[],
-    )
+    expandable = _wallet_expandable_row(conn, account_name)
+    detail = WalletDetail(**summary.model_dump(), **expandable)
     return item(detail.model_dump())
 
 
