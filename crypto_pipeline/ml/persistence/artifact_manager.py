@@ -43,6 +43,7 @@ under both artifacts/configs/ and models/, so the two stay linked.
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Optional
 
 import joblib
@@ -114,7 +115,7 @@ def make_run_id(algorithm: str, symbol: str = None, exchange: str = None,
     return "_".join(parts)
 
 
-def _build_run_summary(run_id: str, metadata: dict) -> dict:
+def _build_run_summary(run_id: str, metadata: dict, trained_at: str) -> dict:
     """
     Flat "what is this run" block written at the very TOP of
     run_config.json, above the detailed data_prep/split/preprocessing/
@@ -122,6 +123,16 @@ def _build_run_summary(run_id: str, metadata: dict) -> dict:
     those sections -- no new inputs needed -- it exists purely so the
     run/algorithm/symbol/timeframe/dates don't require digging into
     nested sections to find.
+
+    trained_at is the one exception -- it's not derived from `metadata`
+    at all, it's the wall-clock moment save_run() actually wrote this
+    config (passed in from there, see save_run()'s docstring for why).
+    Distinct from data_prep.data.start_date/end_date, which is the date
+    RANGE OF THE MARKET DATA the model trained on, not when training
+    itself happened -- the two get conflated easily since both are
+    "dates on a training run," so they're kept clearly separate here
+    and in the frontend (data range stays under "Dataset Information",
+    trained_at is its own field).
     """
     data_prep = metadata.get("data_prep", {}) or {}
     data = data_prep.get("data", {}) or {}
@@ -139,6 +150,7 @@ def _build_run_summary(run_id: str, metadata: dict) -> dict:
         "start_date": data.get("start_date"),
         "end_date": data.get("end_date"),
         "horizon": target.get("horizon"),
+        "trained_at": trained_at,
     }
 
 
@@ -164,7 +176,8 @@ def save_run(
             Written out as-is, merged under those same top-level keys
             in one JSON file, with an extra "run_summary" key at the
             top (see _build_run_summary()) pulling the
-            algorithm/symbol/timeframe/dates together in one flat spot.
+            algorithm/symbol/timeframe/dates/trained_at together in one
+            flat spot.
         fit_objects: list from preprocessing_pipeline.run_preprocessing()
             (fitted scalers/transforms -- persisted here so inference can
             exactly replay the same preprocessing chain, per PDF heading
@@ -194,8 +207,19 @@ def save_run(
     os.makedirs(run_dir, exist_ok=True)
     os.makedirs(config_dir, exist_ok=True)
 
+    # Captured here, at the moment this run's config is actually written
+    # -- NOT in main.py/the pipelines, and not read back off the
+    # filesystem later (folder mtime is unreliable: make_run_id()'s own
+    # docstring says re-running the same algorithm/symbol/exchange/
+    # model_type/horizon combo OVERWRITES the previous run's folder, so
+    # an mtime read after the fact could only ever reflect the LATEST
+    # training, never the run history). UTC, ISO 8601, so it sorts as a
+    # plain string and needs no timezone guessing on the read side
+    # (ml_repo.py / Models.jsx).
+    trained_at = datetime.now(timezone.utc).isoformat()
+
     config_path = os.path.join(config_dir, RUN_CONFIG_FILENAME)
-    run_config = {"run_summary": _build_run_summary(run_id, metadata)}
+    run_config = {"run_summary": _build_run_summary(run_id, metadata, trained_at)}
     run_config.update({stage: metadata.get(stage, {}) for stage in
                         ("data_prep", "split", "preprocessing", "model", "evaluation")})
     with open(config_path, "w") as f:

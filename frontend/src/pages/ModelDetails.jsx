@@ -176,6 +176,7 @@ export default function ModelDetails() {
           <div style={{ color: '#9096A0', fontSize: 13, marginTop: 2 }}>
             {algorithmLabel(data.algorithm)} · {data.symbol ? data.symbol.toUpperCase() : '—'} · {data.exchange || '—'} · {data.timeframe || '—'}
             {data.horizon != null && <> · horizon {data.horizon}</>}
+            {' · '}Trained {data.trained_at ? new Date(data.trained_at).toLocaleString() : 'unknown'}
           </div>
         </div>
       </div>

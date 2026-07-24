@@ -115,6 +115,15 @@ def _summary_row(run_id: str, config: dict) -> dict | None:
         "horizon": run_summary.get("horizon"),
         "start_date": run_summary.get("start_date"),
         "end_date": run_summary.get("end_date"),
+        # When this run was actually trained (UTC ISO 8601), written by
+        # artifact_manager.save_run() at the moment it wrote this run's
+        # config -- distinct from start_date/end_date above, which is the
+        # date range of the MARKET DATA the model trained on, not when
+        # training happened. None for any run trained before this field
+        # existed (older run_config.json files on disk simply won't have
+        # it) -- rendered as "unknown" by the frontend rather than a
+        # fabricated date.
+        "trained_at": run_summary.get("trained_at"),
         # Headline metrics for the list table -- sharpe/win_rate always
         # come from trading_metrics_summary regardless of model_type
         # (both regression and classification runs get signal-converted
