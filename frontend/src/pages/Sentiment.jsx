@@ -147,6 +147,15 @@ function timeAgo(iso) {
   return `${Math.round(seconds / 86400)}d ago`;
 }
 
+// Reddit titles come through as-typed (often lowercase) -- capitalize
+// just the first letter for display, leave the rest of the title as-is
+// (don't title-case the whole thing, that would mangle acronyms like
+// "ETF" or tickers like "BTC" inside the title).
+function capitalizeFirst(text) {
+  if (!text) return text;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 export default function Sentiment() {
   const [coins, setCoins] = useState([]);
   const [coinsLoading, setCoinsLoading] = useState(true);
@@ -178,7 +187,7 @@ export default function Sentiment() {
     if (!selectedCoin) return;
     setLoading(true);
     setError(null);
-    api.get(`/api/sentiment/${selectedCoin}`)
+    api.get(`/api/sentiment/${selectedCoin}?top_posts_limit=5`)
       .then((res) => setOverview(res.data))
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -379,16 +388,16 @@ export default function Sentiment() {
             </Panel>
           </div>
 
-          {/* Top Reddit posts -- stands in for the PDF's "News Sentiment" (no news source exists in this codebase) */}
+          {/* Top 5 Reddit posts -- stands in for the PDF's "News Sentiment" (no news source exists in this codebase) */}
           <div style={{ marginBottom: 8 }}>
-            <Panel title="Top Reddit Posts" hint='Standing in for "News Sentiment" — this system tracks Reddit, not a news wire. Sorted by Reddit score (upvotes), not sentiment.'>
+            <Panel title="Top 5 Reddit Posts" hint='Standing in for "News Sentiment" — this system tracks Reddit, not a news wire. Sorted by Reddit score (upvotes), not sentiment.'>
               <Table
                 size="small"
-                pagination={{ pageSize: 6 }}
+                pagination={false}
                 dataSource={overview.top_posts.map((r) => ({ ...r, key: r.post_id }))}
                 locale={{ emptyText: 'No posts yet for this coin.' }}
                 columns={[
-                  { title: 'Title', dataIndex: 'title', key: 'title', render: (t) => <span style={{ color: '#F5F6F7' }}>{t || '(no title)'}</span> },
+                  { title: 'Title', dataIndex: 'title', key: 'title', render: (t) => <span style={{ color: '#F5F6F7' }}>{t ? capitalizeFirst(t) : '(no title)'}</span> },
                   { title: 'Subreddit', dataIndex: 'subreddit', key: 'subreddit', render: (t) => <span style={{ color: '#9096A0' }}>r/{t}</span> },
                   {
                     title: 'Sentiment', dataIndex: 'sentiment_label', key: 'sentiment_label',
