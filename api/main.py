@@ -10,8 +10,8 @@ from the repo root (same level as crypto_pipeline/ and api/), so that
 convention as the pipeline's own run_*.bat scripts -- run from repo root.
 
 Routers are added one per module (per spec: "each module should own its
-routes"). wallets, executions, sentiment, and strategies exist so far --
-backtests/models/dashboard land here the same way as we build them, no
+routes"). wallets, executions, sentiment, strategies, and ml exist so
+far -- backtests/dashboard land here the same way as we build them, no
 restructuring needed.
 
 No /api/users, /api/auth -- intentionally absent per instructions, this
@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from api.routers import wallets, executions, sentiment, strategies
+from api.routers import wallets, executions, sentiment, strategies, ml
 
 app = FastAPI(title="Trading Platform API")
 
@@ -48,6 +48,7 @@ app.include_router(wallets.router)
 app.include_router(executions.router)
 app.include_router(sentiment.router)
 app.include_router(strategies.router)
+app.include_router(ml.router)
 
 
 @app.get("/api/health")
