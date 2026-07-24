@@ -69,7 +69,7 @@ function buildColumns(navigate) {
             <span
               onClick={(e) => {
                 e.stopPropagation();
-                navigate(`/strategies?exchange=${record.exchange}&coin=${record.symbol}`);
+                navigate(`/strategies?coin=${record.symbol}`);
               }}
               style={{ cursor: 'pointer' }}
               title="No strategy is enabled for this pair yet -- click to go enable one"
