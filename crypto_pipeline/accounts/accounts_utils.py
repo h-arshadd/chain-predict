@@ -123,7 +123,13 @@ def get_account_api_key(conn, account_name):
     """
     Return one account's current credentials, or None if account_name
     doesn't exist. Returns dict: account_name, exchange, api_key,
-    api_secret, demo, updated_at.
+    api_secret, demo, enabled, updated_at.
+
+    `enabled` is also self-healed here (not just in the API layer's
+    wallets_repo._ensure_schema()) since execution/main.py reads it
+    through this same function to decide whether a wallet is allowed to
+    open new positions -- one source of truth for the column, safe to
+    call from either place.
     """
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS accounts"))
@@ -143,7 +149,20 @@ def get_account_api_key(conn, account_name):
     conn.commit()
 
     cursor.execute(sql.SQL("""
-        SELECT account_name, exchange, api_key, api_secret, demo, updated_at
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'accounts' AND table_name = 'api_keys' AND column_name = 'enabled'
+            ) THEN
+                ALTER TABLE accounts.api_keys ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT TRUE;
+            END IF;
+        END $$;
+    """))
+    conn.commit()
+
+    cursor.execute(sql.SQL("""
+        SELECT account_name, exchange, api_key, api_secret, demo, enabled, updated_at
         FROM accounts.api_keys WHERE account_name = %s
     """), (account_name,))
     row = cursor.fetchone()
@@ -479,7 +498,10 @@ def get_account_stats(conn, account_name):
     cursor.execute(sql.SQL(
         "SELECT to_regclass('accounts.stats')"
     ))
-    if cursor.fetchone()[0] is None:
+    # RealDictCursor returns dicts, not tuples -- fetchone()[0] would
+    # KeyError here since dict keys are column names, not ints. Index by
+    # the actual column name (Postgres names it after the function call).
+    if cursor.fetchone()["to_regclass"] is None:
         cursor.close()
         return None
 

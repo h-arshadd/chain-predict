@@ -1249,12 +1249,19 @@ def get_execution_config(conn, exchange, symbol):
 
     Schema: execution.config -- ONE row per (exchange, symbol) pair.
 
-    Returns a dict with keys: initial_balance, position_size (dict:
-    type/value -- reconstructed here from the two flat
+    Returns a dict with keys: account_name, initial_balance, position_size
+    (dict: type/value -- reconstructed here from the two flat
     position_size_type/position_size_value columns so _position_size()
     in simulator.py, which expects config["position_size"] as a dict,
     keeps working unchanged), commission, slippage, allow_long,
     allow_short, max_open_positions.
+
+    account_name links this pair to a specific wallet in
+    accounts.api_keys -- which API key/secret execution/main.py uses to
+    place real orders for this pair, and whose enabled flag gates
+    whether new positions are allowed to open (see execution/main.py).
+    May be NULL for pairs configured before wallets existed -- treated
+    as "no wallet assigned, skip" at run time, not a crash.
 
     NOTE: strategy_name is NOT part of this config -- look it up from
     metadata.strategy for this (exchange, symbol) instead (see
@@ -1283,8 +1290,23 @@ def get_execution_config(conn, exchange, symbol):
     """).format(schema=sql.Identifier("execution")))
     conn.commit()
 
+    # Self-healing add, same pattern as accounts.api_keys.enabled --
+    # safe to run every call, no-ops after the first time.
     cursor.execute(sql.SQL("""
-        SELECT initial_balance, position_size_type, position_size_value,
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'execution' AND table_name = 'config' AND column_name = 'account_name'
+            ) THEN
+                ALTER TABLE execution.config ADD COLUMN account_name TEXT;
+            END IF;
+        END $$;
+    """))
+    conn.commit()
+
+    cursor.execute(sql.SQL("""
+        SELECT account_name, initial_balance, position_size_type, position_size_value,
                commission, slippage, allow_long, allow_short, max_open_positions
         FROM {schema}.config
         WHERE exchange = %s AND symbol = %s
@@ -1306,11 +1328,17 @@ def get_execution_config(conn, exchange, symbol):
 def save_execution_config(
     conn, exchange, symbol, initial_balance, position_size,
     commission, slippage, allow_long=True, allow_short=True, max_open_positions=1,
+    account_name=None,
 ):
     """
     Insert or update the execution config for this (exchange, symbol)
     pair (upsert on the (exchange, symbol) UNIQUE constraint). Same
     fields as save_simulator_config, separate "execution" schema.
+
+    account_name: which wallet (accounts.api_keys.account_name) places
+    real orders for this pair. Optional/nullable -- a pair with no
+    wallet assigned yet is skipped at run time (see execution/main.py),
+    not an error, so this stays backward-compatible with existing rows.
 
     NOTE: strategy_name is NOT a field here -- which strategy to run for
     this pair is looked up from metadata.strategy at run time instead
@@ -1320,9 +1348,10 @@ def save_execution_config(
     stored as two flat columns (position_size_type, position_size_value)
     rather than JSONB, so they're queryable/editable as plain columns.
 
-    Every registered row is always active -- there's no on/off toggle.
-    To stop execution/main.py from trading a pair, delete its row; there's
-    no partial-pause state.
+    Every registered row is always active -- there's no on/off toggle
+    here. Pausing a pair happens via the assigned wallet's `enabled`
+    flag (accounts.api_keys) instead -- see execution/main.py. To stop
+    execution/main.py from trading a pair entirely, delete its row.
     """
     cursor = conn.cursor()
 
@@ -1348,10 +1377,23 @@ def save_execution_config(
     conn.commit()
 
     cursor.execute(sql.SQL("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'execution' AND table_name = 'config' AND column_name = 'account_name'
+            ) THEN
+                ALTER TABLE execution.config ADD COLUMN account_name TEXT;
+            END IF;
+        END $$;
+    """))
+    conn.commit()
+
+    cursor.execute(sql.SQL("""
         INSERT INTO {schema}.config
             (exchange, symbol, initial_balance, position_size_type, position_size_value,
-             commission, slippage, allow_long, allow_short, max_open_positions)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             commission, slippage, allow_long, allow_short, max_open_positions, account_name)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (exchange, symbol) DO UPDATE SET
             initial_balance = EXCLUDED.initial_balance,
             position_size_type = EXCLUDED.position_size_type,
@@ -1361,11 +1403,12 @@ def save_execution_config(
             allow_long = EXCLUDED.allow_long,
             allow_short = EXCLUDED.allow_short,
             max_open_positions = EXCLUDED.max_open_positions,
+            account_name = EXCLUDED.account_name,
             updated_at = now()
     """).format(schema=sql.Identifier("execution")), (
         exchange, symbol, initial_balance,
         position_size["type"], position_size["value"],
-        commission, slippage, allow_long, allow_short, max_open_positions,
+        commission, slippage, allow_long, allow_short, max_open_positions, account_name,
     ))
     conn.commit()
     cursor.close()
