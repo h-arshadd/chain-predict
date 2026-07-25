@@ -1,15 +1,17 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Table, Input, Select, Spin, Alert } from 'antd';
+import { Table, Input, Select, Spin, Alert, Tooltip } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import {
   FundOutlined,
   ThunderboltOutlined,
   PlayCircleOutlined,
+  RocketOutlined,
   WalletOutlined,
   ExperimentOutlined,
   BarChartOutlined,
-  SearchOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons';
+import { SearchOutlined } from '@ant-design/icons';
 import { api } from '../lib/api';
 
 const MINT = '#3DDC97';
@@ -22,14 +24,7 @@ const panel = {
   borderRadius: 20,
 };
 
-const heroPanel = {
-  background: 'linear-gradient(155deg, rgba(61,220,151,0.16) 0%, rgba(19,23,27,0.85) 65%)',
-  backdropFilter: 'blur(16px)',
-  border: '1px solid rgba(61,220,151,0.2)',
-  borderRadius: 20,
-};
-
-const badgeAccents = ['#3DDC97', '#FF8A5C', '#5B9CF6', '#3DDC97', '#FF8A5C', '#5B9CF6'];
+const badgeAccents = ['#3DDC97', '#FF8A5C', '#5B9CF6', '#3DDC97', '#FF8A5C', '#5B9CF6', '#3DDC97', '#FF8A5C'];
 
 const iconBadge = (color) => ({
   width: 36, height: 36, borderRadius: 10,
@@ -43,6 +38,14 @@ const fmtMoney = (v) => (v == null ? '—' : `${v < 0 ? '-' : ''}$${Math.abs(v).
 const fmtPct = (v) => (v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`);
 const fmtCount = (v) => (v == null ? '—' : v);
 const pnlColor = (v) => (v == null ? '#F5F6F7' : v > 0 ? MINT : v < 0 ? RED : '#F5F6F7');
+
+// Same real pair_status values strategies_repo._pair_status() / the
+// Strategies page use -- kept consistent across both pages.
+const STATUS_META = {
+  live: { label: 'Live', bg: 'rgba(61,220,151,0.12)', fg: MINT },
+  disabled: { label: 'Disabled', bg: 'rgba(255,255,255,0.06)', fg: '#9096A0' },
+  conflicted: { label: 'Conflicted', bg: 'rgba(240,70,107,0.14)', fg: RED },
+};
 
 function SectionHeader({ title, subtitle }) {
   return (
@@ -110,13 +113,14 @@ export default function Dashboard() {
     });
   }, [strategies, search, coinFilter]);
 
-  // Stat cards -- simulation-only, per instruction. Execution Balance,
-  // Running Executions, and Accounts Net Realized PnL (all execution/
-  // live-account data) are dropped -- everything here is sourced from
-  // the simulator side of /api/dashboard.
+  // Exactly the 10 widgets the spec asks for. Every value is real
+  // (execution or simulator data) -- None renders as "—" / "N/A", never
+  // a fabricated number. total_backtests stays None until a real
+  // Backtests module/DB exists.
   const statCards = summary ? [
     { title: 'Total Strategies', value: fmtCount(summary.total_strategies), icon: <FundOutlined /> },
     { title: 'Active Strategies', value: fmtCount(summary.active_strategies), icon: <ThunderboltOutlined /> },
+    { title: 'Running Executions', value: fmtCount(summary.running_executions), icon: <RocketOutlined /> },
     { title: 'Running Simulations', value: fmtCount(summary.running_simulations), icon: <PlayCircleOutlined /> },
     { title: 'Connected Accounts', value: fmtCount(summary.connected_accounts), icon: <WalletOutlined /> },
     { title: 'Trained ML Models', value: fmtCount(summary.trained_ml_models), icon: <ExperimentOutlined /> },
@@ -124,6 +128,23 @@ export default function Dashboard() {
       title: `Total Backtests${summary.total_backtests == null ? ' (not available yet)' : ''}`,
       value: summary.total_backtests ?? 'N/A', icon: <BarChartOutlined />,
       valueColor: summary.total_backtests == null ? '#6B7280' : '#F5F6F7',
+    },
+    {
+      title: "Today's PnL",
+      value: fmtMoney(summary.today_pnl),
+      valueColor: pnlColor(summary.today_pnl),
+      icon: <BarChartOutlined />,
+    },
+    {
+      title: 'Overall Portfolio Value',
+      value: fmtMoney(summary.overall_portfolio_value),
+      icon: <WalletOutlined />,
+    },
+    {
+      title: 'Total Return',
+      value: fmtPct(summary.total_return_pct),
+      valueColor: pnlColor(summary.total_return_pct),
+      icon: <BarChartOutlined />,
     },
   ] : [];
 
@@ -133,32 +154,42 @@ export default function Dashboard() {
     { title: 'Exchange', dataIndex: 'exchange', key: 'exchange', render: (t) => <span style={{ color: '#9096A0' }}>{t[0].toUpperCase() + t.slice(1)}</span> },
     { title: 'Timeframe', dataIndex: 'time_horizon', key: 'time_horizon', render: (t) => <span style={{ color: '#9096A0' }}>{t}</span> },
     {
+      title: 'Current Status', dataIndex: 'pair_status', key: 'pair_status',
+      filters: Object.keys(STATUS_META).map((k) => ({ text: STATUS_META[k].label, value: k })),
+      onFilter: (value, record) => record.pair_status === value,
+      render: (status) => {
+        const meta = STATUS_META[status] || { label: status, bg: 'rgba(255,255,255,0.06)', fg: '#9096A0' };
+        return (
+          <span style={{
+            fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 8,
+            background: meta.bg, color: meta.fg,
+          }}>
+            {meta.label}
+          </span>
+        );
+      },
+    },
+    {
       title: 'Latest Return', dataIndex: 'latest_return_pct', key: 'latest_return_pct',
       sorter: (a, b) => (a.latest_return_pct ?? -Infinity) - (b.latest_return_pct ?? -Infinity),
       render: (v) => <span style={{ color: pnlColor(v), fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}>{fmtPct(v)}</span>,
     },
     {
+      title: (
+        <span>
+          Sharpe Ratio{' '}
+          <Tooltip title="Full Sharpe is computed on the Strategy Details page; not shown here to keep this list light.">
+            <InfoCircleOutlined style={{ color: '#6B7280', fontSize: 11 }} />
+          </Tooltip>
+        </span>
+      ),
+      dataIndex: 'sharpe_ratio', key: 'sharpe_ratio',
+      render: (v) => <span style={{ fontFamily: 'ui-monospace, monospace', color: '#F5F6F7' }}>{v == null ? '—' : v.toFixed(2)}</span>,
+    },
+    {
       title: 'Win Rate', dataIndex: 'win_rate_pct', key: 'win_rate_pct',
       sorter: (a, b) => (a.win_rate_pct ?? -Infinity) - (b.win_rate_pct ?? -Infinity),
       render: (v) => <span style={{ fontFamily: 'ui-monospace, monospace', color: '#F5F6F7' }}>{v == null ? '—' : `${v.toFixed(1)}%`}</span>,
-    },
-    {
-      // No real "Active/Paused/Stopped" status exists for the simulator
-      // (no exclusivity, no status column -- see dashboard_repo.py) --
-      // this is an honest "has it ever run" signal instead of an
-      // invented status.
-      title: 'Simulator', key: 'has_run',
-      filters: [{ text: 'Has run', value: true }, { text: 'Never run', value: false }],
-      onFilter: (value, record) => record.has_run === value,
-      render: (_, row) => (
-        <span style={{
-          fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 8,
-          background: row.has_run ? 'rgba(61,220,151,0.12)' : 'rgba(255,255,255,0.06)',
-          color: row.has_run ? MINT : '#9096A0',
-        }}>
-          {row.has_run ? `${row.total_trades} trade${row.total_trades === 1 ? '' : 's'}` : 'Never run'}
-        </span>
-      ),
     },
   ];
 
@@ -167,7 +198,7 @@ export default function Dashboard() {
       <div style={{ marginBottom: 24 }}>
         <h2 style={{ fontSize: 24, fontWeight: 700, color: '#F5F6F7', margin: 0 }}>Dashboard</h2>
         <p style={{ color: '#9096A0', fontSize: 14, marginTop: 4 }}>
-          System-wide overview of strategies and simulations.
+          System-wide overview of strategies, live execution, and simulation.
         </p>
       </div>
 
@@ -187,24 +218,8 @@ export default function Dashboard() {
           <Spin size="large" />
         </div>
       ) : summary ? (
-        // One flat grid -- hero card + every stat card together, same as
-        // the original layout, so they wrap evenly into rows instead of
-        // being split into separate blocks with different column counts.
-        <div style={{ display: 'grid', gridTemplateColumns: '260px repeat(auto-fit, minmax(160px, 1fr))', gap: 16, marginBottom: 28 }}>
-          <div style={{ ...heroPanel, padding: 18, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-            <div>
-              <div style={{ color: '#A8ADB8', fontSize: 12, fontWeight: 500, marginBottom: 8 }}>
-                Simulator Balance
-              </div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: '#F5F6F7', fontFamily: 'ui-monospace, monospace' }}>
-                {fmtMoney(summary.simulator_balance)}
-              </div>
-              <span style={{ color: pnlColor(summary.simulator_return_pct), fontSize: 11.5, fontWeight: 600, marginTop: 4, display: 'inline-block' }}>
-                {fmtPct(summary.simulator_return_pct)} overall
-              </span>
-            </div>
-          </div>
-
+        // One flat grid, exactly the 10 spec'd widgets.
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 16, marginBottom: 28 }}>
           {statCards.map((stat, i) => (
             <div key={stat.title} style={{ ...panel, padding: 18 }}>
               <div style={iconBadge(badgeAccents[i % badgeAccents.length])}>{stat.icon}</div>
@@ -214,23 +229,19 @@ export default function Dashboard() {
               <div style={{ color: '#9096A0', fontSize: 12.5, marginTop: 4 }}>
                 {stat.title}
               </div>
-              {stat.sub && (
-                <div style={{ color: stat.subColor || '#6B7280', fontSize: 11.5, fontWeight: 600, marginTop: 4 }}>
-                  {stat.sub}
-                </div>
-              )}
             </div>
           ))}
         </div>
       ) : null}
 
-      {/* Strategies table -- 100% simulator-sourced per instruction, shows
-          every registered strategy (no simulator_enabled filter), zero
-          stats if it has never run. */}
+      {/* Strategies table -- same real execution-first-fallback-to-
+          simulator numbers as the Strategies page (see
+          dashboard_repo.list_strategies), so this table and Strategies
+          never disagree. */}
       <div style={{ ...panel, padding: 20 }}>
         <SectionHeader
-          title="Strategies (Simulator)"
-          subtitle="Every registered strategy's simulator performance. Select one to view full details."
+          title="Strategies"
+          subtitle="Every registered strategy, with real performance from execution (live) or simulator, whichever it has actually run in. Select one to view full details."
         />
 
         {tableError && (
