@@ -17,20 +17,20 @@ Deliberately does NOT re-run preprocessing on X_new itself -- every
 fitted preprocessing object is already sitting in run["fit_objects"],
 and how they're re-applied (which columns, what order) is
 preprocessing_pipeline.py's job, not this file's. This stays a plain
-loader: read the artifacts back off disk (the single combined
-run_config.json under configs/{run_id}/, plus the model and
-preprocessing objects), hand them to the caller unchanged.
+loader: read the run_config back from Postgres (ml.run_configs, via
+crypto_pipeline.utils.db_utils.get_ml_run_config -- see
+artifact_manager.save_run()'s docstring for why config storage moved
+off disk), then read the model + preprocessing objects back off local
+disk under {models_dir}/{run_id}/, hand it all to the caller unchanged.
 """
 
-import json
 import logging
 import os
 
 import joblib
 
-from crypto_pipeline.ml.persistence.artifact_manager import (
-    ARTIFACTS_DIR, MODELS_DIR, CONFIGS_SUBDIR, RUN_CONFIG_FILENAME,
-)
+from crypto_pipeline.ml.persistence.artifact_manager import ARTIFACTS_DIR, MODELS_DIR
+from crypto_pipeline.utils.db_utils import get_db_connection, get_ml_run_config
 from crypto_pipeline.ml.regressors.registry import REGRESSORS
 from crypto_pipeline.ml.classifiers.registry import CLASSIFIERS
 from crypto_pipeline.ml.deep_learning.registry import DL_REGRESSORS, DL_CLASSIFIERS
@@ -50,26 +50,30 @@ _MODEL_KIND_REGISTRIES = {
 }
 
 
-def load_run(run_id: str, base_dir: str = ARTIFACTS_DIR, models_dir: str = MODELS_DIR) -> dict:
+def load_run(run_id: str, base_dir: str = ARTIFACTS_DIR, models_dir: str = MODELS_DIR, conn=None) -> dict:
     """
     Load everything needed to run inference for one trained run.
 
     Args:
-        run_id: the run folder/config name, e.g. from
-            artifact_manager.make_run_id() or save_run()'s return value.
-        base_dir: root artifacts folder (configs live here), defaults to
-            "artifacts" (must match whatever base_dir save_run() was
-            originally called with).
+        run_id: the run's id, e.g. from artifact_manager.make_run_id()
+            or save_run()'s return value.
+        base_dir: unused now (config comes from Postgres, not a folder
+            under base_dir) -- kept as a parameter so existing call
+            sites that still pass base_dir=... don't break.
         models_dir: root models folder (model + preprocessing files live
             here), defaults to "models" (must match whatever models_dir
             save_run() was originally called with).
+        conn: optional existing psycopg2 connection to reuse. If None,
+            a fresh connection is opened via
+            crypto_pipeline.utils.db_utils.get_db_connection() and
+            closed again before returning.
 
     Returns:
         dict:
             metadata: dict with keys "data_prep", "split", "preprocessing",
                 "model", "evaluation" -- the 5 per-stage config dicts
                 written by metadata.build_*_metadata(), read back from
-                the single configs/{run_id}/run_config.json
+                ml.run_configs (Postgres)
             model: a trained, ready-to-.predict() model instance -- the
                 exact class + algorithm metadata["model"] says was used,
                 loaded via that class's own .load() (per PDF heading
@@ -81,17 +85,19 @@ def load_run(run_id: str, base_dir: str = ARTIFACTS_DIR, models_dir: str = MODEL
             feature_columns: list[str], the exact order inference must
                 feed features in (heading 11's explicit requirement)
     """
-    config_dir = os.path.join(base_dir, CONFIGS_SUBDIR, run_id)
     run_dir = os.path.join(models_dir, run_id)
 
-    if not os.path.isdir(config_dir):
-        raise FileNotFoundError(f"No config folder found for run_id='{run_id}' at {config_dir}")
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_db_connection()
+    try:
+        metadata = get_ml_run_config(conn, run_id)
+    finally:
+        if owns_conn:
+            conn.close()
 
-    config_path = os.path.join(config_dir, RUN_CONFIG_FILENAME)
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"No run_config.json found for run_id='{run_id}' at {config_path}")
-    with open(config_path, "r") as f:
-        metadata = json.load(f)
+    if metadata is None:
+        raise FileNotFoundError(f"No run_config found in ml.run_configs for run_id='{run_id}'")
 
     model_kind = metadata["model"].get("model_type")
     # metadata.py's model builders write model_type as "regressor" /
@@ -99,7 +105,7 @@ def load_run(run_id: str, base_dir: str = ARTIFACTS_DIR, models_dir: str = MODEL
     # -- same values _MODEL_KIND_REGISTRIES keys on below.
     if model_kind not in _MODEL_KIND_REGISTRIES:
         raise ValueError(
-            f"Unknown model_kind '{model_kind}' in {config_path}. "
+            f"Unknown model_kind '{model_kind}' in ml.run_configs for run_id='{run_id}'. "
             f"Expected one of: {sorted(_MODEL_KIND_REGISTRIES.keys())}"
         )
 

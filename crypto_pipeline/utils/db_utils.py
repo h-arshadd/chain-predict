@@ -21,6 +21,7 @@ Signals/backtest tables are named like:
 import os
 import io
 import re
+import json
 import logging
 import pandas as pd
 import psycopg2
@@ -2204,3 +2205,188 @@ def save_execution_stats(conn, exchange, symbol, strategy_name, time_horizon, st
         f"Saved execution stats ({len(metric_cols)} metric column(s)): "
         f"execution.stats ({exchange}/{symbol}/{strategy_name})"
     )
+
+
+# ==========================================================
+# ML Run Configs (ml.run_configs)
+# ==========================================================
+#
+# Replaces the old artifacts/configs/{run_id}/run_config.json-on-disk
+# store. crypto_pipeline.ml.persistence.artifact_manager.save_run()
+# still writes the trained model + fitted preprocessing objects to
+# local disk under models/{run_id}/ (those are large binary artifacts,
+# not a fit for a JSONB column) -- but the combined run_config dict
+# itself (run_summary + data_prep/split/preprocessing/model/evaluation)
+# now lives here instead, one row per run_id, so the API
+# (api/repos/ml_repo.py) reads it from Postgres instead of scanning a
+# local folder. model_loader.py's load_run() (used at inference time)
+# reads from here too, for the same reason -- one source of truth for
+# "what config was this run trained with", reachable from any machine
+# running the API/pipeline against the same DB, not just the one that
+# happened to train the model.
+#
+# Same JSONB-whole-dict pattern metadata_utils.py already uses for
+# metadata.strategy.strategy_config -- run_config is stored as-is
+# (Json(run_config)) rather than broken into columns, since its shape
+# is intentionally open-ended (metadata.py's build_*_metadata()
+# builders can add fields over time without a matching ALTER TABLE
+# here).
+
+_ML_SCHEMA = "ml"
+
+
+def _json_safe(value):
+    """
+    Recursively replace float('nan')/float('inf')/float('-inf') with
+    None throughout a nested dict/list structure.
+
+    json.dumps() happily emits the bare tokens NaN/Infinity/-Infinity
+    for these (valid Python/JS, since Python's json module defaults to
+    allow_nan=True) -- but that output is NOT valid JSON per spec, and
+    Postgres's JSONB parser rejects it outright:
+
+        invalid input syntax for type json
+        DETAIL: Token "NaN" is invalid.
+
+    This showed up in practice from xgboost's own hyperparameters (e.g.
+    missing=float('nan'), its sentinel for "treat this value as a
+    missing entry") ending up in metadata["model"] and then in
+    run_config as-is. Rather than special-case xgboost, this walks the
+    whole run_config dict once, right before serialization, so any
+    algorithm's params/metrics that happen to contain NaN/inf (a
+    div-by-zero metric, an unset numeric hyperparameter, etc.) get the
+    same treatment -- stored as JSON null, which round-trips back as
+    Python None on read, same as any other genuinely-missing value.
+    """
+    if isinstance(value, float):
+        return None if (value != value or value in (float("inf"), float("-inf"))) else value
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+def _ensure_ml_run_configs_table(conn):
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {schema}").format(
+        schema=sql.Identifier(_ML_SCHEMA)
+    ))
+    cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {schema}.run_configs (
+            run_id       TEXT PRIMARY KEY,
+            model_type   TEXT,
+            model_kind   TEXT,
+            algorithm    TEXT,
+            symbol       TEXT,
+            exchange     TEXT,
+            run_config   JSONB NOT NULL,
+            trained_at   TIMESTAMPTZ,
+            created_at   TIMESTAMP NOT NULL DEFAULT now(),
+            updated_at   TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """).format(schema=sql.Identifier(_ML_SCHEMA)))
+    conn.commit()
+    cursor.close()
+
+
+def save_ml_run_config(conn, run_id: str, run_config: dict):
+    """
+    Insert or update the run_config for one trained run (upsert on
+    run_id) -- called from artifact_manager.save_run() at the same
+    point it used to write run_config.json to disk.
+
+    run_config: the full combined dict artifact_manager.save_run()
+    builds -- {"run_summary": {...}, "data_prep": {...}, "split": {...},
+    "preprocessing": {...}, "model": {...}, "evaluation": {...}} --
+    stored whole as JSONB. model_type/model_kind/algorithm/symbol/
+    exchange/trained_at are pulled out of run_config["run_summary"]
+    into their own columns purely so ml_repo.py can filter/sort with a
+    plain SQL WHERE instead of a JSONB path expression on every list
+    call -- the JSONB column stays the single source of truth for
+    everything else.
+    """
+    _ensure_ml_run_configs_table(conn)
+
+    run_summary = (run_config or {}).get("run_summary", {}) or {}
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("""
+        INSERT INTO {schema}.run_configs
+            (run_id, model_type, model_kind, algorithm, symbol, exchange, run_config, trained_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
+        ON CONFLICT (run_id) DO UPDATE SET
+            model_type = EXCLUDED.model_type,
+            model_kind = EXCLUDED.model_kind,
+            algorithm = EXCLUDED.algorithm,
+            symbol = EXCLUDED.symbol,
+            exchange = EXCLUDED.exchange,
+            run_config = EXCLUDED.run_config,
+            trained_at = EXCLUDED.trained_at,
+            updated_at = now()
+    """).format(schema=sql.Identifier(_ML_SCHEMA)), (
+        run_id,
+        run_summary.get("pipeline_type"),
+        run_summary.get("model_kind"),
+        run_summary.get("algorithm"),
+        run_summary.get("symbol"),
+        run_summary.get("exchange"),
+        Json(_json_safe(run_config), dumps=lambda v: json.dumps(v, default=str)),
+        run_summary.get("trained_at"),
+    ))
+    conn.commit()
+    cursor.close()
+    logger.info(f"Saved ML run config: {_ML_SCHEMA}.run_configs (run_id='{run_id}')")
+
+
+def get_ml_run_config(conn, run_id: str) -> dict | None:
+    """
+    Return one run's full run_config dict (same shape that used to be
+    read off run_config.json), or None if run_id doesn't exist.
+    """
+    _ensure_ml_run_configs_table(conn)
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("""
+        SELECT run_config FROM {schema}.run_configs WHERE run_id = %s
+    """).format(schema=sql.Identifier(_ML_SCHEMA)), (run_id,))
+    row = cursor.fetchone()
+    cursor.close()
+    return row[0] if row else None
+
+
+def list_ml_run_configs(conn) -> list[dict]:
+    """
+    Return every stored run's full run_config dict (same rows
+    ml_repo.py used to get by scanning artifacts/configs/*/run_config.json),
+    ordered by run_id for the same stable, deterministic ordering the
+    old alphabetical-folder-name scan gave.
+    """
+    _ensure_ml_run_configs_table(conn)
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("""
+        SELECT run_config FROM {schema}.run_configs ORDER BY run_id ASC
+    """).format(schema=sql.Identifier(_ML_SCHEMA)))
+    rows = cursor.fetchall()
+    cursor.close()
+    return [r[0] for r in rows]
+
+
+def delete_ml_run_config(conn, run_id: str) -> bool:
+    """
+    Delete one run's config row. Returns True if a row was deleted,
+    False if run_id didn't exist. Mirrors deleting a
+    artifacts/configs/{run_id}/ folder under the old disk-based store --
+    does NOT touch models/{run_id}/ on disk (model + preprocessing
+    files); callers that want a full cleanup should remove that
+    folder separately.
+    """
+    _ensure_ml_run_configs_table(conn)
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("""
+        DELETE FROM {schema}.run_configs WHERE run_id = %s
+    """).format(schema=sql.Identifier(_ML_SCHEMA)), (run_id,))
+    deleted = cursor.rowcount > 0
+    conn.commit()
+    cursor.close()
+    if deleted:
+        logger.info(f"Deleted ML run config: {_ML_SCHEMA}.run_configs (run_id='{run_id}')")
+    return deleted

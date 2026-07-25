@@ -3,9 +3,9 @@ routers/ml.py
 --------------
 /api/ml-models -- ML Models (list) + Model Details pages.
 
-No `conn=Depends(get_conn)` here, unlike every other router in this
-codebase -- trained runs live on disk (artifacts/configs/{run_id}/
-run_config.json), not in Postgres. See ml_repo.py.
+`conn=Depends(get_conn)` here now, same as every other router in this
+codebase -- trained run configs live in Postgres (ml.run_configs), not
+on local disk. See ml_repo.py.
 
 Filters mirror the person's actual dropdown: model_type is Regression /
 Classification only (timeseries is never surfaced here at all -- see
@@ -15,8 +15,9 @@ three-way split -- mlp/lstm/gru are just more algorithm options inside
 regression or classification, same as xgboost/random_forest/etc. are.
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 
+from api.core.db import get_conn
 from api.core.responses import item, list_response
 from api.schemas.ml import ModelRunSummary, ModelRunDetail
 from api.repos import ml_repo
@@ -34,6 +35,7 @@ def list_models(
     include_deep_learning: bool = True,
     algorithm: str | None = None,
     symbol: str | None = None,
+    conn=Depends(get_conn),
 ):
     if model_type is not None and model_type not in _VALID_MODEL_TYPES:
         raise HTTPException(
@@ -41,7 +43,7 @@ def list_models(
             detail=f"model_type must be one of {sorted(_VALID_MODEL_TYPES)}, got '{model_type}'",
         )
 
-    rows = ml_repo.list_runs(model_type=model_type, include_deep_learning=include_deep_learning)
+    rows = ml_repo.list_runs(conn, model_type=model_type, include_deep_learning=include_deep_learning)
 
     if algorithm is not None:
         rows = [r for r in rows if r["algorithm"] == algorithm]
@@ -55,8 +57,8 @@ def list_models(
 
 
 @router.get("/{run_id}")
-def get_model(run_id: str):
-    detail = ml_repo.get_run_detail(run_id)
+def get_model(run_id: str, conn=Depends(get_conn)):
+    detail = ml_repo.get_run_detail(conn, run_id)
     if detail is None:
         raise HTTPException(status_code=404, detail=f"Model run '{run_id}' not found")
     return item(ModelRunDetail(**detail).model_dump())

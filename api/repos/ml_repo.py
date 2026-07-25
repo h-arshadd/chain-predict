@@ -3,18 +3,18 @@ repos/ml_repo.py
 ------------------
 Read access for the ML Models (list) + Model Details pages.
 
-Unlike every other repo in this codebase, this one does NOT talk to
-Postgres. Trained runs are not stored in the DB at all -- they live on
-disk as one run_config.json per run, written by
-crypto_pipeline.ml.persistence.artifact_manager.save_run():
-
-    crypto_pipeline/ml/artifacts/configs/{run_id}/run_config.json
-
-This module scans that folder fresh on every call. Nothing here is
-hardcoded to a fixed list of run_ids or algorithms -- train a new model,
-its run_config.json shows up under artifacts/configs/, and it appears
-here on the next request with zero code changes. Delete a folder, it
-disappears the same way.
+Trained runs' configs now live in Postgres (ml.run_configs -- see
+crypto_pipeline.utils.db_utils.save_ml_run_config/get_ml_run_config/
+list_ml_run_configs), written by
+crypto_pipeline.ml.persistence.artifact_manager.save_run() at training
+time. This module used to scan artifacts/configs/{run_id}/run_config.json
+off local disk on every call; it now queries the DB instead, so the API
+can run on any machine that can reach Postgres, not just the one that
+trained the models. Nothing here is hardcoded to a fixed list of
+run_ids or algorithms -- train a new model, its row shows up in
+ml.run_configs and appears here on the next request with zero code
+changes. Delete the row (crypto_pipeline.utils.db_utils.delete_ml_run_config),
+it disappears the same way.
 
 model_type ("regression" / "classification") and whether a run is deep
 learning are both read straight off each run's own run_summary /
@@ -24,65 +24,29 @@ everywhere in this module: the person's UI has no timeseries option, and
 crypto_pipeline.ml.timeseries is a separate pipeline (darts-backed, own
 registry) that this module intentionally does not surface yet.
 
-ARTIFACTS_DIR/CONFIGS_SUBDIR/RUN_CONFIG_FILENAME are imported from
-artifact_manager.py itself rather than re-declared here, so this stays
-correct if that layout ever changes -- one source of truth for where
-runs live, same as model_loader.py already does it.
+Every function here takes a `conn` (psycopg2 connection), same
+Depends(get_conn) pattern every other repo in this codebase uses -- see
+api/core/db.py.
 """
 
-import json
 import logging
-import os
 
-from crypto_pipeline.ml.persistence.artifact_manager import (
-    ARTIFACTS_DIR, CONFIGS_SUBDIR, RUN_CONFIG_FILENAME,
-)
+from crypto_pipeline.utils.db_utils import get_ml_run_config, list_ml_run_configs
 
 logger = logging.getLogger(__name__)
-
-_CONFIGS_ROOT = os.path.join(ARTIFACTS_DIR, CONFIGS_SUBDIR)
 
 # model_kind values (run_summary["model_kind"] / model["model_type"])
 # that count as "deep learning" for the include_deep_learning filter.
 _DEEP_LEARNING_KINDS = {"deep_learning_regressor", "deep_learning_classifier"}
 
 # model_kind values this module surfaces at all. Timeseries runs are
-# read off disk like everything else here but dropped before they ever
-# reach the router -- no timeseries option exists in this UI.
+# read from the DB like everything else here but dropped before they
+# ever reach the router -- no timeseries option exists in this UI.
 _SUPPORTED_KINDS = {"regressor", "classifier"} | _DEEP_LEARNING_KINDS
 
 
 def _is_deep_learning(model_kind: str) -> bool:
     return model_kind in _DEEP_LEARNING_KINDS
-
-
-def _read_run_config(run_id: str) -> dict | None:
-    """
-    Read one run's run_config.json off disk. Returns None (not raises)
-    if the folder/file is missing or unreadable -- a run can vanish
-    between listing the directory and reading it (deleted mid-request,
-    partially written), and one bad/missing folder shouldn't 500 the
-    whole list endpoint.
-    """
-    config_path = os.path.join(_CONFIGS_ROOT, run_id, RUN_CONFIG_FILENAME)
-    if not os.path.exists(config_path):
-        return None
-    try:
-        with open(config_path, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        logger.warning(f"Skipping unreadable run_config.json for run_id='{run_id}': {e}")
-        return None
-
-
-def _list_run_ids() -> list[str]:
-    """Every subfolder under artifacts/configs/ that has a run_config.json."""
-    if not os.path.isdir(_CONFIGS_ROOT):
-        return []
-    return sorted(
-        name for name in os.listdir(_CONFIGS_ROOT)
-        if os.path.isfile(os.path.join(_CONFIGS_ROOT, name, RUN_CONFIG_FILENAME))
-    )
 
 
 def _summary_row(run_id: str, config: dict) -> dict | None:
@@ -120,9 +84,9 @@ def _summary_row(run_id: str, config: dict) -> dict | None:
         # config -- distinct from start_date/end_date above, which is the
         # date range of the MARKET DATA the model trained on, not when
         # training happened. None for any run trained before this field
-        # existed (older run_config.json files on disk simply won't have
-        # it) -- rendered as "unknown" by the frontend rather than a
-        # fabricated date.
+        # existed (older rows in ml.run_configs simply won't have it) --
+        # rendered as "unknown" by the frontend rather than a fabricated
+        # date.
         "trained_at": run_summary.get("trained_at"),
         # Headline metrics for the list table -- sharpe/win_rate always
         # come from trading_metrics_summary regardless of model_type
@@ -137,14 +101,16 @@ def _summary_row(run_id: str, config: dict) -> dict | None:
     }
 
 
-def list_runs(model_type: str | None = None, include_deep_learning: bool = True) -> list[dict]:
+def list_runs(conn, model_type: str | None = None, include_deep_learning: bool = True) -> list[dict]:
     """
-    List every trained run currently on disk, newest-folder-name-last
-    (run_id has no timestamp by design -- see artifact_manager.py's
-    make_run_id() docstring -- so this is alphabetical, not chronological;
-    the frontend can re-sort by any column it exposes).
+    List every trained run currently stored in ml.run_configs, ordered
+    by run_id (run_id has no timestamp by design -- see
+    artifact_manager.py's make_run_id() docstring -- so this is
+    alphabetical, not chronological; the frontend can re-sort by any
+    column it exposes).
 
     Args:
+        conn: psycopg2 connection (Depends(get_conn) in the router).
         model_type: "regression" | "classification" | None (no filter).
             Matches run_summary["pipeline_type"] exactly as written by
             metadata.py -- never partial/case-insensitive matched, since
@@ -157,9 +123,10 @@ def list_runs(model_type: str | None = None, include_deep_learning: bool = True)
             everything supported).
     """
     rows = []
-    for run_id in _list_run_ids():
-        config = _read_run_config(run_id)
-        if config is None:
+    for config in list_ml_run_configs(conn):
+        run_summary = (config or {}).get("run_summary", {}) or {}
+        run_id = run_summary.get("run_id")
+        if not run_id:
             continue
         row = _summary_row(run_id, config)
         if row is None:
@@ -172,10 +139,10 @@ def list_runs(model_type: str | None = None, include_deep_learning: bool = True)
     return rows
 
 
-def get_run_detail(run_id: str) -> dict | None:
+def get_run_detail(conn, run_id: str) -> dict | None:
     """
     Full detail for one run: the summary row fields plus every section
-    of run_config.json (data_prep, split, preprocessing, model,
+    of the stored run_config (data_prep, split, preprocessing, model,
     evaluation) untouched, so the detail page can show the complete
     experiment record -- feature list, train/test/val split, exact
     preprocessing steps, full hyperparameters/architecture, and the full
@@ -183,10 +150,10 @@ def get_run_detail(run_id: str) -> dict | None:
     + signal_counts) -- without this repo re-shaping or re-guessing field
     names the pipeline already wrote.
 
-    Returns None if run_id doesn't exist, its config can't be read, or
-    its model_kind isn't one this module supports (timeseries).
+    Returns None if run_id doesn't exist in ml.run_configs, or its
+    model_kind isn't one this module supports (timeseries).
     """
-    config = _read_run_config(run_id)
+    config = get_ml_run_config(conn, run_id)
     if config is None:
         return None
     summary = _summary_row(run_id, config)

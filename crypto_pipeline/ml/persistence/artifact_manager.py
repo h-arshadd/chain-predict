@@ -3,21 +3,20 @@
 """
 artifact_manager.py
 --------------------
-Owns the artifacts/ and models/ folder layout (PDF heading 11 + your
-lead's requirement: "one artifact folder and configs folder in it"),
-with trained model files kept in their own top-level models/ folder
-instead of alongside the configs.
+Owns the models/ folder layout for trained model artifacts (PDF
+heading 11), plus persisting each run's combined config to Postgres
+instead of a local configs/ folder.
 
-Layout, one folder per trained run:
+Layout:
 
-    artifacts/
-      configs/
-        {run_id}/
-          run_config.json         <- one file, all five
-                                      metadata.build_*_metadata() outputs
-                                      merged under top-level keys:
-                                      data_prep / split / preprocessing /
-                                      model / evaluation
+    Postgres:
+      ml.run_configs                one row per {run_id}, JSONB column
+                                     holding all five metadata.build_*_
+                                     metadata() outputs merged under
+                                     top-level keys: data_prep / split /
+                                     preprocessing / model / evaluation
+                                     (see crypto_pipeline.utils.db_utils.
+                                     save_ml_run_config)
 
     models/
       {run_id}/
@@ -26,21 +25,25 @@ Layout, one folder per trained run:
         model.pt                <- deep learning models (BaseNetwork/BaseClassifierNetwork)
         preprocessing.joblib     <- fitted scaler/transform objects (fit_objects)
 
-One combined JSON per run instead of one file per stage: everything
+One combined JSONB row per run instead of one file per stage: everything
 about the run (which coin/exchange/timeframe/dates it used, the split,
 the preprocessing steps, the model + hyperparams, the eval metrics) is
-readable at a glance in a single file. model_saver.py / model_loader.py
-own reading/writing model.joblib / model.pt; this file only decides
-WHERE things go and writes the config JSON, since config writing
-doesn't depend on which serialization format the model itself uses.
+readable at a glance in a single DB row, from any machine that can
+reach Postgres -- not just the one that trained the model. Model files
+themselves (model.joblib/model.pt + preprocessing.joblib) stay on local
+disk under models/{run_id}/, since they're binary artifacts db_utils.py
+doesn't try to store. model_saver.py / model_loader.py own reading/
+writing model.joblib / model.pt; this file only decides where the model
+files go and writes the config row, since config writing doesn't depend
+on which serialization format the model itself uses.
 
 run_id is a plain timestamp + algorithm slug by default (sortable,
 collision-resistant enough for a single-user pipeline) -- pass your own
-if you want a specific name. The same run_id is used as the folder name
-under both artifacts/configs/ and models/, so the two stay linked.
+if you want a specific name. The same run_id is used as the primary key
+in ml.run_configs and as the folder name under models/, so the two stay
+linked.
 """
 
-import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -64,11 +67,12 @@ _ML_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 ARTIFACTS_DIR = os.path.join(_ML_DIR, "artifacts")
 MODELS_DIR = os.path.join(_ML_DIR, "models")
-CONFIGS_SUBDIR = "configs"
 
-# Single combined config file, written under configs/{run_id}/. Its
-# top-level keys match the metadata dict passed into save_run() ("data_prep",
-# "split", "preprocessing", "model", "evaluation").
+# Legacy -- configs no longer live on disk (see module docstring: the
+# combined run_config now goes to Postgres, ml.run_configs). Kept only
+# so any old code/notebooks still importing these two names don't break
+# on import; nothing in this module writes to them anymore.
+CONFIGS_SUBDIR = "configs"
 RUN_CONFIG_FILENAME = "run_config.json"
 
 
@@ -161,70 +165,91 @@ def save_run(
     base_dir: str = ARTIFACTS_DIR,
     models_dir: str = MODELS_DIR,
     model_save_fn=None,
+    conn=None,
 ) -> dict:
     """
-    Write one complete run's artifacts to disk: a single combined config
-    JSON under {base_dir}/configs/{run_id}/run_config.json, and the
-    fitted preprocessing objects + (if model_save_fn is given) the model
-    itself under a separate {models_dir}/{run_id}/.
+    Persist one complete run: the combined run_config (run_summary +
+    data_prep/split/preprocessing/model/evaluation) goes to Postgres
+    (ml.run_configs, see crypto_pipeline.utils.db_utils.save_ml_run_config)
+    instead of a run_config.json file on disk. The fitted preprocessing
+    objects + (if model_save_fn is given) the model itself are still
+    written to local disk under {models_dir}/{run_id}/ -- those are
+    binary model artifacts (joblib/torch files), not a fit for a JSONB
+    column, so they stay on disk same as before.
 
     Args:
-        run_id: folder name for this run, e.g. from make_run_id()
+        run_id: row key in ml.run_configs, and folder name under
+            models_dir -- e.g. from make_run_id()
         metadata: dict with keys "data_prep", "split", "preprocessing",
             "model", "evaluation" -- each value is that stage's dict
             from the matching metadata.build_*_metadata() function.
             Written out as-is, merged under those same top-level keys
-            in one JSON file, with an extra "run_summary" key at the
-            top (see _build_run_summary()) pulling the
+            into one run_config dict, with an extra "run_summary" key
+            at the top (see _build_run_summary()) pulling the
             algorithm/symbol/timeframe/dates/trained_at together in one
             flat spot.
         fit_objects: list from preprocessing_pipeline.run_preprocessing()
             (fitted scalers/transforms -- persisted here so inference can
             exactly replay the same preprocessing chain, per PDF heading
             11's "exact preprocessing sequence must be recoverable")
-        base_dir: root artifacts folder (configs live here), defaults to "artifacts"
+        base_dir: unused for config storage now (config lives in
+            Postgres, not under base_dir/configs/ anymore) -- kept as a
+            parameter so existing call sites that still pass
+            base_dir=... don't break.
         models_dir: root models folder (model + preprocessing files live
-            here, kept separate from configs), defaults to "models"
+            here), defaults to "models"
         model_save_fn: optional callable(path: str) -> None that saves
             the trained model to `path` (e.g. `model.save`, since every
             BaseRegressor/BaseClassifier/BaseNetwork/BaseClassifierNetwork
             already exposes .save(path)). The correct file extension
             (.joblib / .pt / .darts) is chosen from metadata["model"]["serialization_format"].
-            If None, only the config + preprocessing objects are written
+            If None, only the config + preprocessing objects are persisted
             (useful for a dry run, or if the caller wants to call
             model.save() itself afterward).
+        conn: optional existing psycopg2 connection to reuse (e.g. a
+            connection the calling pipeline already opened for reading
+            training data). If None, a fresh connection is opened via
+            crypto_pipeline.utils.db_utils.get_db_connection() and
+            closed again before returning.
 
     Returns:
-        dict with the paths written:
+        dict with the paths/ids written:
             run_dir: str (under models_dir -- model + preprocessing files)
-            config_dir: str (under base_dir -- config json)
-            config_path: str, path to run_config.json
+            config_path: None (kept in the return dict for backward
+                compatibility with callers that log/inspect it; config no
+                longer has a filesystem path -- see run_id to look it up
+                in ml.run_configs instead)
             preprocessing_path: str
             model_path: str or None (None if model_save_fn was not given)
     """
-    run_dir = os.path.join(models_dir, run_id)
-    config_dir = os.path.join(base_dir, CONFIGS_SUBDIR, run_id)
-    os.makedirs(run_dir, exist_ok=True)
-    os.makedirs(config_dir, exist_ok=True)
+    # Local import to avoid a module-level import cycle: db_utils.py is
+    # part of crypto_pipeline.utils, which doesn't depend on ml/ at all,
+    # so importing it at call time here (rather than at the top of this
+    # file) keeps that one-directional.
+    from crypto_pipeline.utils.db_utils import get_db_connection, save_ml_run_config
 
-    # Captured here, at the moment this run's config is actually written
-    # -- NOT in main.py/the pipelines, and not read back off the
-    # filesystem later (folder mtime is unreliable: make_run_id()'s own
-    # docstring says re-running the same algorithm/symbol/exchange/
-    # model_type/horizon combo OVERWRITES the previous run's folder, so
-    # an mtime read after the fact could only ever reflect the LATEST
-    # training, never the run history). UTC, ISO 8601, so it sorts as a
-    # plain string and needs no timezone guessing on the read side
-    # (ml_repo.py / Models.jsx).
+    run_dir = os.path.join(models_dir, run_id)
+    os.makedirs(run_dir, exist_ok=True)
+
+    # Captured here, at the moment this run's config is actually
+    # persisted -- NOT in main.py/the pipelines. UTC, ISO 8601, so it
+    # sorts as a plain string and needs no timezone guessing on the read
+    # side (ml_repo.py / Models.jsx).
     trained_at = datetime.now(timezone.utc).isoformat()
 
-    config_path = os.path.join(config_dir, RUN_CONFIG_FILENAME)
     run_config = {"run_summary": _build_run_summary(run_id, metadata, trained_at)}
     run_config.update({stage: metadata.get(stage, {}) for stage in
                         ("data_prep", "split", "preprocessing", "model", "evaluation")})
-    with open(config_path, "w") as f:
-        json.dump(run_config, f, indent=2, default=str)
-    logger.info(f"Config written: {config_path}")
+
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_db_connection()
+    try:
+        save_ml_run_config(conn, run_id, run_config)
+    finally:
+        if owns_conn:
+            conn.close()
+    logger.info(f"Run config saved to ml.run_configs (run_id='{run_id}')")
 
     preprocessing_path = os.path.join(run_dir, "preprocessing.joblib")
     joblib.dump(fit_objects, preprocessing_path)
@@ -241,8 +266,7 @@ def save_run(
 
     return {
         "run_dir": run_dir,
-        "config_dir": config_dir,
-        "config_path": config_path,
+        "config_path": None,
         "preprocessing_path": preprocessing_path,
         "model_path": model_path,
     }

@@ -3,10 +3,11 @@ schemas/ml.py
 --------------
 Request/response models for /api/ml-models.
 
-Maps to one run_config.json per trained run under
-crypto_pipeline/ml/artifacts/configs/{run_id}/ (see
-crypto_pipeline.ml.persistence.metadata / artifact_manager for how each
-section is built and written). Not a DB table -- see ml_repo.py.
+Maps to one row per trained run in Postgres (ml.run_configs, see
+crypto_pipeline.utils.db_utils.save_ml_run_config/get_ml_run_config),
+written by crypto_pipeline.ml.persistence.artifact_manager.save_run()
+(see crypto_pipeline.ml.persistence.metadata for how each section is
+built). See ml_repo.py for the read side.
 
 model_type here is always "regression" or "classification" -- timeseries
 runs are filtered out before they ever reach these schemas (see
