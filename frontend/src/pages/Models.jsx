@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Table, Tag, Input, Select, Spin, Alert } from 'antd';
+import { Table, Input, Select, Spin, Alert } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { SearchOutlined, ExperimentOutlined } from '@ant-design/icons';
 import { api } from '../lib/api';
@@ -23,25 +23,6 @@ const MODEL_TYPE_OPTIONS = [
   { value: 'regression', label: 'Regression' },
   { value: 'classification', label: 'Classification' },
 ];
-
-// model_kind straight off run_config.json's model.model_type / run_summary
-// -- "regressor"/"classifier" are traditional, "deep_learning_regressor"/
-// "deep_learning_classifier" are mlp/lstm/gru. There is no separate
-// "Deployed/Training/Archived" status anywhere in this pipeline -- a run
-// on disk under artifacts/configs/ simply exists or doesn't.
-const KIND_LABELS = {
-  regressor: 'Traditional',
-  classifier: 'Traditional',
-  deep_learning_regressor: 'Deep Learning',
-  deep_learning_classifier: 'Deep Learning',
-};
-
-const KIND_COLORS = {
-  regressor: { bg: 'rgba(61,220,151,0.12)', fg: MINT },
-  classifier: { bg: 'rgba(61,220,151,0.12)', fg: MINT },
-  deep_learning_regressor: { bg: 'rgba(255,138,92,0.14)', fg: AMBER },
-  deep_learning_classifier: { bg: 'rgba(255,138,92,0.14)', fg: AMBER },
-};
 
 const fmtMetric = (v, digits = 2) => (v == null ? '—' : v.toFixed(digits));
 const fmtPct = (v) => (v == null ? '—' : `${(v * 100).toFixed(1)}%`);
@@ -68,12 +49,9 @@ export default function Models() {
     setLoading(true);
     setError(null);
     // include_deep_learning always requested as 'true' -- the Models
-    // page shows every trained run (regression + classification,
-    // traditional + deep learning) by default now. Narrowing to just
-    // traditional or just deep learning is still possible in-table via
-    // the "Kind" column's own filter (Traditional / Deep Learning),
-    // rather than a separate control that hides rows before they even
-    // load.
+    // page shows every trained run by default (regression +
+    // classification, traditional + deep learning), with no separate
+    // toggle to narrow that down.
     const params = new URLSearchParams({ limit: '500', include_deep_learning: 'true' });
     if (modelType !== 'All') params.set('model_type', modelType);
 
@@ -148,38 +126,7 @@ export default function Models() {
       sorter: (a, b) => (a.algorithm || '').localeCompare(b.algorithm || ''),
       render: (t) => <span style={{ color: '#9096A0' }}>{algorithmLabel(t)}</span>,
     },
-    {
-      title: 'Kind', dataIndex: 'model_kind', key: 'model_kind',
-      filters: [
-        { text: 'Traditional', value: 'traditional' },
-        { text: 'Deep Learning', value: 'dl' },
-      ],
-      onFilter: (value, record) => (value === 'dl' ? record.is_deep_learning : !record.is_deep_learning),
-      render: (kind) => {
-        const c = KIND_COLORS[kind] || KIND_COLORS.regressor;
-        return (
-          <Tag style={{ background: c.bg, color: c.fg, border: 'none', borderRadius: 8, fontWeight: 600 }}>
-            {KIND_LABELS[kind] || kind}
-          </Tag>
-        );
-      },
-    },
-    {
-      title: 'Model Type', dataIndex: 'model_type', key: 'model_type',
-      render: (t) => <span style={{ color: '#9096A0', textTransform: 'capitalize' }}>{t || '—'}</span>,
-    },
     { title: 'Symbol', dataIndex: 'symbol', key: 'symbol', render: (t) => <span style={{ color: '#9096A0' }}>{t ? t.toUpperCase() : '—'}</span> },
-    { title: 'Timeframe', dataIndex: 'timeframe', key: 'timeframe', render: (t) => <span style={{ color: '#9096A0' }}>{t || '—'}</span> },
-    {
-      title: 'Trained', dataIndex: 'trained_at', key: 'trained_at',
-      sorter: (a, b) => (a.trained_at || '').localeCompare(b.trained_at || ''),
-      // None for runs trained before artifact_manager.py started writing
-      // this field -- shown as "unknown" rather than a blank cell or a
-      // fabricated date, same honesty rule as every other missing field
-      // in this table.
-      render: (t) => <span style={{ color: t ? '#9096A0' : '#6B7280', fontSize: 12.5 }}>{t ? new Date(t).toLocaleString() : 'unknown'}</span>,
-    },
-    { title: 'Horizon', dataIndex: 'horizon', key: 'horizon', render: (t) => <span style={{ color: '#9096A0' }}>{t != null ? t : '—'}</span> },
     {
       title: 'Sharpe', dataIndex: 'sharpe', key: 'sharpe',
       sorter: (a, b) => (a.sharpe ?? -Infinity) - (b.sharpe ?? -Infinity),
