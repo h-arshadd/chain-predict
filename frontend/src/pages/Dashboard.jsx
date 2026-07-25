@@ -1,65 +1,19 @@
-import { Table, Tag } from 'antd';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Table, Input, Select, Spin, Alert } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import {
   FundOutlined,
   ThunderboltOutlined,
-  RocketOutlined,
   PlayCircleOutlined,
   WalletOutlined,
   ExperimentOutlined,
   BarChartOutlined,
-  DollarOutlined,
-  ArrowUpOutlined,
+  SearchOutlined,
 } from '@ant-design/icons';
-import {
-  ResponsiveContainer, LineChart, Line, AreaChart, Area,
-} from 'recharts';
+import { api } from '../lib/api';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
-
-// ---- placeholder data — replace with GET /api/dashboard once backend exists ----
-
-// Hero: Overall Portfolio Value gets the big trend chart (like the reference layout's
-// corner graph) instead of sitting flat in the stat grid.
-const portfolioTrend = [
-  { day: 'Jul 8', value: 7120 }, { day: 'Jul 10', value: 7340 },
-  { day: 'Jul 12', value: 7180 }, { day: 'Jul 14', value: 7560 },
-  { day: 'Jul 16', value: 7890 }, { day: 'Jul 18', value: 7710 },
-  { day: 'Jul 20', value: 8040 }, { day: 'Jul 22', value: 8320 },
-  { day: 'Jul 23', value: 8780 },
-];
-
-// Spec: Dashboard widgets — Total Strategies, Active Strategies, Running Executions,
-// Running Simulation, Connected Accounts, Trained ML Models, Total Backtests,
-// Today's PnL, Overall Portfolio Value, Total Return
-// (Overall Portfolio Value is promoted to the hero chart above, not repeated here)
-const statCards = [
-  { title: "Today's PnL", value: '+$114.20', icon: <DollarOutlined />, highlight: true, positive: true },
-  { title: 'Total Return', value: '+18.4%', icon: <ArrowUpOutlined />, highlight: true, positive: true },
-  { title: 'Total Strategies', value: 24, icon: <FundOutlined /> },
-  { title: 'Active Strategies', value: 9, icon: <ThunderboltOutlined /> },
-  { title: 'Running Executions', value: 6, icon: <RocketOutlined /> },
-  { title: 'Running Simulation', value: 3, icon: <PlayCircleOutlined /> },
-  { title: 'Connected Accounts', value: 2, icon: <WalletOutlined /> },
-  { title: 'Trained ML Models', value: 12, icon: <ExperimentOutlined /> },
-  { title: 'Total Backtests', value: 87, icon: <BarChartOutlined /> },
-];
-
-const sparkline = (seed) =>
-  Array.from({ length: 8 }, (_, i) => ({
-    x: i,
-    v: seed + Math.sin(i + seed) * 8 + i * (seed > 0 ? 1.5 : -1.2),
-  }));
-
-// Spec: strategies table — Strategy Name, Symbol, Exchange, Timeframe, Current Status,
-// Latest Return, Sharpe Ratio, Win Rate. Selecting a strategy opens Strategy Details.
-const strategyData = [
-  { key: '1', id: 1, name: 'BTC Momentum', symbol: 'BTCUSDT', exchange: 'Bybit', timeframe: '4h', status: 'Active', return: 12.4, sharpe: 1.8, winRate: 61 },
-  { key: '2', id: 2, name: 'ETH Mean Reversion', symbol: 'ETHUSDT', exchange: 'Binance', timeframe: '1h', status: 'Active', return: -3.2, sharpe: 0.6, winRate: 47 },
-  { key: '3', id: 3, name: 'SOL Breakout', symbol: 'SOLUSDT', exchange: 'Bybit', timeframe: '15m', status: 'Paused', return: 8.1, sharpe: 1.3, winRate: 55 },
-  { key: '4', id: 4, name: 'ADA Trend Follow', symbol: 'ADAUSDT', exchange: 'Binance', timeframe: '1d', status: 'Stopped', return: -1.1, sharpe: 0.2, winRate: 44 },
-];
 
 const panel = {
   background: 'linear-gradient(155deg, rgba(30, 36, 34, 0.8) 0%, rgba(19, 23, 27, 0.8) 100%)',
@@ -73,12 +27,9 @@ const heroPanel = {
   backdropFilter: 'blur(16px)',
   border: '1px solid rgba(61,220,151,0.2)',
   borderRadius: 20,
-  boxShadow: '0 0 40px -12px rgba(61,220,151,0.25)',
 };
 
-// Cycles warm/cool accents across the widget row so it reads like the reference's
-// amber + mint + blue glow, not a single flat tone.
-const badgeAccents = ['#3DDC97', '#FF8A5C', '#5B9CF6', '#3DDC97', '#FF8A5C', '#5B9CF6', '#3DDC97', '#FF8A5C', '#5B9CF6'];
+const badgeAccents = ['#3DDC97', '#FF8A5C', '#5B9CF6', '#3DDC97', '#FF8A5C', '#5B9CF6'];
 
 const iconBadge = (color) => ({
   width: 36, height: 36, borderRadius: 10,
@@ -88,134 +39,238 @@ const iconBadge = (color) => ({
   fontSize: 16, marginBottom: 14,
 });
 
-function SectionHeader({ title }) {
+const fmtMoney = (v) => (v == null ? '—' : `${v < 0 ? '-' : ''}$${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+const fmtPct = (v) => (v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`);
+const fmtCount = (v) => (v == null ? '—' : v);
+const pnlColor = (v) => (v == null ? '#F5F6F7' : v > 0 ? MINT : v < 0 ? RED : '#F5F6F7');
+
+function SectionHeader({ title, subtitle }) {
   return (
     <div style={{ marginBottom: 18 }}>
       <h3 style={{ fontSize: 19, fontWeight: 700, color: '#F5F6F7', margin: 0 }}>{title}</h3>
+      {subtitle && <p style={{ color: '#9096A0', fontSize: 13, margin: '4px 0 0' }}>{subtitle}</p>}
     </div>
   );
 }
 
-const statusColors = {
-  Active: { bg: 'rgba(61,220,151,0.12)', fg: MINT },
-  Paused: { bg: 'rgba(255,138,92,0.14)', fg: '#FF8A5C' },
-  Stopped: { bg: 'rgba(255,255,255,0.06)', fg: '#9096A0' },
+const iconBtnStyle = {
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  width: 30, height: 30, borderRadius: 8, border: '1px solid rgba(255,255,255,0.08)',
+  background: 'rgba(255,255,255,0.03)', color: '#9096A0', cursor: 'pointer',
 };
-
-function buildColumns() {
-  return [
-    { title: 'Strategy Name', dataIndex: 'name', key: 'name', render: (t) => <span style={{ fontWeight: 600, color: '#F5F6F7' }}>{t}</span> },
-    { title: 'Symbol', dataIndex: 'symbol', key: 'symbol', render: (t) => <span style={{ color: '#9096A0' }}>{t}</span> },
-    { title: 'Exchange', dataIndex: 'exchange', key: 'exchange', render: (t) => <span style={{ color: '#9096A0' }}>{t}</span> },
-    { title: 'Timeframe', dataIndex: 'timeframe', key: 'timeframe', render: (t) => <span style={{ color: '#9096A0' }}>{t}</span> },
-    {
-      title: 'Current Status', dataIndex: 'status', key: 'status',
-      render: (status) => {
-        const c = statusColors[status] || statusColors.Stopped;
-        return (
-          <Tag style={{ background: c.bg, color: c.fg, border: 'none', borderRadius: 8, fontWeight: 600 }}>
-            {status}
-          </Tag>
-        );
-      },
-    },
-    {
-      title: 'Latest Return', dataIndex: 'return', key: 'return',
-      render: (val) => (
-        <span style={{ color: val >= 0 ? MINT : RED, fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}>
-          {val >= 0 ? '+' : ''}{val}%
-        </span>
-      ),
-    },
-    { title: 'Sharpe Ratio', dataIndex: 'sharpe', key: 'sharpe', render: (v) => <span style={{ fontFamily: 'ui-monospace, monospace', color: '#F5F6F7' }}>{v}</span> },
-    { title: 'Win Rate', dataIndex: 'winRate', key: 'winRate', render: (v) => <span style={{ fontFamily: 'ui-monospace, monospace', color: '#F5F6F7' }}>{v}%</span> },
-    {
-      title: 'Trend', key: 'trend',
-      render: (_, row) => (
-        <ResponsiveContainer width={90} height={32}>
-          <LineChart data={sparkline(row.return)}>
-            <Line type="monotone" dataKey="v" stroke={row.return >= 0 ? MINT : RED} strokeWidth={2} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
-      ),
-    },
-  ];
-}
 
 export default function Dashboard() {
   const navigate = useNavigate();
+
+  const [summary, setSummary] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState(null);
+
+  const [strategies, setStrategies] = useState([]);
+  const [tableLoading, setTableLoading] = useState(true);
+  const [tableError, setTableError] = useState(null);
+
+  const [search, setSearch] = useState('');
+  const [coinFilter, setCoinFilter] = useState('All');
+
+  const loadSummary = useCallback(() => {
+    setSummaryLoading(true);
+    setSummaryError(null);
+    api.get('/api/dashboard')
+      .then((res) => setSummary(res.data))
+      .catch((err) => setSummaryError(err.message))
+      .finally(() => setSummaryLoading(false));
+  }, []);
+
+  const loadStrategies = useCallback(() => {
+    setTableLoading(true);
+    setTableError(null);
+    api.get('/api/dashboard/strategies?limit=500')
+      .then((res) => setStrategies(res.data))
+      .catch((err) => setTableError(err.message))
+      .finally(() => setTableLoading(false));
+  }, []);
+
+  useEffect(() => {
+    loadSummary();
+    loadStrategies();
+  }, [loadSummary, loadStrategies]);
+
+  const coinOptions = useMemo(() => [
+    { value: 'All', label: 'All coins' },
+    ...[...new Set(strategies.map((s) => s.coin))].sort().map((c) => ({ value: c, label: c.toUpperCase() })),
+  ], [strategies]);
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    return strategies.filter((s) => {
+      const matchesSearch = !q || s.strategy_name.toLowerCase().includes(q);
+      const matchesCoin = coinFilter === 'All' || s.coin === coinFilter;
+      return matchesSearch && matchesCoin;
+    });
+  }, [strategies, search, coinFilter]);
+
+  // Stat cards -- simulation-only, per instruction. Execution Balance,
+  // Running Executions, and Accounts Net Realized PnL (all execution/
+  // live-account data) are dropped -- everything here is sourced from
+  // the simulator side of /api/dashboard.
+  const statCards = summary ? [
+    { title: 'Total Strategies', value: fmtCount(summary.total_strategies), icon: <FundOutlined /> },
+    { title: 'Active Strategies', value: fmtCount(summary.active_strategies), icon: <ThunderboltOutlined /> },
+    { title: 'Running Simulations', value: fmtCount(summary.running_simulations), icon: <PlayCircleOutlined /> },
+    { title: 'Connected Accounts', value: fmtCount(summary.connected_accounts), icon: <WalletOutlined /> },
+    { title: 'Trained ML Models', value: fmtCount(summary.trained_ml_models), icon: <ExperimentOutlined /> },
+    {
+      title: `Total Backtests${summary.total_backtests == null ? ' (not available yet)' : ''}`,
+      value: summary.total_backtests ?? 'N/A', icon: <BarChartOutlined />,
+      valueColor: summary.total_backtests == null ? '#6B7280' : '#F5F6F7',
+    },
+  ] : [];
+
+  const columns = [
+    { title: 'Strategy Name', dataIndex: 'strategy_name', key: 'strategy_name', sorter: (a, b) => a.strategy_name.localeCompare(b.strategy_name), render: (t) => <span style={{ fontWeight: 600, color: '#F5F6F7' }}>{t}</span> },
+    { title: 'Symbol', dataIndex: 'coin', key: 'coin', render: (t) => <span style={{ color: '#9096A0' }}>{t.toUpperCase()}</span> },
+    { title: 'Exchange', dataIndex: 'exchange', key: 'exchange', render: (t) => <span style={{ color: '#9096A0' }}>{t[0].toUpperCase() + t.slice(1)}</span> },
+    { title: 'Timeframe', dataIndex: 'time_horizon', key: 'time_horizon', render: (t) => <span style={{ color: '#9096A0' }}>{t}</span> },
+    {
+      title: 'Latest Return', dataIndex: 'latest_return_pct', key: 'latest_return_pct',
+      sorter: (a, b) => (a.latest_return_pct ?? -Infinity) - (b.latest_return_pct ?? -Infinity),
+      render: (v) => <span style={{ color: pnlColor(v), fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}>{fmtPct(v)}</span>,
+    },
+    {
+      title: 'Win Rate', dataIndex: 'win_rate_pct', key: 'win_rate_pct',
+      sorter: (a, b) => (a.win_rate_pct ?? -Infinity) - (b.win_rate_pct ?? -Infinity),
+      render: (v) => <span style={{ fontFamily: 'ui-monospace, monospace', color: '#F5F6F7' }}>{v == null ? '—' : `${v.toFixed(1)}%`}</span>,
+    },
+    {
+      // No real "Active/Paused/Stopped" status exists for the simulator
+      // (no exclusivity, no status column -- see dashboard_repo.py) --
+      // this is an honest "has it ever run" signal instead of an
+      // invented status.
+      title: 'Simulator', key: 'has_run',
+      filters: [{ text: 'Has run', value: true }, { text: 'Never run', value: false }],
+      onFilter: (value, record) => record.has_run === value,
+      render: (_, row) => (
+        <span style={{
+          fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 8,
+          background: row.has_run ? 'rgba(61,220,151,0.12)' : 'rgba(255,255,255,0.06)',
+          color: row.has_run ? MINT : '#9096A0',
+        }}>
+          {row.has_run ? `${row.total_trades} trade${row.total_trades === 1 ? '' : 's'}` : 'Never run'}
+        </span>
+      ),
+    },
+  ];
 
   return (
     <div style={{ paddingTop: 8 }}>
       <div style={{ marginBottom: 24 }}>
         <h2 style={{ fontSize: 24, fontWeight: 700, color: '#F5F6F7', margin: 0 }}>Dashboard</h2>
         <p style={{ color: '#9096A0', fontSize: 14, marginTop: 4 }}>
-          System-wide overview of strategies, executions, and models.
+          System-wide overview of strategies and simulations.
         </p>
       </div>
 
-      {/* Overall Portfolio Value — compact card with mini trend chart in the corner */}
-      <div style={{ display: 'grid', gridTemplateColumns: '260px repeat(auto-fit, minmax(160px, 1fr))', gap: 16, marginBottom: 28 }}>
-        <div style={{ ...heroPanel, padding: 18, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-          <div>
-            <div style={{ color: '#A8ADB8', fontSize: 12, fontWeight: 500, marginBottom: 8 }}>
-              Overall Portfolio Value
+      {summaryError && (
+        <Alert
+          type="error"
+          message="Couldn't load dashboard summary"
+          description={summaryError}
+          action={<button onClick={loadSummary} style={iconBtnStyle}>Retry</button>}
+          style={{ marginBottom: 20 }}
+          showIcon
+        />
+      )}
+
+      {summaryLoading ? (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}>
+          <Spin size="large" />
+        </div>
+      ) : summary ? (
+        // One flat grid -- hero card + every stat card together, same as
+        // the original layout, so they wrap evenly into rows instead of
+        // being split into separate blocks with different column counts.
+        <div style={{ display: 'grid', gridTemplateColumns: '260px repeat(auto-fit, minmax(160px, 1fr))', gap: 16, marginBottom: 28 }}>
+          <div style={{ ...heroPanel, padding: 18, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ color: '#A8ADB8', fontSize: 12, fontWeight: 500, marginBottom: 8 }}>
+                Simulator Balance
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: '#F5F6F7', fontFamily: 'ui-monospace, monospace' }}>
+                {fmtMoney(summary.simulator_balance)}
+              </div>
+              <span style={{ color: pnlColor(summary.simulator_return_pct), fontSize: 11.5, fontWeight: 600, marginTop: 4, display: 'inline-block' }}>
+                {fmtPct(summary.simulator_return_pct)} overall
+              </span>
             </div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: '#F5F6F7', fontFamily: 'ui-monospace, monospace' }}>
-              $8,780.42
-            </div>
-            <span style={{
-              color: MINT, fontSize: 11.5, fontWeight: 600, marginTop: 4,
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-            }}>
-              <ArrowUpOutlined style={{ fontSize: 9 }} /> +1.32% today
-            </span>
           </div>
 
-          <ResponsiveContainer width="100%" height={44}>
-            <AreaChart data={portfolioTrend} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="portfolioGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={MINT} stopOpacity={0.4} />
-                  <stop offset="95%" stopColor={MINT} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <Area type="monotone" dataKey="value" stroke={MINT} strokeWidth={2} fill="url(#portfolioGrad)" />
-            </AreaChart>
-          </ResponsiveContainer>
+          {statCards.map((stat, i) => (
+            <div key={stat.title} style={{ ...panel, padding: 18 }}>
+              <div style={iconBadge(badgeAccents[i % badgeAccents.length])}>{stat.icon}</div>
+              <div style={{ fontSize: 22, fontWeight: 700, fontFamily: 'ui-monospace, monospace', color: stat.valueColor || '#F5F6F7' }}>
+                {stat.value}
+              </div>
+              <div style={{ color: '#9096A0', fontSize: 12.5, marginTop: 4 }}>
+                {stat.title}
+              </div>
+              {stat.sub && (
+                <div style={{ color: stat.subColor || '#6B7280', fontSize: 11.5, fontWeight: 600, marginTop: 4 }}>
+                  {stat.sub}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Strategies table -- 100% simulator-sourced per instruction, shows
+          every registered strategy (no simulator_enabled filter), zero
+          stats if it has never run. */}
+      <div style={{ ...panel, padding: 20 }}>
+        <SectionHeader
+          title="Strategies (Simulator)"
+          subtitle="Every registered strategy's simulator performance. Select one to view full details."
+        />
+
+        {tableError && (
+          <Alert
+            type="error"
+            message="Couldn't load strategies"
+            description={tableError}
+            action={<button onClick={loadStrategies} style={iconBtnStyle}>Retry</button>}
+            style={{ marginBottom: 16 }}
+            showIcon
+          />
+        )}
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
+          <Input
+            placeholder="Search by strategy name"
+            prefix={<SearchOutlined style={{ color: '#6B7280', marginRight: 4 }} />}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ maxWidth: 280, borderRadius: 999 }}
+          />
+          <Select value={coinFilter} onChange={setCoinFilter} options={coinOptions} style={{ width: 160 }} />
         </div>
 
-
-        {statCards.map((stat, i) => (
-          <div key={stat.title} style={{ ...panel, padding: 18 }}>
-            <div style={iconBadge(badgeAccents[i % badgeAccents.length])}>{stat.icon}</div>
-            <div
-              style={{
-                fontSize: 22, fontWeight: 700, fontFamily: 'ui-monospace, monospace',
-                color: stat.positive ? MINT : '#F5F6F7',
-              }}
-            >
-              {stat.value}
-            </div>
-            <div style={{ color: '#9096A0', fontSize: 12.5, marginTop: 4 }}>
-              {stat.title}
-            </div>
+        {tableLoading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '60px 0' }}>
+            <Spin size="large" />
           </div>
-        ))}
-      </div>
-
-      {/* Strategies table — main section per spec, row click -> Strategy Details */}
-      <div style={{ ...panel, padding: 20 }}>
-        <SectionHeader title="Strategies" />
-        <Table
-          columns={buildColumns()}
-          dataSource={strategyData}
-          pagination={false}
-          onRow={(row) => ({
-            onClick: () => navigate(`/strategies/${row.id}`),
-            style: { cursor: 'pointer' },
-          })}
-        />
+        ) : (
+          <Table
+            columns={columns}
+            dataSource={filtered.map((s) => ({ ...s, key: s.strategy_id }))}
+            pagination={{ pageSize: 10 }}
+            locale={{ emptyText: 'No strategies configured yet.' }}
+            onRow={(row) => ({
+              onClick: () => navigate(`/strategies/${row.strategy_id}`),
+              style: { cursor: 'pointer' },
+            })}
+          />
+        )}
       </div>
     </div>
   );
