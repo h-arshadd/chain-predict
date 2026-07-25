@@ -2,11 +2,21 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Tag, Spin, Alert } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
+import {
+  BarChart, Bar, PieChart, Pie, Cell,
+  ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+} from 'recharts';
 import { api } from '../lib/api';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
 const AMBER = '#FF8A5C';
+const BLUE = '#4D9DE0';
+
+const tooltipStyle = { background: '#161B21', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, fontSize: 12 };
+const axisStyle = { fill: '#6B7280', fontSize: 11 };
+
+const SIGNAL_COLORS = { Buy: MINT, Sell: RED, Hold: '#6B7280' };
 
 const KIND_LABELS = {
   regressor: 'Traditional Regressor',
@@ -79,6 +89,14 @@ function PillList({ items, color, mono }) {
           {it}
         </span>
       ))}
+    </div>
+  );
+}
+
+function EmptyChart({ text }) {
+  return (
+    <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6B7280', fontSize: 13, textAlign: 'center', padding: '0 20px' }}>
+      {text}
     </div>
   );
 }
@@ -156,6 +174,43 @@ export default function ModelDetails() {
   const architecture = model.architecture || null;
   const training = model.training || null;
   const classes = model.classes || null;
+
+  // Chart data -- derived from the same dicts the key/value panels below
+  // already read (ml_metrics / trading_metrics_summary / signal_counts /
+  // trade_summary.win_loss). No new API fields needed; this is purely a
+  // second, visual rendering of data that was previously only shown as
+  // rows of numbers. Values are filtered to numbers only (some metrics
+  // can be null when not computed for a given run) so a chart never
+  // tries to plot a missing metric as a zero-height bar.
+  const mlMetricsChartData = Object.entries(mlMetrics)
+    .filter(([, v]) => typeof v === 'number')
+    .map(([k, v]) => ({ name: fmtMetricName(k), value: v }));
+
+  // Trading metrics mixes very different scales in one dict (sharpe ~
+  // -3..3, comp/max_drawdown as fractions, num_trades in the hundreds)
+  // -- charting them all on one axis would flatten the small ones to
+  // nothing, so this is split into "ratio-like" metrics (sharpe, sortino,
+  // profit_factor, etc. -- roughly -5..10 range) and "percentage" metrics
+  // (comp, max_drawdown, win_rate -- fractions of 1) as two separate bar
+  // charts instead of guessing a shared scale.
+  const _PERCENT_KEYS = new Set(['comp', 'max_drawdown', 'win_rate', 'cagr', 'volatility']);
+  const tradingRatioChartData = Object.entries(tradingMetrics)
+    .filter(([k, v]) => typeof v === 'number' && !_PERCENT_KEYS.has(k))
+    .map(([k, v]) => ({ name: fmtMetricName(k), value: v }));
+  const tradingPercentChartData = Object.entries(tradingMetrics)
+    .filter(([k, v]) => typeof v === 'number' && _PERCENT_KEYS.has(k))
+    .map(([k, v]) => ({ name: fmtMetricName(k), value: v * 100 }));
+
+  const signalChartData = Object.entries(signalCounts)
+    .filter(([, v]) => typeof v === 'number')
+    .map(([k, v]) => ({ name: k, value: v }));
+
+  const winLossChartData = (winLoss.wins != null || winLoss.losses != null)
+    ? [
+        { name: 'Wins', value: winLoss.wins || 0 },
+        { name: 'Losses', value: winLoss.losses || 0 },
+      ]
+    : [];
 
   return (
     <div style={{ paddingTop: 8 }}>
@@ -278,9 +333,118 @@ export default function ModelDetails() {
         )}
       </div>
 
-      {/* ML Metrics + Trading Metrics */}
+      {/* ML Metrics + Trading Metrics -- charted. Exact figures are still
+          the tables below (rounding in a bar's tooltip is fine, rounding
+          in the source-of-truth table is not), so these are a visual
+          companion to that data, not a replacement for it. */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
         <Panel title="ML Metrics">
+          {mlMetricsChartData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={mlMetricsChartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                <XAxis dataKey="name" tick={axisStyle} axisLine={false} tickLine={false} />
+                <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmtNum(v)} />
+                <Bar dataKey="value" radius={[6, 6, 6, 6]} fill={MINT} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <EmptyChart text="No ML metrics recorded for this run." />
+          )}
+        </Panel>
+        <Panel title="Trading Metrics (signal-converted backtest)">
+          {tradingRatioChartData.length > 0 || tradingPercentChartData.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {tradingRatioChartData.length > 0 && (
+                <ResponsiveContainer width="100%" height={110}>
+                  <BarChart data={tradingRatioChartData} layout="vertical" margin={{ top: 0, right: 12, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
+                    <XAxis type="number" tick={axisStyle} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" tick={axisStyle} axisLine={false} tickLine={false} width={100} />
+                    <Tooltip contentStyle={tooltipStyle} formatter={(v) => fmtNum(v, 2)} />
+                    <Bar dataKey="value" radius={[0, 6, 6, 0]}>
+                      {tradingRatioChartData.map((entry, i) => (
+                        <Cell key={i} fill={entry.value >= 0 ? MINT : RED} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+              {tradingPercentChartData.length > 0 && (
+                <ResponsiveContainer width="100%" height={110}>
+                  <BarChart data={tradingPercentChartData} layout="vertical" margin={{ top: 0, right: 12, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
+                    <XAxis type="number" tick={axisStyle} axisLine={false} tickLine={false} tickFormatter={(v) => `${v.toFixed(0)}%`} />
+                    <YAxis type="category" dataKey="name" tick={axisStyle} axisLine={false} tickLine={false} width={100} />
+                    <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${v.toFixed(2)}%`} />
+                    <Bar dataKey="value" radius={[0, 6, 6, 0]}>
+                      {tradingPercentChartData.map((entry, i) => (
+                        <Cell key={i} fill={entry.value >= 0 ? MINT : RED} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          ) : (
+            <EmptyChart text="No trading metrics recorded for this run." />
+          )}
+        </Panel>
+      </div>
+
+      {/* Signal Distribution + Win/Loss -- both are small categorical
+          counts (2-3 buckets), so a bar chart and a donut are enough;
+          no need for anything more elaborate than that. */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+        <Panel title="Signal Distribution">
+          {signalChartData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={signalChartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                <XAxis dataKey="name" tick={axisStyle} axisLine={false} tickLine={false} />
+                <YAxis tick={axisStyle} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip contentStyle={tooltipStyle} />
+                <Bar dataKey="value" radius={[6, 6, 6, 6]}>
+                  {signalChartData.map((entry, i) => (
+                    <Cell key={i} fill={SIGNAL_COLORS[entry.name] || BLUE} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <EmptyChart text="No signal counts recorded for this run." />
+          )}
+        </Panel>
+        <Panel title="Win / Loss">
+          {winLossChartData.length > 0 && (winLossChartData[0].value + winLossChartData[1].value) > 0 ? (
+            <ResponsiveContainer width="100%" height={200}>
+              <PieChart>
+                <Pie
+                  data={winLossChartData}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius={50}
+                  outerRadius={78}
+                  paddingAngle={2}
+                >
+                  {winLossChartData.map((entry, i) => (
+                    <Cell key={i} fill={entry.name === 'Wins' ? MINT : RED} />
+                  ))}
+                </Pie>
+                <Tooltip contentStyle={tooltipStyle} />
+                <Legend wrapperStyle={{ fontSize: 12, color: '#9096A0' }} />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <EmptyChart text="No trade win/loss data recorded for this run." />
+          )}
+        </Panel>
+      </div>
+
+      {/* ML Metrics + Trading Metrics (exact values) */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+        <Panel title="ML Metrics (exact values)">
           {Object.keys(mlMetrics).length > 0 ? (
             Object.entries(mlMetrics).map(([k, v]) => (
               <KeyValue key={k} label={fmtMetricName(k)} value={fmtNum(v)} mono />
@@ -289,7 +453,7 @@ export default function ModelDetails() {
             <span style={{ color: '#6B7280', fontSize: 13 }}>No ML metrics recorded for this run.</span>
           )}
         </Panel>
-        <Panel title="Trading Metrics (signal-converted backtest)">
+        <Panel title="Trading Metrics (exact values)">
           {Object.keys(tradingMetrics).length > 0 ? (
             Object.entries(tradingMetrics).map(([k, v]) => (
               <KeyValue
