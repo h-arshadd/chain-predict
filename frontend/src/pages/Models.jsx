@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Table, Tag, Input, Select, Switch, Spin, Alert } from 'antd';
+import { Table, Tag, Input, Select, Spin, Alert } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { SearchOutlined, ExperimentOutlined } from '@ant-design/icons';
 import { api } from '../lib/api';
@@ -62,20 +62,26 @@ export default function Models() {
 
   const [search, setSearch] = useState('');
   const [modelType, setModelType] = useState('All');
-  const [includeDeepLearning, setIncludeDeepLearning] = useState(true);
   const [symbolFilter, setSymbolFilter] = useState('All');
 
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    const params = new URLSearchParams({ limit: '500', include_deep_learning: String(includeDeepLearning) });
+    // include_deep_learning always requested as 'true' -- the Models
+    // page shows every trained run (regression + classification,
+    // traditional + deep learning) by default now. Narrowing to just
+    // traditional or just deep learning is still possible in-table via
+    // the "Kind" column's own filter (Traditional / Deep Learning),
+    // rather than a separate control that hides rows before they even
+    // load.
+    const params = new URLSearchParams({ limit: '500', include_deep_learning: 'true' });
     if (modelType !== 'All') params.set('model_type', modelType);
 
     api.get(`/api/ml-models?${params.toString()}`)
       .then((res) => setRuns(res.data))
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [modelType, includeDeepLearning]);
+  }, [modelType]);
 
   useEffect(() => {
     load();
@@ -195,7 +201,7 @@ export default function Models() {
       <div style={{ marginBottom: 24 }}>
         <h2 style={{ fontSize: 24, fontWeight: 700, color: '#F5F6F7', margin: 0 }}>Machine Learning</h2>
         <p style={{ color: '#9096A0', fontSize: 14, marginTop: 4 }}>
-          Every trained run currently saved on disk. Select one to inspect its dataset, training, and evaluation record.
+          Every trained run currently stored. Select one to inspect its dataset, training, and evaluation record.
         </p>
       </div>
 
@@ -229,10 +235,6 @@ export default function Models() {
         />
         <Select value={modelType} onChange={setModelType} options={MODEL_TYPE_OPTIONS} style={{ width: 190 }} />
         <Select value={symbolFilter} onChange={setSymbolFilter} options={symbolOptions} style={{ width: 160 }} />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 4 }}>
-          <Switch checked={includeDeepLearning} onChange={setIncludeDeepLearning} size="small" />
-          <span style={{ color: '#9096A0', fontSize: 13 }}>Include deep learning models</span>
-        </div>
       </div>
 
       {/* Table -- overflow: hidden keeps the table's own corners/scrollbar
