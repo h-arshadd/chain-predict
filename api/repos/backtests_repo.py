@@ -101,6 +101,31 @@ def _parse_date(value):
     raise ValueError(f"Unrecognized date format: {value!r}")
 
 
+def _validate_backtest_dates(config: dict) -> None:
+    """
+    Reject nonsensical date ranges before a backtest is even queued,
+    rather than letting run_backtest_job() silently truncate an
+    end_date that's in the future down to whatever data happens to
+    exist right now (get_data() falls back to a live exchange fetch
+    for any gap between the DB and end_date, so a future end_date
+    doesn't error -- it just quietly returns less data than requested
+    and the run still reports "completed").
+
+    Raises ValueError, which the router turns into a 400.
+    """
+    start_date = _parse_date(config["start_date"]) if config.get("start_date") not in (None, "now") else None
+    end_date = _parse_date(config["end_date"]) if config.get("end_date") not in (None, "now") else None
+    now = datetime.utcnow()
+
+    if end_date is not None and end_date > now:
+        raise ValueError(
+            f"end_date {end_date:%Y-%m-%d} is in the future -- a backtest can only run "
+            f"over historical data up to now ({now:%Y-%m-%d})."
+        )
+    if start_date is not None and end_date is not None and start_date >= end_date:
+        raise ValueError("start_date must be before end_date.")
+
+
 def create_backtest_request(conn, strategy_id: int, overrides: dict) -> dict:
     """
     Register a new backtest request (metadata.backtest, status
@@ -133,6 +158,8 @@ def create_backtest_request(conn, strategy_id: int, overrides: dict) -> dict:
 
     config = dict(_default_backtest_config())
     config.update({k: v for k, v in overrides.items() if v is not None})
+
+    _validate_backtest_dates(config)
 
     backtest_id = insert_backtest(
         conn,
@@ -215,6 +242,25 @@ def run_backtest_job(backtest_id: int):
         ohlcv_1m = get_candles_from_db(conn, exchange, symbol, config["start_date"], config["end_date"])
         if ohlcv_1m.empty:
             fail_backtest(conn, backtest_id, f"No 1-minute data available for {exchange}/{symbol} in that date range.")
+            return
+
+        # get_data()/get_candles_from_db() don't error on a partially
+        # covered range -- they just return whatever data exists, which
+        # could be a small slice of what was actually requested (e.g. a
+        # start_date before the DB's earliest stored candle, or an
+        # end_date past what's been ingested/lives in the future). Check
+        # actual coverage against the request so a partial window fails
+        # loudly instead of quietly running on less data than asked for.
+        actual_start = ohlcv_1m["datetime"].min()
+        actual_end = ohlcv_1m["datetime"].max()
+        missing_start = actual_start > config["start_date"] + pd.Timedelta(days=1)
+        missing_end = actual_end < config["end_date"] - pd.Timedelta(days=1)
+        if missing_start or missing_end:
+            fail_backtest(
+                conn, backtest_id,
+                f"Requested {config['start_date']:%Y-%m-%d} \u2192 {config['end_date']:%Y-%m-%d}, "
+                f"but {exchange}/{symbol} only has data from {actual_start:%Y-%m-%d} to {actual_end:%Y-%m-%d}."
+            )
             return
 
         result = run_backtest(ohlcv_1m, signals, config)

@@ -33,7 +33,15 @@ def create_backtest(payload: BacktestRequestIn, background_tasks: BackgroundTask
     try:
         row = backtests_repo.create_backtest_request(conn, payload.strategy_id, overrides)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        # _validate_backtest_dates() raises "end_date is in the future"/
+        # "start_date must be before end_date" -- a bad request (400).
+        # get_strategy() returning None raises "strategy_id ... not
+        # found" -- genuinely missing (404). Distinguish on message
+        # content since both currently raise plain ValueError; a bad
+        # date range is a client input error, not a missing resource.
+        if "not found" in str(exc):
+            raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc))
 
     background_tasks.add_task(backtests_repo.run_backtest_job, row["backtest_id"])
     return item(BacktestSummary(**row).model_dump())

@@ -87,6 +87,22 @@ export const themeConfig = {
       optionSelectedColor: colors.textPrimary,
       optionActiveBg: 'rgba(255, 255, 255, 0.06)',
     },
+    DatePicker: {
+      colorBgContainer: 'rgba(255, 255, 255, 0.04)',
+      colorBgElevated: colors.panelAlt,
+      colorBorder: colors.border,
+      colorText: colors.textPrimary,
+      colorTextPlaceholder: colors.textTertiary,
+      colorTextDisabled: colors.textTertiary,
+      activeBorderColor: colors.mint,
+      hoverBorderColor: colors.borderStrong,
+      // Selected day cell (e.g. the "26" start-date circle)
+      cellActiveWithRangeBg: colors.mintSoft,
+      // In-range cells between start/end dates — this is what was
+      // unreadable: light mint bg with light text in the screenshot
+      cellHoverWithRangeBg: 'rgba(61, 220, 151, 0.18)',
+      cellRangeBorderColor: colors.mint,
+    },
     Tag: {
       colorBgContainer: colors.panelAlt,
     },

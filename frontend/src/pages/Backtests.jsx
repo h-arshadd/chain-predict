@@ -5,6 +5,13 @@ import { PlusOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../lib/api';
 
+// Matches start_date in crypto_pipeline/data/binance/config_binance.yml
+// and config_bybit.yml -- there's no candle data in the DB before this,
+// for any coin/exchange. Used to block picking a start date the backend
+// would just fail on later (see backtests_repo.run_backtest_job's data-
+// coverage check).
+const EARLIEST_DATA_DATE = dayjs('2024-01-01');
+
 const MINT = '#3DDC97';
 const RED = '#F0466B';
 const AMBER = '#FF8A5C';
@@ -264,7 +271,11 @@ export default function Backtests() {
           </Form.Item>
 
           <Form.Item name="date_range" label="Date Range" rules={[{ required: true, message: 'Select a date range' }]}>
-            <DatePicker.RangePicker style={{ width: '100%' }} defaultValue={[dayjs().subtract(3, 'month'), dayjs()]} />
+            <DatePicker.RangePicker
+              style={{ width: '100%' }}
+              defaultValue={[dayjs().subtract(3, 'month'), dayjs()]}
+              disabledDate={(current) => !!current && (current < EARLIEST_DATA_DATE.startOf('day') || current > dayjs().endOf('day'))}
+            />
           </Form.Item>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
