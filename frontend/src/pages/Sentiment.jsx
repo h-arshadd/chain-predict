@@ -23,7 +23,7 @@ const axisStyle = { fill: '#6B7280', fontSize: 11 };
 
 function Panel({ title, children, style, action, hint }) {
   return (
-    <div style={{ ...panel, padding: 22, ...style }}>
+    <div style={{ ...panel, padding: 22, display: 'flex', flexDirection: 'column', ...style }}>
       {(title || action) && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           {title && (
@@ -39,7 +39,7 @@ function Panel({ title, children, style, action, hint }) {
           {action}
         </div>
       )}
-      {children}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>{children}</div>
     </div>
   );
 }
@@ -271,7 +271,7 @@ export default function Sentiment() {
               {overview.overall.post_count === 0 ? (
                 <Empty description={<span style={{ color: '#9096A0' }}>No posts yet for {selectedCoin}.</span>} style={{ padding: '20px 0' }} />
               ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 24, height: '100%', minHeight: 200 }}>
                   <div style={{ position: 'relative', width: 160, height: 160, flexShrink: 0 }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
