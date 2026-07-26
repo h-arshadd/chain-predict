@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Table, Tag, Input, Select, Spin, Alert, Tooltip } from 'antd';
+import { Table, Tag, Input, Select, Spin, Alert, Tooltip, Switch, Modal, message } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { SearchOutlined, WarningFilled } from '@ant-design/icons';
 import { api } from '../lib/api';
@@ -33,7 +33,7 @@ const fmtUsd = (v) =>
 
 const pnlColor = (v) => (v == null ? '#6B7280' : v > 0 ? MINT : v < 0 ? RED : '#9096A0');
 
-function buildColumns(navigate) {
+function buildColumns(navigate, toggleEnabled) {
   return [
     {
       title: 'Strategy', dataIndex: 'strategy_name', key: 'strategy_name',
@@ -117,6 +117,22 @@ function buildColumns(navigate) {
       title: 'Last Execution', dataIndex: 'last_processed', key: 'last_processed',
       render: (t) => <span style={{ color: '#6B7280', fontSize: 13 }}>{t ? new Date(t).toLocaleString() : '—'}</span>,
     },
+    {
+      title: 'Execution Enabled', key: 'execution_enabled',
+      // No strategy assigned to this pair yet (status "unassigned") --
+      // nothing to toggle, same case Strategies.jsx's version never had
+      // to handle since every row there always has a strategy_id.
+      render: (_, row) =>
+        row.strategy_id == null ? (
+          <span style={{ color: '#6B7280', fontSize: 13 }}>—</span>
+        ) : (
+          <Switch
+            checked={!!row.execution_enabled}
+            onChange={(checked) => toggleEnabled(row, checked)}
+            onClick={(_, e) => e.stopPropagation()}
+          />
+        ),
+    },
   ];
 }
 
@@ -158,6 +174,72 @@ export default function Deployment() {
       return matchesSearch && matchesStatus && matchesCoin;
     });
   }, [rows, search, statusFilter, coinFilter]);
+
+  const applyToggle = (strategyId, nextEnabled) => {
+    // Optimistic: flip this row locally, and if turning ON, also
+    // optimistically flip off any other enabled row on the same pair --
+    // matches what the backend is about to do atomically (see
+    // strategies_repo.set_execution_enabled). Rolled back for everyone
+    // touched if the request fails.
+    const target = rows.find((r) => r.strategy_id === strategyId);
+    if (!target) return;
+
+    const previous = rows;
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.strategy_id === strategyId) return { ...r, execution_enabled: nextEnabled };
+        if (nextEnabled && r.exchange === target.exchange && r.symbol === target.symbol && r.execution_enabled) {
+          return { ...r, execution_enabled: false };
+        }
+        return r;
+      })
+    );
+
+    api.patch(`/api/strategies/${strategyId}/enabled`, { execution_enabled: nextEnabled })
+      .then(() => {
+        message.success(
+          nextEnabled
+            ? `${target.strategy_name} is now live for ${target.symbol.toUpperCase()}`
+            : `${target.strategy_name} disabled`
+        );
+        load(); // refresh status/strategy fields for every affected row
+      })
+      .catch((err) => {
+        setRows(previous);
+        message.error(err.message);
+      });
+  };
+
+  const toggleEnabled = (row, nextEnabled) => {
+    if (!nextEnabled) {
+      // Turning off is never destructive to another strategy -- no confirm needed.
+      applyToggle(row.strategy_id, false);
+      return;
+    }
+
+    const conflicting = rows.find(
+      (r) => r.strategy_id !== row.strategy_id && r.exchange === row.exchange && r.symbol === row.symbol && r.execution_enabled
+    );
+
+    if (!conflicting) {
+      applyToggle(row.strategy_id, true);
+      return;
+    }
+
+    Modal.confirm({
+      title: 'Switch the live strategy for this pair?',
+      content: (
+        <span>
+          <strong>{conflicting.strategy_name}</strong> is currently live for {row.symbol.toUpperCase()}.
+          Enabling <strong>{row.strategy_name}</strong> will disable it — only one strategy can be live per pair.
+          This takes effect immediately.
+        </span>
+      ),
+      okText: 'Switch strategy',
+      okButtonProps: { danger: true },
+      onOk: () => applyToggle(row.strategy_id, true),
+    });
+  };
 
   const runningCount = rows.filter((r) => r.status === 'running').length;
   const totalPnl = rows.reduce((s, r) => s + (r.cumulative_pnl ?? 0), 0);
@@ -215,7 +297,7 @@ export default function Deployment() {
         ) : (
           <Table
             rowKey={(row) => `${row.exchange}-${row.symbol}`}
-            columns={buildColumns(navigate)}
+            columns={buildColumns(navigate, toggleEnabled)}
             dataSource={filtered}
             pagination={{ pageSize: 10 }}
             locale={{ emptyText: 'No deployments configured yet. Add a pair to execution.config to see it here.' }}

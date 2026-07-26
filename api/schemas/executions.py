@@ -57,7 +57,9 @@ class ExecutionSummary(BaseModel):
     """One row in the Strategy Deployment table."""
     exchange: str
     symbol: str
+    strategy_id: Optional[int] = None        # None if status == "unassigned" -- nothing to toggle
     strategy_name: str
+    execution_enabled: Optional[bool] = None # None if status == "unassigned"; drives the Deployment page's toggle
     account_name: Optional[str] = None       # wallet assigned to this pair, if any
     wallet_enabled: Optional[bool] = None    # None if no wallet assigned yet
     status: str                              # "running" | "paused" | "unassigned" | "never_run"

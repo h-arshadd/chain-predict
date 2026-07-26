@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Table, Tag, Switch, Modal, Input, Select, Spin, Alert, message, Tooltip } from 'antd';
+import { Table, Tag, Input, Select, Spin, Alert, Tooltip } from 'antd';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { SearchOutlined } from '@ant-design/icons';
 import { api } from '../lib/api';
@@ -68,71 +68,6 @@ export default function Strategies() {
     return matchesSearch && matchesCoin;
   });
 
-  const applyToggle = (strategyId, nextEnabled) => {
-    // Optimistic: flip this row locally, and if turning ON, also
-    // optimistically flip off any other enabled row on the same pair --
-    // matches what the backend is about to do atomically. Rolled back
-    // for everyone touched if the request fails.
-    const target = strategies.find((s) => s.strategy_id === strategyId);
-    if (!target) return;
-
-    const previous = strategies;
-    setStrategies((prev) =>
-      prev.map((s) => {
-        if (s.strategy_id === strategyId) return { ...s, execution_enabled: nextEnabled };
-        if (nextEnabled && s.exchange === target.exchange && s.coin === target.coin && s.execution_enabled) {
-          return { ...s, execution_enabled: false };
-        }
-        return s;
-      })
-    );
-
-    api.patch(`/api/strategies/${strategyId}/enabled`, { execution_enabled: nextEnabled })
-      .then(() => {
-        message.success(
-          nextEnabled
-            ? `${target.strategy_name} is now live for ${target.coin.toUpperCase()}`
-            : `${target.strategy_name} disabled`
-        );
-        load(); // refresh pair_status/is_live_for_pair for every affected row
-      })
-      .catch((err) => {
-        setStrategies(previous);
-        message.error(err.message);
-      });
-  };
-
-  const toggleEnabled = (row, nextEnabled) => {
-    if (!nextEnabled) {
-      // Turning off is never destructive to another strategy -- no confirm needed.
-      applyToggle(row.strategy_id, false);
-      return;
-    }
-
-    const conflicting = strategies.find(
-      (s) => s.strategy_id !== row.strategy_id && s.exchange === row.exchange && s.coin === row.coin && s.execution_enabled
-    );
-
-    if (!conflicting) {
-      applyToggle(row.strategy_id, true);
-      return;
-    }
-
-    Modal.confirm({
-      title: 'Switch the live strategy for this pair?',
-      content: (
-        <span>
-          <strong>{conflicting.strategy_name}</strong> is currently live for {row.coin.toUpperCase()}.
-          Enabling <strong>{row.strategy_name}</strong> will disable it — only one strategy can be live per pair.
-          This takes effect immediately.
-        </span>
-      ),
-      okText: 'Switch strategy',
-      okButtonProps: { danger: true },
-      onOk: () => applyToggle(row.strategy_id, true),
-    });
-  };
-
   const columns = [
     {
       title: 'Strategy Name', dataIndex: 'strategy_name', key: 'strategy_name',
@@ -180,16 +115,6 @@ export default function Strategies() {
       title: 'Win Rate', dataIndex: 'win_rate_pct', key: 'win_rate_pct',
       sorter: (a, b) => (a.win_rate_pct ?? -Infinity) - (b.win_rate_pct ?? -Infinity),
       render: (v) => <span style={{ fontFamily: 'ui-monospace, monospace', color: '#F5F6F7' }}>{v == null ? '—' : `${v.toFixed(1)}%`}</span>,
-    },
-    {
-      title: 'Execution Enabled', key: 'execution_enabled',
-      render: (_, row) => (
-        <Switch
-          checked={row.execution_enabled}
-          onChange={(checked) => toggleEnabled(row, checked)}
-          onClick={(_, e) => e.stopPropagation()}
-        />
-      ),
     },
   ];
 

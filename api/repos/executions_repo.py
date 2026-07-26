@@ -287,7 +287,9 @@ def _build_summary(conn, exchange, symbol, config, strategy_row) -> dict:
         return {
             "exchange": exchange,
             "symbol": symbol,
+            "strategy_id": None,
             "strategy_name": "—",
+            "execution_enabled": None,
             "account_name": account_name,
             "wallet_enabled": wallet_enabled,
             "status": "unassigned",
@@ -306,7 +308,9 @@ def _build_summary(conn, exchange, symbol, config, strategy_row) -> dict:
         return {
             "exchange": exchange,
             "symbol": symbol,
+            "strategy_id": strategy_row["strategy_id"],
             "strategy_name": strategy_name,
+            "execution_enabled": strategy_row.get("execution_enabled", True),
             "account_name": account_name,
             "wallet_enabled": wallet_enabled,
             "status": "never_run",
@@ -339,7 +343,9 @@ def _build_summary(conn, exchange, symbol, config, strategy_row) -> dict:
     return {
         "exchange": exchange,
         "symbol": symbol,
+        "strategy_id": strategy_row["strategy_id"],
         "strategy_name": strategy_name,
+        "execution_enabled": strategy_row.get("execution_enabled", True),
         "account_name": account_name,
         "wallet_enabled": wallet_enabled,
         "status": status,
