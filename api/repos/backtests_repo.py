@@ -226,7 +226,7 @@ def run_backtest_job(backtest_id: int):
             "final_balance": result["final_balance"],
             "total_net_profit": result["total_net_profit"],
             "total_trades": result["total_trades"],
-            "win_loss": {"wins": result["wins"], "losses": result["losses"]},
+            "win_loss": result["win_loss"],
         })
 
     except Exception as exc:
@@ -296,8 +296,21 @@ def get_backtest_detail(conn, backtest_id: int) -> dict | None:
 
     equity = get_backtest_equity_curve(conn, backtest_id)
     if equity is not None:
+        # Downsample for the chart -- long date ranges at 1-minute resolution
+        # can produce a point per minute (e.g. a 2-year range is 1M+ rows),
+        # which is far more than a line chart needs and is enough to freeze
+        # the browser trying to render it. Cap at MAX_EQUITY_POINTS evenly
+        # spaced points; stats below still run on the full, un-downsampled
+        # series so Sharpe/drawdown/etc. stay accurate.
+        MAX_EQUITY_POINTS = 2000
+        if len(equity) > MAX_EQUITY_POINTS:
+            step = len(equity) // MAX_EQUITY_POINTS
+            equity_for_chart = equity.iloc[::step]
+        else:
+            equity_for_chart = equity
+
         detail["equity_curve"] = [
-            {"timestamp": ts, "balance": float(val)} for ts, val in equity.items()
+            {"timestamp": ts, "balance": float(val)} for ts, val in equity_for_chart.items()
         ]
         try:
             detail["stats"] = compute_stats({"equity_curve": equity}, _stats_config())
