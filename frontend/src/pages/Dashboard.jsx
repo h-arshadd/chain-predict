@@ -285,7 +285,7 @@ export default function Dashboard() {
             pagination={{ pageSize: 10 }}
             locale={{ emptyText: 'No simulator-enabled strategies yet.' }}
             onRow={(row) => ({
-              onClick: () => navigate(`/strategies/${row.strategy_id}`),
+              onClick: () => navigate(`/simulation/${row.exchange}/${row.coin}/${encodeURIComponent(row.strategy_name)}`),
               style: { cursor: 'pointer' },
             })}
           />

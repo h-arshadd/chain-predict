@@ -13,6 +13,7 @@ import BacktestDetails from './pages/BacktestDetails';
 import Models from './pages/Models';
 import ModelDetails from './pages/ModelDetails';
 import Sentiment from './pages/Sentiment';
+import SimulationDetails from './pages/SimulationDetails';
 
 function App() {
   return (
@@ -31,6 +32,7 @@ function App() {
             <Route path="/models" element={<Models />} />
             <Route path="/models/:id" element={<ModelDetails />} />
             <Route path="/sentiment" element={<Sentiment />} />
+            <Route path="/simulation/:exchange/:symbol/:strategyName" element={<SimulationDetails />} />
           </Route>
         </Routes>
       </BrowserRouter>
