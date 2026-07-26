@@ -34,7 +34,6 @@ warns about (and executions_repo._current_strategy_for_pair() already
 treats as "unassigned"). See set_execution_enabled() below.
 """
 
-import re
 import yaml
 from pathlib import Path
 
@@ -50,9 +49,6 @@ from crypto_pipeline.utils.db_utils import (
     get_execution_summary,
     build_execution_equity_curve_from_ledger,
     _execution_trades_table,
-    get_simulator_config,
-    get_simulator_summary,
-    build_equity_curve_from_ledger as build_simulator_equity_curve_from_ledger,
 )
 from crypto_pipeline.stats.calculator import compute_stats
 
@@ -159,24 +155,26 @@ def _pair_status(strategy_row: dict, siblings: list[dict]) -> tuple[bool, str]:
 def _performance_for_strategy(conn, strategy_row: dict) -> dict:
     """
     Returns {"latest_return_pct", "sharpe_ratio", "win_rate_pct",
-    "pnl_series", "data_source"} for one strategy row. Tries execution
-    first (a strategy row that's execution_enabled and has actually
-    traded live is the more meaningful number), falls back to simulator,
-    and returns all None / data_source=None if neither has ever run this
-    exact (strategy_name, exchange, coin).
+    "pnl_series", "data_source"} for one strategy row. EXECUTION ONLY --
+    no simulator fallback. Strategy Details/the Strategies list are meant
+    to reflect real live-trading performance for this exact strategy;
+    silently substituting simulator numbers when execution has no trades
+    yet would mislabel paper-trading results as live performance. If this
+    strategy has no execution trades, every field is None and
+    data_source=None -- the frontend renders an explicit "execution
+    hasn't run for this strategy yet" empty state rather than falling
+    back to simulator (see StrategyDetails.jsx).
 
     pnl_series is a small downsampled list of {"t", "v"} points (v = % of
     initial_balance, so 0 = breakeven) built from the same equity curve
-    build_execution_equity_curve_from_ledger()/build_equity_curve_from_ledger()
-    (simulator's) already reconstruct for compute_stats() on the detail
-    page -- reused here at list-scale, just capped and thinned out for a
-    sparkline instead of a full chart. None if there's no ledger to build
-    one from yet.
+    build_execution_equity_curve_from_ledger() already reconstructs for
+    compute_stats() on the detail page -- reused here at list-scale, just
+    capped and thinned out for a sparkline instead of a full chart. None
+    if there's no ledger to build one from yet.
     """
     exchange = strategy_row["exchange"]
     coin = strategy_row["coin"]
     strategy_name = strategy_row["strategy_name"]
-    time_horizon = strategy_row.get("time_horizon") or "1h"
 
     exec_config = get_execution_config(conn, exchange, coin)
     if exec_config is not None:
@@ -188,17 +186,6 @@ def _performance_for_strategy(conn, strategy_row: dict) -> dict:
                 equity = build_execution_equity_curve_from_ledger(conn, exchange, coin, strategy_name, initial_balance)
                 perf["pnl_series"] = _pnl_series_from_equity(equity, initial_balance)
                 return {**perf, "data_source": "execution"}
-
-    sim_config = get_simulator_config(conn, exchange, coin)
-    if sim_config is not None:
-        sim_summary = get_simulator_summary(conn, exchange, coin, strategy_name, time_horizon)
-        if sim_summary is not None and sim_summary.get("total_trades", 0) > 0:
-            initial_balance = sim_config.get("initial_balance")
-            perf = _perf_from_summary(sim_summary, initial_balance)
-            if perf is not None:
-                equity = build_simulator_equity_curve_from_ledger(conn, exchange, coin, strategy_name, time_horizon, initial_balance)
-                perf["pnl_series"] = _pnl_series_from_equity(equity, initial_balance)
-                return {**perf, "data_source": "simulator"}
 
     return {"latest_return_pct": None, "sharpe_ratio": None, "win_rate_pct": None, "pnl_series": None, "data_source": None}
 
@@ -348,38 +335,21 @@ def get_strategy_detail(conn, strategy_id: int) -> dict | None:
         return detail
 
     exchange, coin, strategy_name = row["exchange"], row["coin"], row["strategy_name"]
-    time_horizon = row.get("time_horizon") or "1h"
 
-    if perf["data_source"] == "execution":
-        exec_config = get_execution_config(conn, exchange, coin)
-        exec_summary = get_execution_summary(conn, exchange, coin, strategy_name)
-        if exec_summary is not None:
-            win_loss = exec_summary.get("win_loss") or {}
-            detail["trade_stats"] = {
-                "total_trades": exec_summary.get("total_trades", 0),
-                "wins": win_loss.get("wins", 0),
-                "losses": win_loss.get("losses", 0),
-                "win_rate_pct": (win_loss.get("win_rate") or 0.0) * 100.0,
-            }
-        equity = build_execution_equity_curve_from_ledger(
-            conn, exchange, coin, strategy_name, (exec_config or {}).get("initial_balance") or 0.0
-        )
-        detail["recent_trades"] = _list_execution_trades(conn, exchange, coin, strategy_name)
-    else:  # "simulator"
-        sim_config = get_simulator_config(conn, exchange, coin)
-        sim_summary = get_simulator_summary(conn, exchange, coin, strategy_name, time_horizon)
-        if sim_summary is not None:
-            win_loss = sim_summary.get("win_loss") or {}
-            detail["trade_stats"] = {
-                "total_trades": sim_summary.get("total_trades", 0),
-                "wins": win_loss.get("wins", 0),
-                "losses": win_loss.get("losses", 0),
-                "win_rate_pct": (win_loss.get("win_rate") or 0.0) * 100.0,
-            }
-        equity = build_simulator_equity_curve_from_ledger(
-            conn, exchange, coin, strategy_name, time_horizon, (sim_config or {}).get("initial_balance") or 0.0
-        )
-        detail["recent_trades"] = _list_simulator_trades(conn, exchange, coin, strategy_name, time_horizon)
+    exec_config = get_execution_config(conn, exchange, coin)
+    exec_summary = get_execution_summary(conn, exchange, coin, strategy_name)
+    if exec_summary is not None:
+        win_loss = exec_summary.get("win_loss") or {}
+        detail["trade_stats"] = {
+            "total_trades": exec_summary.get("total_trades", 0),
+            "wins": win_loss.get("wins", 0),
+            "losses": win_loss.get("losses", 0),
+            "win_rate_pct": (win_loss.get("win_rate") or 0.0) * 100.0,
+        }
+    equity = build_execution_equity_curve_from_ledger(
+        conn, exchange, coin, strategy_name, (exec_config or {}).get("initial_balance") or 0.0
+    )
+    detail["recent_trades"] = _list_execution_trades(conn, exchange, coin, strategy_name)
 
     if equity is not None:
         # Same real array shape ExecutionDetails' `equity_curve` field
@@ -442,13 +412,6 @@ def set_execution_enabled(conn, strategy_id: int, execution_enabled: bool) -> di
 def _list_execution_trades(conn, exchange, symbol, strategy_name, limit: int = 20) -> list[dict]:
     table_name = _execution_trades_table(exchange, symbol, strategy_name)
     return _list_trades_from_table(conn, "execution", table_name, limit)
-
-
-def _list_simulator_trades(conn, exchange, symbol, strategy_name, time_horizon, limit: int = 20) -> list[dict]:
-    safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
-    safe_time_horizon = re.sub(r"[^0-9a-zA-Z_]", "_", time_horizon)
-    table_name = f"{symbol}_{safe_strategy_name}_{safe_time_horizon}_trades"
-    return _list_trades_from_table(conn, "simulator", table_name, limit)
 
 
 def _list_trades_from_table(conn, schema_name: str, table_name: str, limit: int) -> list[dict]:

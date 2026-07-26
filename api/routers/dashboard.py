@@ -7,19 +7,18 @@ Two endpoints, matching dashboard_repo.py's two functions:
 
   GET /api/dashboard            -- the stat-card summary strip (both
       simulator and execution/live-account data).
-  GET /api/dashboard/strategies -- the strategy table. Same shape and
-      same real execution-first-fallback-to-simulator numbers as
-      /api/strategies (see dashboard_repo.list_strategies), just with
-      its own search/coin filtering applied here for the dashboard's
-      own query params, consistent with /api/strategies' pattern.
+  GET /api/dashboard/strategies -- the strategy table. SIMULATOR data
+      (see dashboard_repo.list_strategies) -- deliberately different
+      shape/source from /api/strategies (execution-only), with its own
+      search/coin filtering applied here, consistent with
+      /api/strategies' pattern.
 """
 
 from fastapi import APIRouter, Depends
 
 from api.core.db import get_conn
 from api.core.responses import item, list_response
-from api.schemas.dashboard import DashboardSummary
-from api.schemas.strategies import StrategySummary
+from api.schemas.dashboard import DashboardSummary, DashboardStrategyRow
 from api.repos import dashboard_repo
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -49,5 +48,5 @@ def list_dashboard_strategies(
 
     total = len(rows)
     page = rows[offset: offset + limit]
-    summaries = [StrategySummary(**r).model_dump() for r in page]
+    summaries = [DashboardStrategyRow(**r).model_dump() for r in page]
     return list_response(summaries, total, limit, offset)

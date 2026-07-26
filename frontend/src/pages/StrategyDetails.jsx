@@ -182,7 +182,7 @@ export default function StrategyDetails() {
           </div>
           <div style={{ color: '#9096A0', fontSize: 13, marginTop: 2 }}>
             {data.coin.toUpperCase()} · {data.exchange} · {data.time_horizon} · Strategy ID {data.strategy_id}
-            {data.data_source && <> · performance from {data.data_source}</>}
+            {data.data_source === 'execution' && <> · performance from execution</>}
           </div>
         </div>
       </div>
@@ -193,6 +193,16 @@ export default function StrategyDetails() {
           showIcon
           message="This pair has more than one strategy enabled"
           description="Execution treats this as misconfigured and skips the pair entirely until only one strategy is enabled. Use the switch above, or on another strategy for this pair, to resolve it."
+          style={{ marginBottom: 20 }}
+        />
+      )}
+
+      {data.data_source == null && (
+        <Alert
+          type="info"
+          showIcon
+          message="Execution hasn't run for this strategy yet"
+          description="This page shows live execution performance only. Once this strategy has closed trades in execution, its return, risk stats, equity curve, and trade ledger will appear here."
           style={{ marginBottom: 20 }}
         />
       )}
@@ -259,7 +269,7 @@ export default function StrategyDetails() {
               </AreaChart>
             </ResponsiveContainer>
           ) : (
-            <EmptyChart text={data.data_source ? 'Not enough trade history for an equity curve yet.' : 'This strategy has never traded in execution or simulator yet.'} />
+            <EmptyChart text={data.data_source ? 'Not enough closed trades in execution yet for an equity curve.' : 'Execution hasn\'t run for this strategy yet.'} />
           )}
         </Panel>
         <Panel title="Drawdown">

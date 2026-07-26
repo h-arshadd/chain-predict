@@ -40,14 +40,6 @@ const fmtPct = (v) => (v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%
 const fmtCount = (v) => (v == null ? '—' : v);
 const pnlColor = (v) => (v == null ? '#F5F6F7' : v > 0 ? MINT : v < 0 ? RED : '#F5F6F7');
 
-// Same real pair_status values strategies_repo._pair_status() / the
-// Strategies page use -- kept consistent across both pages.
-const STATUS_META = {
-  live: { label: 'Live', bg: 'rgba(61,220,151,0.12)', fg: MINT },
-  disabled: { label: 'Disabled', bg: 'rgba(255,255,255,0.06)', fg: '#9096A0' },
-  conflicted: { label: 'Conflicted', bg: 'rgba(240,70,107,0.14)', fg: RED },
-};
-
 function SectionHeader({ title, subtitle }) {
   return (
     <div style={{ marginBottom: 18 }}>
@@ -143,17 +135,6 @@ export default function Dashboard() {
   // a fabricated number. total_backtests stays None until a real
   // Backtests module/DB exists.
   const statCards = summary ? [
-    { title: 'Total Strategies', value: fmtCount(summary.total_strategies), icon: <FundOutlined /> },
-    { title: 'Active Strategies', value: fmtCount(summary.active_strategies), icon: <ThunderboltOutlined /> },
-    { title: 'Running Executions', value: fmtCount(summary.running_executions), icon: <RocketOutlined /> },
-    { title: 'Running Simulations', value: fmtCount(summary.running_simulations), icon: <PlayCircleOutlined /> },
-    { title: 'Connected Accounts', value: fmtCount(summary.connected_accounts), icon: <WalletOutlined /> },
-    { title: 'Trained ML Models', value: fmtCount(summary.trained_ml_models), icon: <ExperimentOutlined /> },
-    {
-      title: `Total Backtests${summary.total_backtests == null ? ' (not available yet)' : ''}`,
-      value: summary.total_backtests ?? 'N/A', icon: <BarChartOutlined />,
-      valueColor: summary.total_backtests == null ? '#6B7280' : '#F5F6F7',
-    },
     {
       title: "Today's PnL",
       value: fmtMoney(summary.today_pnl),
@@ -170,6 +151,17 @@ export default function Dashboard() {
       value: fmtPct(summary.total_return_pct),
       valueColor: pnlColor(summary.total_return_pct),
       icon: <BarChartOutlined />,
+    },
+    { title: 'Total Strategies', value: fmtCount(summary.total_strategies), icon: <FundOutlined /> },
+    { title: 'Active Strategies', value: fmtCount(summary.active_strategies), icon: <ThunderboltOutlined /> },
+    { title: 'Running Executions', value: fmtCount(summary.running_executions), icon: <RocketOutlined /> },
+    { title: 'Running Simulations', value: fmtCount(summary.running_simulations), icon: <PlayCircleOutlined /> },
+    { title: 'Connected Accounts', value: fmtCount(summary.connected_accounts), icon: <WalletOutlined /> },
+    { title: 'Trained ML Models', value: fmtCount(summary.trained_ml_models), icon: <ExperimentOutlined /> },
+    {
+      title: `Total Backtests${summary.total_backtests == null ? ' (not available yet)' : ''}`,
+      value: summary.total_backtests ?? 'N/A', icon: <BarChartOutlined />,
+      valueColor: summary.total_backtests == null ? '#6B7280' : '#F5F6F7',
     },
   ] : [];
 
@@ -205,22 +197,6 @@ export default function Dashboard() {
       title: 'Win Rate', dataIndex: 'win_rate_pct', key: 'win_rate_pct',
       sorter: (a, b) => (a.win_rate_pct ?? -Infinity) - (b.win_rate_pct ?? -Infinity),
       render: (v) => <span style={{ fontFamily: 'ui-monospace, monospace', color: '#F5F6F7' }}>{v == null ? '—' : `${v.toFixed(1)}%`}</span>,
-    },
-    {
-      title: 'Current Status', dataIndex: 'pair_status', key: 'pair_status',
-      filters: Object.keys(STATUS_META).map((k) => ({ text: STATUS_META[k].label, value: k })),
-      onFilter: (value, record) => record.pair_status === value,
-      render: (status) => {
-        const meta = STATUS_META[status] || { label: status, bg: 'rgba(255,255,255,0.06)', fg: '#9096A0' };
-        return (
-          <span style={{
-            fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 8,
-            background: meta.bg, color: meta.fg,
-          }}>
-            {meta.label}
-          </span>
-        );
-      },
     },
   ];
 
@@ -265,14 +241,15 @@ export default function Dashboard() {
         </div>
       ) : null}
 
-      {/* Strategies table -- same real execution-first-fallback-to-
-          simulator numbers as the Strategies page (see
-          dashboard_repo.list_strategies), so this table and Strategies
-          never disagree. */}
+      {/* Strategies table -- SIMULATOR data (see dashboard_repo.list_strategies).
+          This pipeline runs the simulator continuously across every
+          registered pair, so this table reflects that real, ongoing
+          activity -- deliberately separate from the Strategies page,
+          which is execution-only. */}
       <div style={{ ...panel, padding: 20 }}>
         <SectionHeader
-          title="Strategies"
-          subtitle="Every registered strategy, with real performance from execution (live) or simulator, whichever it has actually run in. Select one to view full details."
+          title="Strategies (Simulator)"
+          subtitle="Every simulator-enabled strategy, with real performance from the continuously-running simulator. Strategies with no simulator trades yet show as empty rather than fabricated numbers."
         />
 
         {tableError && (
@@ -306,7 +283,7 @@ export default function Dashboard() {
             columns={columns}
             dataSource={filtered.map((s) => ({ ...s, key: s.strategy_id }))}
             pagination={{ pageSize: 10 }}
-            locale={{ emptyText: 'No strategies configured yet.' }}
+            locale={{ emptyText: 'No simulator-enabled strategies yet.' }}
             onRow={(row) => ({
               onClick: () => navigate(`/strategies/${row.strategy_id}`),
               style: { cursor: 'pointer' },

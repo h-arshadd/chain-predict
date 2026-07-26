@@ -20,12 +20,17 @@ Two pieces:
    spec asks for one Overall Portfolio Value / one Total Return, not a
    breakdown).
 
-2. list_strategies() -- the Dashboard's strategy table. Reuses
-   strategies_repo.list_strategies() as-is (the real execution-first-
-   fallback-to-simulator performance model, same pair-status logic used
-   on the Strategies page) rather than a second, simulator-only
-   implementation -- so this table and the Strategies page never
-   disagree about which numbers are "real" for a given strategy.
+2. list_strategies() -- the Dashboard's strategy table. This table is
+   SIMULATOR data, deliberately separate from strategies_repo's
+   execution-only model used on the Strategies page (per instruction --
+   the two pages are meant to differ, one is the live/execution view,
+   this one is the continuously-running simulator view). Every
+   simulator_enabled metadata.strategy row, with real performance read
+   from simulator.positions / simulator.{...}_trades. No pair_status/
+   Live-Disabled-Conflicted concept here -- that's an execution-only
+   exclusivity rule (see strategies_repo._pair_status) that doesn't apply
+   to simulator, which runs multiple strategies per pair with no
+   exclusivity at all.
 """
 
 import datetime as _dt
@@ -37,6 +42,8 @@ from crypto_pipeline.utils.db_utils import (
     get_simulator_universe,
     get_simulator_state,
     get_simulator_config,
+    get_simulator_summary,
+    build_equity_curve_from_ledger,
     get_execution_universe,
     get_execution_state,
     get_execution_config,
@@ -44,7 +51,6 @@ from crypto_pipeline.utils.db_utils import (
 )
 from crypto_pipeline.accounts.accounts_utils import list_accounts
 from api.repos import ml_repo
-from api.repos.strategies_repo import list_strategies as _list_strategies
 
 
 # ----------------------------------------------------------------------
@@ -278,15 +284,97 @@ def get_summary(conn) -> dict:
 
 
 # ----------------------------------------------------------------------
-# Strategy table -- reuses strategies_repo's real execution-first-
-# fallback-to-simulator model, same numbers as the Strategies page.
+# Strategy table -- SIMULATOR data. Deliberately separate from
+# strategies_repo.list_strategies() (execution-only, used by the
+# Strategies page) -- the two pages show different things on purpose.
 # ----------------------------------------------------------------------
+
+_PNL_SPARKLINE_POINTS = 30
+
+
+def _pnl_series_from_equity(equity, initial_balance) -> list[dict] | None:
+    """
+    Downsample a pandas equity Series into <= _PNL_SPARKLINE_POINTS
+    {"t", "v"} points (v = % return vs initial_balance) for the table's
+    per-row sparkline. Same approach strategies_repo.py uses for its own
+    (execution) sparkline, applied here to simulator's equity curve
+    builder instead.
+    """
+    if equity is None or len(equity) == 0 or not initial_balance:
+        return None
+
+    if len(equity) > _PNL_SPARKLINE_POINTS:
+        step = len(equity) // _PNL_SPARKLINE_POINTS
+        equity = equity.iloc[::step]
+
+    return [
+        {"t": ts.isoformat() if hasattr(ts, "isoformat") else str(ts), "v": (float(val) - initial_balance) / initial_balance * 100.0}
+        for ts, val in equity.items()
+    ]
+
 
 def list_strategies(conn) -> list[dict]:
     """
-    Every metadata.strategy row, enriched exactly the way the Strategies
-    page is (see strategies_repo.list_strategies): real pair status
-    (live/conflicted/disabled) and performance pulled from execution
-    first, falling back to simulator, never fabricated.
+    Every simulator_enabled metadata.strategy row, with real performance
+    read from simulator.positions (get_simulator_state) and the
+    simulator's own Trade Ledger (get_simulator_summary), for every pair
+    in simulator.config (get_simulator_universe) -- this pipeline is
+    continuously running the simulator across all registered pairs, so
+    this table reflects that real, ongoing activity. No pair_status
+    (Live/Disabled/Conflicted) here -- that's an execution-only
+    exclusivity concept that doesn't apply to simulator, which can run
+    several strategies per pair at once with no exclusivity rule.
+
+    A strategy with no simulator trades yet still shows in the table
+    (simulator_enabled=True is real state) but with null performance
+    fields -- never fabricated, never borrowed from execution.
     """
-    return _list_strategies(conn)
+    results = []
+    for exchange, symbol in get_simulator_universe(conn):
+        config = get_simulator_config(conn, exchange, symbol)
+        initial_balance = (config or {}).get("initial_balance")
+
+        strategy_rows = [
+            r for r in get_strategies(conn, exchange=exchange, coin=symbol)
+            if r.get("simulator_enabled", True)
+        ]
+        for row in strategy_rows:
+            strategy_name = row["strategy_name"]
+            time_horizon = row.get("time_horizon") or "1h"
+
+            summary = get_simulator_summary(conn, exchange, symbol, strategy_name, time_horizon)
+            latest_return_pct = None
+            win_rate_pct = None
+            pnl_series = None
+
+            if summary is not None and summary.get("total_trades", 0) > 0 and initial_balance:
+                total_net_profit = summary.get("total_net_profit")
+                if total_net_profit is not None:
+                    latest_return_pct = (total_net_profit / initial_balance) * 100.0
+                win_loss = summary.get("win_loss") or {}
+                if win_loss.get("win_rate") is not None:
+                    win_rate_pct = win_loss["win_rate"] * 100.0
+
+                equity = build_equity_curve_from_ledger(
+                    conn, exchange, symbol, strategy_name, time_horizon, initial_balance
+                )
+                pnl_series = _pnl_series_from_equity(equity, initial_balance)
+
+            results.append({
+                "strategy_id": row["strategy_id"],
+                "strategy_name": strategy_name,
+                "exchange": exchange,
+                "coin": symbol,
+                "time_horizon": time_horizon,
+                "simulator_enabled": row.get("simulator_enabled", True),
+                "latest_return_pct": latest_return_pct,
+                # Sharpe isn't part of get_simulator_summary's lightweight
+                # roll-up (that's compute_stats(), run separately on the
+                # detail page) -- left None here same as the execution
+                # list view does, not computed twice.
+                "sharpe_ratio": None,
+                "win_rate_pct": win_rate_pct,
+                "pnl_series": pnl_series,
+                "created_at": row.get("created_at"),
+            })
+    return results
