@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Tag, Table, Spin, Alert } from 'antd';
-import { ArrowLeftOutlined, DownloadOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined } from '@ant-design/icons';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, Cell,
   ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -104,16 +104,6 @@ function heatColor(v) {
   return v >= 0 ? `rgba(61,220,151,${0.15 + intensity * 0.6})` : `rgba(240,70,107,${0.15 + intensity * 0.6})`;
 }
 
-function toCsv(rows) {
-  if (!rows.length) return '';
-  const headers = Object.keys(rows[0]);
-  const lines = [headers.join(',')];
-  for (const row of rows) {
-    lines.push(headers.map((h) => JSON.stringify(row[h] ?? '')).join(','));
-  }
-  return lines.join('\n');
-}
-
 export default function BacktestDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -170,18 +160,6 @@ export default function BacktestDetails() {
     : [];
   const monthlyRows = monthlyHeatmapToRows(plots.monthly_heatmap?.monthly_returns);
 
-  const exportReport = () => {
-    if (!data) return;
-    const csv = toCsv(data.trades || []);
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `backtest_${data.backtest_id}_trades.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', padding: '100px 0' }}>
@@ -235,11 +213,6 @@ export default function BacktestDetails() {
             </div>
           </div>
         </div>
-        {data.status === 'completed' && (data.trades || []).length > 0 && (
-          <button onClick={exportReport} style={exportBtnStyle}>
-            <DownloadOutlined /> Export Report
-          </button>
-        )}
       </div>
 
       {data.status === 'pending' && (
@@ -508,10 +481,4 @@ const backBtnStyle = {
   width: 36, height: 36, borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)',
   background: 'rgba(255,255,255,0.04)', color: '#F5F6F7', cursor: 'pointer',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
-};
-
-const exportBtnStyle = {
-  display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', borderRadius: 10,
-  border: '1px solid rgba(61,220,151,0.3)', background: 'rgba(61,220,151,0.1)',
-  color: '#3DDC97', fontWeight: 600, fontSize: 13, cursor: 'pointer',
 };
