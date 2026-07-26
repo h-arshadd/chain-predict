@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from api.routers import wallets, executions, sentiment, strategies, ml, dashboard
+from api.routers import wallets, executions, sentiment, strategies, ml, dashboard, backtests
 
 app = FastAPI(title="Trading Platform API")
 
@@ -50,6 +50,7 @@ app.include_router(sentiment.router)
 app.include_router(strategies.router)
 app.include_router(ml.router)
 app.include_router(dashboard.router)
+app.include_router(backtests.router)
 
 
 @app.get("/api/health")

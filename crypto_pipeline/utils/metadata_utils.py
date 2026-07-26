@@ -584,6 +584,22 @@ def create_backtest_table(conn):
     -- it's here so a backtest row can be identified/filtered by which
     strategy it ran, without needing a join. It's a label, same as
     metadata.strategy.strategy_name, not a foreign key.
+
+    strategy_id (added after this table first shipped -- see the
+    self-healing ALTER block below) IS a real reference to
+    metadata.strategy.strategy_id, added once the API needed to actually
+    run backtests on demand and look the strategy config back up by id
+    rather than by name alone (strategy_name isn't unique across
+    exchange/coin, strategy_id is).
+
+    status/error/started_at/finished_at/result_summary (also added by
+    the ALTER block) give this table a real lifecycle -- pending ->
+    running -> completed/failed -- so a "Backtest Requests" list has
+    something real to show instead of only ever-completed rows.
+    result_summary is a small JSONB snapshot (final_balance,
+    total_net_profit, total_trades, win_loss) written once a run
+    completes, so the Backtest Requests list can show a headline number
+    without joining out to the trade ledger table for every row.
     """
     cursor = conn.cursor()
     cursor.execute(sql.SQL("""
@@ -595,11 +611,58 @@ def create_backtest_table(conn):
         )
     """).format(schema=sql.Identifier(SCHEMA)))
     conn.commit()
+
+    # Self-healing adds, same pattern used elsewhere (e.g.
+    # accounts.stats, execution.config's account_name) -- safe to run
+    # every call, no-ops after the first time. Keeps insert_backtest()'s
+    # existing (conn, strategy_name, backtest_config) call shape working
+    # unchanged for any existing caller while giving the API's new
+    # "run a backtest" flow real columns to write to.
+    _add_columns_if_missing(conn, "backtest", {
+        "strategy_id": "INTEGER",
+        "status": "TEXT NOT NULL DEFAULT 'completed'",
+        "error": "TEXT",
+        "started_at": "TIMESTAMP",
+        "finished_at": "TIMESTAMP",
+        "result_summary": "JSONB",
+    })
+
     cursor.close()
     logger.info(f"Table ensured: {SCHEMA}.backtest")
 
 
-def insert_backtest(conn, strategy_name, backtest_config):
+def _add_columns_if_missing(conn, table, columns: dict):
+    """
+    Shared self-heal helper: add any of `columns` (name -> full Postgres
+    column type/constraint spec) to metadata.{table} that don't already
+    exist. `status` defaults to 'completed' for pre-existing rows (every
+    row inserted before this column existed really was a completed,
+    synchronous run -- backtest/main.py's old insert_trades()-only path)
+    so old rows don't suddenly show as pending/unknown.
+    """
+    cursor = conn.cursor()
+    for col, pg_type in columns.items():
+        cursor.execute(sql.SQL("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = %s AND table_name = %s AND column_name = %s
+                ) THEN
+                    ALTER TABLE {schema}.{table} ADD COLUMN {col} {pg_type};
+                END IF;
+            END $$;
+        """).format(
+            schema=sql.Identifier(SCHEMA),
+            table=sql.Identifier(table),
+            col=sql.Identifier(col),
+            pg_type=sql.SQL(pg_type),
+        ), (SCHEMA, table, col))
+    conn.commit()
+    cursor.close()
+
+
+def insert_backtest(conn, strategy_name, backtest_config, strategy_id=None, status="pending"):
     """
     Register a new backtest run against a given strategy_name.
 
@@ -608,23 +671,74 @@ def insert_backtest(conn, strategy_name, backtest_config):
     slippage, allow_long/allow_short, take_profit, stop_loss, entry_price,
     exit_price, max_open_positions. Stored as-is in JSONB.
 
+    strategy_id: metadata.strategy.strategy_id this run is for, if known
+    (the API's "new backtest" flow always has this; a raw config-only
+    caller like the old backtest/main.py script may not). Optional so
+    existing call sites keep working unchanged.
+
+    status: 'pending' for a run that hasn't executed yet (the API's
+    flow: insert the row first, run the backtest after, so a row exists
+    to poll even before it starts). 'completed' if the caller is
+    registering a run that already finished synchronously (matches this
+    table's pre-lifecycle default -- see create_backtest_table).
+
     Returns the new backtest_id. Each insert creates a new row (no upsert)
     since every backtest run is its own record -- there's no natural
     unique constraint to key off of.
     """
     cursor = conn.cursor()
     cursor.execute(sql.SQL("""
-        INSERT INTO {schema}.backtest (strategy_name, backtest_config)
-        VALUES (%s, %s)
+        INSERT INTO {schema}.backtest (strategy_name, backtest_config, strategy_id, status)
+        VALUES (%s, %s, %s, %s)
         RETURNING backtest_id
     """).format(schema=sql.Identifier(SCHEMA)), (
-        strategy_name, Json(backtest_config),
+        strategy_name, Json(backtest_config), strategy_id, status,
     ))
     backtest_id = cursor.fetchone()[0]
     conn.commit()
     cursor.close()
-    logger.info(f"Inserted {SCHEMA}.backtest: {strategy_name!r} -> backtest_id={backtest_id}")
+    logger.info(f"Inserted {SCHEMA}.backtest: {strategy_name!r} -> backtest_id={backtest_id} (status={status})")
     return backtest_id
+
+
+def start_backtest(conn, backtest_id):
+    """Mark a pending backtest row as running, stamping started_at now."""
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("""
+        UPDATE {schema}.backtest SET status = 'running', started_at = now()
+        WHERE backtest_id = %s
+    """).format(schema=sql.Identifier(SCHEMA)), (backtest_id,))
+    conn.commit()
+    cursor.close()
+
+
+def complete_backtest(conn, backtest_id, result_summary: dict):
+    """
+    Mark a backtest row as completed, stamping finished_at now and
+    storing result_summary (final_balance, total_net_profit,
+    total_trades, win_loss -- the same small dict run_backtest() itself
+    returns, minus the trade_ledger/equity_curve/balance_history/
+    drawdown_series arrays, which live in backtest.run_{backtest_id}
+    instead -- see db_utils.insert_backtest_trades).
+    """
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("""
+        UPDATE {schema}.backtest SET status = 'completed', finished_at = now(), result_summary = %s
+        WHERE backtest_id = %s
+    """).format(schema=sql.Identifier(SCHEMA)), (Json(result_summary), backtest_id))
+    conn.commit()
+    cursor.close()
+
+
+def fail_backtest(conn, backtest_id, error: str):
+    """Mark a backtest row as failed, stamping finished_at now and storing the error message."""
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("""
+        UPDATE {schema}.backtest SET status = 'failed', finished_at = now(), error = %s
+        WHERE backtest_id = %s
+    """).format(schema=sql.Identifier(SCHEMA)), (error, backtest_id))
+    conn.commit()
+    cursor.close()
 
 
 def get_backtest(conn, backtest_id):
@@ -633,7 +747,8 @@ def get_backtest(conn, backtest_id):
     """
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute(sql.SQL("""
-        SELECT backtest_id, strategy_name, backtest_config, created_at
+        SELECT backtest_id, strategy_name, strategy_id, backtest_config, status,
+               error, started_at, finished_at, result_summary, created_at
         FROM {schema}.backtest
         WHERE backtest_id = %s
     """).format(schema=sql.Identifier(SCHEMA)), (backtest_id,))
@@ -649,7 +764,8 @@ def get_backtests(conn, strategy_name=None):
     """
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     query = sql.SQL("""
-        SELECT backtest_id, strategy_name, backtest_config, created_at
+        SELECT backtest_id, strategy_name, strategy_id, backtest_config, status,
+               error, started_at, finished_at, result_summary, created_at
         FROM {schema}.backtest
     """).format(schema=sql.Identifier(SCHEMA))
     params = []

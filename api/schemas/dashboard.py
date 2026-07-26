@@ -7,8 +7,6 @@ DashboardSummary -- the top stat-card strip. Exactly the 10 widgets the
 spec asks for: Total Strategies, Active Strategies, Running Executions,
 Running Simulations, Connected Accounts, Trained ML Models, Total
 Backtests, Today's PnL, Overall Portfolio Value, Total Return.
-total_backtests is Optional and None until a real Backtests module/DB
-exists.
 
 The strategy table reuses schemas/strategies.py's StrategySummary
 directly (see dashboard_repo.list_strategies(), which calls
@@ -28,7 +26,7 @@ class DashboardSummary(BaseModel):
     running_simulations: int
     connected_accounts: int
     trained_ml_models: int
-    # None until a real Backtests module/DB exists -- never fabricated.
+    # Total requests submitted, any status. See backtests_repo.py.
     total_backtests: Optional[int] = None
 
     # Real closed-trade PnL for live trades that exited today (UTC).

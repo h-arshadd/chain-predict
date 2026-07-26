@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Tag, Table, Switch, Modal, Spin, Alert, message } from 'antd';
+import { Tag, Table, Spin, Alert } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, Cell,
@@ -121,29 +121,6 @@ export default function StrategyDetails() {
     load();
   }, [load]);
 
-  const toggleEnabled = (nextEnabled) => {
-    if (!nextEnabled) {
-      submitToggle(false);
-      return;
-    }
-    Modal.confirm({
-      title: 'Make this the live strategy for this pair?',
-      content: `If another strategy is currently enabled for ${data.exchange}/${data.coin.toUpperCase()}, it will be disabled automatically. This takes effect immediately.`,
-      okText: 'Switch strategy',
-      okButtonProps: { danger: true },
-      onOk: () => submitToggle(true),
-    });
-  };
-
-  const submitToggle = (nextEnabled) => {
-    api.patch(`/api/strategies/${id}/enabled`, { execution_enabled: nextEnabled })
-      .then((res) => {
-        setData(res.data);
-        message.success(nextEnabled ? 'Strategy enabled — now live for this pair' : 'Strategy disabled');
-      })
-      .catch((err) => message.error(err.message));
-  };
-
   const plots = data?.stats?.plots || {};
   const metrics = data?.stats?.metrics || {};
 
@@ -192,27 +169,21 @@ export default function StrategyDetails() {
   return (
     <div style={{ paddingTop: 8 }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 14, marginBottom: 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <button onClick={() => navigate(-1)} style={backBtnStyle}>
-            <ArrowLeftOutlined />
-          </button>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <h2 style={{ fontSize: 22, fontWeight: 700, color: '#F5F6F7', margin: 0 }}>{data.strategy_name}</h2>
-              <Tag style={{ background: statusStyle.bg, color: statusStyle.fg, border: 'none', borderRadius: 8, fontWeight: 600 }}>
-                {statusStyle.label}
-              </Tag>
-            </div>
-            <div style={{ color: '#9096A0', fontSize: 13, marginTop: 2 }}>
-              {data.coin.toUpperCase()} · {data.exchange} · {data.time_horizon} · Strategy ID {data.strategy_id}
-              {data.data_source && <> · performance from {data.data_source}</>}
-            </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 24, flexWrap: 'wrap' }}>
+        <button onClick={() => navigate(-1)} style={backBtnStyle}>
+          <ArrowLeftOutlined />
+        </button>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <h2 style={{ fontSize: 22, fontWeight: 700, color: '#F5F6F7', margin: 0 }}>{data.strategy_name}</h2>
+            <Tag style={{ background: statusStyle.bg, color: statusStyle.fg, border: 'none', borderRadius: 8, fontWeight: 600 }}>
+              {statusStyle.label}
+            </Tag>
           </div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ color: '#9096A0', fontSize: 13 }}>Execution Enabled</span>
-          <Switch checked={data.execution_enabled} onChange={toggleEnabled} />
+          <div style={{ color: '#9096A0', fontSize: 13, marginTop: 2 }}>
+            {data.coin.toUpperCase()} · {data.exchange} · {data.time_horizon} · Strategy ID {data.strategy_id}
+            {data.data_source && <> · performance from {data.data_source}</>}
+          </div>
         </div>
       </div>
 

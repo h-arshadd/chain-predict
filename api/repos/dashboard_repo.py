@@ -7,9 +7,8 @@ Exactly the 10 widgets the spec asks for -- Total Strategies, Active
 Strategies, Running Executions, Running Simulations, Connected
 Accounts, Trained ML Models, Total Backtests, Today's PnL, Overall
 Portfolio Value, Total Return -- plus the strategies table. Nothing
-extra. Nothing here is invented -- every widget either reads a real
-number from execution/simulator, or is returned as None and rendered by
-the frontend as "not available yet" (see total_backtests).
+extra. Nothing here is invented -- every widget reads a real number
+from execution/simulator/backtest data.
 
 Two pieces:
 
@@ -27,17 +26,13 @@ Two pieces:
    on the Strategies page) rather than a second, simulator-only
    implementation -- so this table and the Strategies page never
    disagree about which numbers are "real" for a given strategy.
-
-Total Backtests has no real reader -- no Backtests module/DB exists yet
-(see PROJECT_SUMMARY.md) -- so it's returned as None here, rendered by
-the frontend as an honest "not available yet", never fabricated.
 """
 
 import datetime as _dt
 
 from psycopg2 import sql
 
-from crypto_pipeline.utils.metadata_utils import get_strategies
+from crypto_pipeline.utils.metadata_utils import get_strategies, get_backtests
 from crypto_pipeline.utils.db_utils import (
     get_simulator_universe,
     get_simulator_state,
@@ -268,9 +263,10 @@ def get_summary(conn) -> dict:
         "running_simulations": _running_simulations(conn),
         "connected_accounts": connected_accounts,
         "trained_ml_models": ml_model_count,
-        # No backtest reader/module exists yet -- honest None, not a
-        # fabricated count. See PROJECT_SUMMARY.md section 3.
-        "total_backtests": None,
+        # Real count now that the Backtests module exists (see
+        # backtests_repo.py / metadata_utils.get_backtests) -- every
+        # request ever submitted, any status.
+        "total_backtests": len(get_backtests(conn)),
         # Real closed-trade PnL for live trades that exited today (UTC).
         # None if execution has never traded at all yet.
         "today_pnl": today_exec_pnl,

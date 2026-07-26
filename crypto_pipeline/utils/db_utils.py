@@ -375,6 +375,179 @@ def insert_trades(conn, exchange, symbol, trade_ledger):
 
     _copy_dataframe(conn, trade_ledger, "backtest", table_name)
 
+
+def _backtest_run_table(backtest_id):
+    """Table name for one specific backtest run's permanent trade ledger."""
+    return f"run_{backtest_id}"
+
+
+def insert_backtest_trades(conn, backtest_id, trade_ledger):
+    """
+    Store one specific backtest run's trade ledger permanently, keyed by
+    backtest_id -- backtest.run_{backtest_id}, e.g. backtest.run_42.
+
+    Unlike insert_trades() (backtest.{exchange}_{symbol}, DROPPED and
+    rebuilt on every run of that pair -- only the latest run survives),
+    this table is never dropped by a later run: every backtest_id gets
+    its own permanent table, so metadata.backtest's row-per-run history
+    actually has a matching, queryable ledger per run instead of every
+    row after the first pointing at data that's since been overwritten.
+
+    trade_ledger's columns come straight from run_backtest()'s own
+    "trade_ledger" DataFrame (entry_time, exit_time, direction,
+    entry_price, exit_price, exit_reason, quantity, gross_pnl,
+    commission, slippage, net_pnl, balance_after_trade, cumulative_pnl)
+    -- rebuilt from the DataFrame's own columns/dtypes, not hardcoded,
+    same reasoning as insert_trades/insert_signals.
+
+    If trade_ledger is empty (no trades this run), the table is still
+    created (empty, right columns) so downstream reads never have to
+    special-case "no ledger table" vs "ledger table with zero rows".
+    """
+    cursor = conn.cursor()
+    table_name = _backtest_run_table(backtest_id)
+
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS backtest"))
+
+    cursor.execute(sql.SQL("DROP TABLE IF EXISTS {schema}.{table}").format(
+        schema=sql.Identifier("backtest"),
+        table=sql.Identifier(table_name)
+    ))
+
+    if trade_ledger.empty:
+        # No columns to infer types from -- create a minimal, well-known
+        # empty shape matching run_backtest()'s trade_ledger columns, so
+        # a reader can always SELECT the same column names either way.
+        cursor.execute(sql.SQL("""
+            CREATE TABLE {schema}.{table} (
+                entry_time            TIMESTAMP,
+                exit_time              TIMESTAMP,
+                direction               TEXT,
+                entry_price             DOUBLE PRECISION,
+                exit_price              DOUBLE PRECISION,
+                exit_reason             TEXT,
+                quantity                DOUBLE PRECISION,
+                gross_pnl               DOUBLE PRECISION,
+                commission               DOUBLE PRECISION,
+                slippage                 DOUBLE PRECISION,
+                net_pnl                  DOUBLE PRECISION,
+                balance_after_trade      DOUBLE PRECISION,
+                cumulative_pnl           DOUBLE PRECISION
+            )
+        """).format(schema=sql.Identifier("backtest"), table=sql.Identifier(table_name)))
+        conn.commit()
+        cursor.close()
+        logger.info(f"Table created empty: backtest.{table_name} (no trades)")
+        return
+
+    column_defs = sql.SQL(", ").join(
+        sql.SQL("{col} {pg_type}").format(
+            col=sql.Identifier(col),
+            pg_type=sql.SQL(_pg_type_for(trade_ledger[col]))
+        )
+        for col in trade_ledger.columns
+    )
+
+    cursor.execute(sql.SQL("CREATE TABLE {schema}.{table} ({column_defs})").format(
+        schema=sql.Identifier("backtest"),
+        table=sql.Identifier(table_name),
+        column_defs=column_defs
+    ))
+    conn.commit()
+    cursor.close()
+    logger.info(f"Table created: backtest.{table_name} ({len(trade_ledger)} trades)")
+
+    _copy_dataframe(conn, trade_ledger, "backtest", table_name)
+
+
+def get_backtest_trades(conn, backtest_id):
+    """
+    Read back one backtest run's permanent trade ledger
+    (backtest.run_{backtest_id}), oldest first. Returns an empty
+    DataFrame (not None) if the table doesn't exist yet or has no rows
+    -- callers can always call .empty on the result.
+    """
+    table_name = _backtest_run_table(backtest_id)
+    cursor = conn.cursor()
+    qualified_name = sql.SQL(".").join(
+        [sql.Identifier("backtest"), sql.Identifier(table_name)]
+    ).as_string(conn)
+    cursor.execute(sql.SQL("SELECT to_regclass(%s)"), (qualified_name,))
+    exists = cursor.fetchone()[0] is not None
+    cursor.close()
+
+    if not exists:
+        return pd.DataFrame()
+
+    return pd.read_sql(
+        sql.SQL("SELECT * FROM {schema}.{table} ORDER BY entry_time ASC").format(
+            schema=sql.Identifier("backtest"),
+            table=sql.Identifier(table_name),
+        ).as_string(conn),
+        conn,
+    )
+
+
+def save_backtest_equity_curve(conn, backtest_id, equity_curve):
+    """
+    Persist one backtest run's full equity curve (run_backtest()'s own
+    "equity_curve" Series, datetime-indexed, one point per 1-minute bar)
+    to backtest.run_{backtest_id}_equity -- a separate table from the
+    trade ledger since the equity curve is a much denser, purely
+    numeric series (one row per bar, not per trade) that compute_stats()
+    needs as input but the trade list/UI table doesn't.
+
+    equity_curve : pandas Series, index = datetime, values = balance.
+    """
+    cursor = conn.cursor()
+    table_name = f"{_backtest_run_table(backtest_id)}_equity"
+
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS backtest"))
+    cursor.execute(sql.SQL("DROP TABLE IF EXISTS {schema}.{table}").format(
+        schema=sql.Identifier("backtest"), table=sql.Identifier(table_name)
+    ))
+    cursor.execute(sql.SQL("""
+        CREATE TABLE {schema}.{table} (
+            datetime TIMESTAMP NOT NULL,
+            balance  DOUBLE PRECISION NOT NULL
+        )
+    """).format(schema=sql.Identifier("backtest"), table=sql.Identifier(table_name)))
+    conn.commit()
+    cursor.close()
+
+    df = pd.DataFrame({"datetime": equity_curve.index, "balance": equity_curve.to_numpy()})
+    _copy_dataframe(conn, df, "backtest", table_name)
+
+
+def get_backtest_equity_curve(conn, backtest_id):
+    """
+    Read back one backtest run's full equity curve as a datetime-indexed
+    pandas Series (same shape run_backtest() itself returns), or None if
+    it was never saved (e.g. a failed run that never reached the save
+    step).
+    """
+    table_name = f"{_backtest_run_table(backtest_id)}_equity"
+    cursor = conn.cursor()
+    qualified_name = sql.SQL(".").join(
+        [sql.Identifier("backtest"), sql.Identifier(table_name)]
+    ).as_string(conn)
+    cursor.execute(sql.SQL("SELECT to_regclass(%s)"), (qualified_name,))
+    exists = cursor.fetchone()[0] is not None
+    cursor.close()
+
+    if not exists:
+        return None
+
+    df = pd.read_sql(
+        sql.SQL("SELECT datetime, balance FROM {schema}.{table} ORDER BY datetime ASC").format(
+            schema=sql.Identifier("backtest"), table=sql.Identifier(table_name),
+        ).as_string(conn),
+        conn,
+    )
+    if df.empty:
+        return None
+    return pd.Series(df["balance"].to_numpy(), index=pd.to_datetime(df["datetime"]))
+
 # ============================================================
 # The functions below are new additions for the Simulator Module.
 # Append them to the end of the existing crypto_pipeline/utils/db_utils.py
