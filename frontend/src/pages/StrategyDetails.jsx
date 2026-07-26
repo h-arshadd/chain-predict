@@ -152,10 +152,14 @@ export default function StrategyDetails() {
       <div style={{ paddingTop: 8 }}>
         <Alert
           type="error"
-          message="Couldn't load this strategy"
-          description={error}
-          action={<button onClick={load} style={backBtnStyle}>Retry</button>}
           showIcon
+          message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Couldn't load this strategy</span>}
+          description={<span style={{ color: '#C9CDD3' }}>{error}</span>}
+          action={<button onClick={load} style={backBtnStyle}>Retry</button>}
+          style={{
+            background: 'rgba(240, 70, 107, 0.08)',
+            border: '1px solid rgba(240, 70, 107, 0.3)',
+          }}
         />
       </div>
     );
@@ -191,9 +195,17 @@ export default function StrategyDetails() {
         <Alert
           type="warning"
           showIcon
-          message="This pair has more than one strategy enabled"
-          description="Execution treats this as misconfigured and skips the pair entirely until only one strategy is enabled. Use the switch above, or on another strategy for this pair, to resolve it."
-          style={{ marginBottom: 20 }}
+          message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>This pair has more than one strategy enabled</span>}
+          description={
+            <span style={{ color: '#C9CDD3' }}>
+              Execution treats this as misconfigured and skips the pair entirely until only one strategy is enabled. Use the switch above, or on another strategy for this pair, to resolve it.
+            </span>
+          }
+          style={{
+            marginBottom: 20,
+            background: 'rgba(255, 138, 92, 0.08)',
+            border: '1px solid rgba(255, 138, 92, 0.3)',
+          }}
         />
       )}
 
@@ -201,9 +213,17 @@ export default function StrategyDetails() {
         <Alert
           type="info"
           showIcon
-          message="Execution hasn't run for this strategy yet"
-          description="This page shows live execution performance only. Once this strategy has closed trades in execution, its return, risk stats, equity curve, and trade ledger will appear here."
-          style={{ marginBottom: 20 }}
+          message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Execution hasn't run for this strategy yet</span>}
+          description={
+            <span style={{ color: '#C9CDD3' }}>
+              This page shows live execution performance only. Once this strategy has closed trades in execution, its return, risk stats, equity curve, and trade ledger will appear here.
+            </span>
+          }
+          style={{
+            marginBottom: 20,
+            background: 'rgba(61, 220, 151, 0.08)',
+            border: '1px solid rgba(61, 220, 151, 0.25)',
+          }}
         />
       )}
 
