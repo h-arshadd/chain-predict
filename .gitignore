@@ -34,6 +34,7 @@ crypto_pipeline/ml/outputs/
 
 crypto_pipeline/stats/outputs/
 crypto_pipeline/preprocessing_lab/outputs/
+crypto_pipeline/preprocessing_lab/model_evaluation/outputs/
 crypto_pipeline/backtest/backtest_outputs
 crypto_pipeline/signals/signal_outputs
 crypto_pipeline/validation/outputs
