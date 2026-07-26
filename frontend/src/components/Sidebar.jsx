@@ -13,7 +13,7 @@ const menuItems = [
   { key: '/', icon: <DashboardOutlined />, label: 'Dashboard' },
   { key: '/strategies', icon: <LineChartOutlined />, label: 'Strategies' },
   { key: '/wallets', icon: <WalletOutlined />, label: 'Wallets' },
-  { key: '/deployment', icon: <RocketOutlined />, label: 'Deployment' },
+  { key: '/deployment', icon: <RocketOutlined />, label: 'Execution' },
   { key: '/backtests', icon: <ExperimentOutlined />, label: 'Backtests' },
   { key: '/models', icon: <FundOutlined />, label: 'ML Models' },
   { key: '/sentiment', icon: <SmileOutlined />, label: 'Sentiment' },

@@ -84,6 +84,24 @@ function buildColumns(navigate, toggleEnabled) {
       },
     },
     {
+      title: 'Trade Status', dataIndex: 'position', key: 'trade_status',
+      filters: [
+        { text: 'Open', value: 'open' },
+        { text: 'Closed', value: 'closed' },
+      ],
+      onFilter: (value, record) => (value === 'open' ? !!record.position : !record.position),
+      render: (position) =>
+        position ? (
+          <Tag style={{ background: 'rgba(61,220,151,0.12)', color: MINT, border: 'none', borderRadius: 8, fontWeight: 600 }}>
+            Open
+          </Tag>
+        ) : (
+          <Tag style={{ background: 'rgba(255,255,255,0.06)', color: '#9096A0', border: 'none', borderRadius: 8, fontWeight: 600 }}>
+            Closed
+          </Tag>
+        ),
+    },
+    {
       title: 'Position', dataIndex: 'position', key: 'position',
       render: (position) =>
         position ? (
@@ -251,7 +269,7 @@ export default function Deployment() {
   return (
     <div style={{ paddingTop: 8 }}>
       <div style={{ marginBottom: 24 }}>
-        <h2 style={{ fontSize: 24, fontWeight: 700, color: '#F5F6F7', margin: 0 }}>Strategy Deployment</h2>
+        <h2 style={{ fontSize: 24, fontWeight: 700, color: '#F5F6F7', margin: 0 }}>Execution</h2>
         <p style={{ color: '#9096A0', fontSize: 14, marginTop: 4 }}>
           Live executions across all connected wallets. Select a row for full execution details.
         </p>
