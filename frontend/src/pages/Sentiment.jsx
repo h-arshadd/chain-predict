@@ -217,9 +217,9 @@ export default function Sentiment() {
 
       {coinsError && (
         <Alert
-          type="error" message="Couldn't load tracked coins" description={coinsError}
+          type="error" message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Couldn't load tracked coins</span>} description={<span style={{ color: '#C9CDD3' }}>{coinsError}</span>}
           action={<button onClick={loadCoins} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#F5F6F7', borderRadius: 8, padding: '4px 12px', cursor: 'pointer' }}>Retry</button>}
-          style={{ marginBottom: 20 }} showIcon
+          style={{ marginBottom: 20, background: 'rgba(240, 70, 107, 0.08)', border: '1px solid rgba(240, 70, 107, 0.3)' }} showIcon
         />
       )}
 
@@ -237,9 +237,9 @@ export default function Sentiment() {
 
       {error && selectedCoin && (
         <Alert
-          type="error" message={`Couldn't load sentiment for ${selectedCoin}`} description={error}
+          type="error" message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>{`Couldn't load sentiment for ${selectedCoin}`}</span>} description={<span style={{ color: '#C9CDD3' }}>{error}</span>}
           action={<button onClick={loadOverview} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#F5F6F7', borderRadius: 8, padding: '4px 12px', cursor: 'pointer' }}>Retry</button>}
-          style={{ marginBottom: 20 }} showIcon
+          style={{ marginBottom: 20, background: 'rgba(240, 70, 107, 0.08)', border: '1px solid rgba(240, 70, 107, 0.3)' }} showIcon
         />
       )}
 

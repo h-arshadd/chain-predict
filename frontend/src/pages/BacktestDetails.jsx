@@ -195,10 +195,14 @@ export default function BacktestDetails() {
       <div style={{ paddingTop: 8 }}>
         <Alert
           type="error"
-          message="Couldn't load this backtest"
-          description={error}
-          action={<button onClick={load} style={backBtnStyle}>Retry</button>}
           showIcon
+          message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Couldn't load this backtest</span>}
+          description={<span style={{ color: '#C9CDD3' }}>{error}</span>}
+          action={<button onClick={load} style={backBtnStyle}>Retry</button>}
+          style={{
+            background: 'rgba(240, 70, 107, 0.08)',
+            border: '1px solid rgba(240, 70, 107, 0.3)',
+          }}
         />
       </div>
     );
@@ -239,13 +243,43 @@ export default function BacktestDetails() {
       </div>
 
       {data.status === 'pending' && (
-        <Alert type="info" showIcon message="Queued" description="This backtest hasn't started running yet." style={{ marginBottom: 20 }} />
+        <Alert
+          type="info"
+          showIcon
+          message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Queued</span>}
+          description={<span style={{ color: '#C9CDD3' }}>This backtest hasn't started running yet.</span>}
+          style={{
+            marginBottom: 20,
+            background: 'rgba(61, 220, 151, 0.08)',
+            border: '1px solid rgba(61, 220, 151, 0.25)',
+          }}
+        />
       )}
       {data.status === 'running' && (
-        <Alert type="warning" showIcon message="Running" description="Pulling data and running the backtest engine — this page refreshes automatically." style={{ marginBottom: 20 }} />
+        <Alert
+          type="warning"
+          showIcon
+          message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Running</span>}
+          description={<span style={{ color: '#C9CDD3' }}>Pulling data and running the backtest engine — this page refreshes automatically.</span>}
+          style={{
+            marginBottom: 20,
+            background: 'rgba(255, 138, 92, 0.08)',
+            border: '1px solid rgba(255, 138, 92, 0.3)',
+          }}
+        />
       )}
       {data.status === 'failed' && (
-        <Alert type="error" showIcon message="Backtest failed" description={data.error || 'Unknown error.'} style={{ marginBottom: 20 }} />
+        <Alert
+          type="error"
+          showIcon
+          message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Backtest failed</span>}
+          description={<span style={{ color: '#C9CDD3' }}>{data.error || 'Unknown error.'}</span>}
+          style={{
+            marginBottom: 20,
+            background: 'rgba(240, 70, 107, 0.08)',
+            border: '1px solid rgba(240, 70, 107, 0.3)',
+          }}
+        />
       )}
 
       {/* Backtest configuration */}

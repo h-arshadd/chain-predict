@@ -278,10 +278,10 @@ export default function Deployment() {
       {error && (
         <Alert
           type="error"
-          message="Couldn't load deployments"
-          description={error}
+          message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Couldn't load deployments</span>}
+          description={<span style={{ color: '#C9CDD3' }}>{error}</span>}
           action={<button onClick={load} style={iconBtnStyle}>Retry</button>}
-          style={{ marginBottom: 20 }}
+          style={{ marginBottom: 20, background: 'rgba(240, 70, 107, 0.08)', border: '1px solid rgba(240, 70, 107, 0.3)' }}
           showIcon
         />
       )}

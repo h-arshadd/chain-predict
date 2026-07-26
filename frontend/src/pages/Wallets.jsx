@@ -392,10 +392,10 @@ export default function Wallets() {
       {error && (
         <Alert
           type="error"
-          message="Couldn't load wallets"
-          description={error}
+          message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Couldn't load wallets</span>}
+          description={<span style={{ color: '#C9CDD3' }}>{error}</span>}
           action={<button onClick={loadWallets} style={iconBtnStyle}>Retry</button>}
-          style={{ marginBottom: 20 }}
+          style={{ marginBottom: 20, background: 'rgba(240, 70, 107, 0.08)', border: '1px solid rgba(240, 70, 107, 0.3)' }}
           showIcon
         />
       )}

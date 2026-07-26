@@ -190,10 +190,10 @@ export default function Backtests() {
       {error && (
         <Alert
           type="error"
-          message="Couldn't load backtests"
-          description={error}
+          message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Couldn't load backtests</span>}
+          description={<span style={{ color: '#C9CDD3' }}>{error}</span>}
           action={<button onClick={load} style={{ background: 'none', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, color: '#F5F6F7', padding: '4px 10px', cursor: 'pointer' }}>Retry</button>}
-          style={{ marginBottom: 20 }}
+          style={{ marginBottom: 20, background: 'rgba(240, 70, 107, 0.08)', border: '1px solid rgba(240, 70, 107, 0.3)' }}
           showIcon
         />
       )}

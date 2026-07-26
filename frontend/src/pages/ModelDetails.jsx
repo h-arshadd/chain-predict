@@ -144,10 +144,11 @@ export default function ModelDetails() {
       <div style={{ paddingTop: 8 }}>
         <Alert
           type="error"
-          message="Couldn't load this model run"
-          description={error}
+          message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Couldn't load this model run</span>}
+          description={<span style={{ color: '#C9CDD3' }}>{error}</span>}
           action={<button onClick={load} style={backBtnStyle}>Retry</button>}
           showIcon
+          style={{ background: 'rgba(240, 70, 107, 0.08)', border: '1px solid rgba(240, 70, 107, 0.3)' }}
         />
       </div>
     );

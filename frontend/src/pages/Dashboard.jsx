@@ -212,10 +212,10 @@ export default function Dashboard() {
       {summaryError && (
         <Alert
           type="error"
-          message="Couldn't load dashboard summary"
-          description={summaryError}
+          message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Couldn't load dashboard summary</span>}
+          description={<span style={{ color: '#C9CDD3' }}>{summaryError}</span>}
           action={<button onClick={loadSummary} style={iconBtnStyle}>Retry</button>}
-          style={{ marginBottom: 20 }}
+          style={{ marginBottom: 20, background: 'rgba(240, 70, 107, 0.08)', border: '1px solid rgba(240, 70, 107, 0.3)' }}
           showIcon
         />
       )}
@@ -255,10 +255,10 @@ export default function Dashboard() {
         {tableError && (
           <Alert
             type="error"
-            message="Couldn't load strategies"
-            description={tableError}
+            message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Couldn't load strategies</span>}
+            description={<span style={{ color: '#C9CDD3' }}>{tableError}</span>}
             action={<button onClick={loadStrategies} style={iconBtnStyle}>Retry</button>}
-            style={{ marginBottom: 16 }}
+            style={{ marginBottom: 16, background: 'rgba(240, 70, 107, 0.08)', border: '1px solid rgba(240, 70, 107, 0.3)' }}
             showIcon
           />
         )}
