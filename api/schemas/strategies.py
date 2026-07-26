@@ -31,6 +31,12 @@ class StrategyEnabledUpdate(BaseModel):
     execution_enabled: bool
 
 
+class PnlSeriesPoint(BaseModel):
+    """One point in a strategy row's dashboard sparkline -- v is % return vs initial_balance, not raw balance."""
+    t: str
+    v: float
+
+
 class StrategySummary(BaseModel):
     """One row in the Strategies table."""
     strategy_id: int
@@ -61,6 +67,12 @@ class StrategySummary(BaseModel):
     latest_return_pct: Optional[float] = None
     sharpe_ratio: Optional[float] = None
     win_rate_pct: Optional[float] = None
+    # Small downsampled equity-curve-as-%-return series for a per-row
+    # sparkline (see strategies_repo._pnl_series_from_equity) -- same
+    # execution-then-simulator data source as the fields above, just
+    # shaped as a short point list instead of one number. None if this
+    # strategy has never traded (nothing to build a curve from).
+    pnl_series: Optional[list[PnlSeriesPoint]] = None
     created_at: Optional[datetime] = None
 
 

@@ -159,11 +159,19 @@ def _pair_status(strategy_row: dict, siblings: list[dict]) -> tuple[bool, str]:
 def _performance_for_strategy(conn, strategy_row: dict) -> dict:
     """
     Returns {"latest_return_pct", "sharpe_ratio", "win_rate_pct",
-    "data_source"} for one strategy row. Tries execution first (a
-    strategy row that's execution_enabled and has actually traded live is
-    the more meaningful number), falls back to simulator, and returns all
-    None / data_source=None if neither has ever run this exact
-    (strategy_name, exchange, coin).
+    "pnl_series", "data_source"} for one strategy row. Tries execution
+    first (a strategy row that's execution_enabled and has actually
+    traded live is the more meaningful number), falls back to simulator,
+    and returns all None / data_source=None if neither has ever run this
+    exact (strategy_name, exchange, coin).
+
+    pnl_series is a small downsampled list of {"t", "v"} points (v = % of
+    initial_balance, so 0 = breakeven) built from the same equity curve
+    build_execution_equity_curve_from_ledger()/build_equity_curve_from_ledger()
+    (simulator's) already reconstruct for compute_stats() on the detail
+    page -- reused here at list-scale, just capped and thinned out for a
+    sparkline instead of a full chart. None if there's no ledger to build
+    one from yet.
     """
     exchange = strategy_row["exchange"]
     coin = strategy_row["coin"]
@@ -174,19 +182,55 @@ def _performance_for_strategy(conn, strategy_row: dict) -> dict:
     if exec_config is not None:
         exec_summary = get_execution_summary(conn, exchange, coin, strategy_name)
         if exec_summary is not None and exec_summary.get("total_trades", 0) > 0:
-            perf = _perf_from_summary(exec_summary, exec_config.get("initial_balance"))
+            initial_balance = exec_config.get("initial_balance")
+            perf = _perf_from_summary(exec_summary, initial_balance)
             if perf is not None:
+                equity = build_execution_equity_curve_from_ledger(conn, exchange, coin, strategy_name, initial_balance)
+                perf["pnl_series"] = _pnl_series_from_equity(equity, initial_balance)
                 return {**perf, "data_source": "execution"}
 
     sim_config = get_simulator_config(conn, exchange, coin)
     if sim_config is not None:
         sim_summary = get_simulator_summary(conn, exchange, coin, strategy_name, time_horizon)
         if sim_summary is not None and sim_summary.get("total_trades", 0) > 0:
-            perf = _perf_from_summary(sim_summary, sim_config.get("initial_balance"))
+            initial_balance = sim_config.get("initial_balance")
+            perf = _perf_from_summary(sim_summary, initial_balance)
             if perf is not None:
+                equity = build_simulator_equity_curve_from_ledger(conn, exchange, coin, strategy_name, time_horizon, initial_balance)
+                perf["pnl_series"] = _pnl_series_from_equity(equity, initial_balance)
                 return {**perf, "data_source": "simulator"}
 
-    return {"latest_return_pct": None, "sharpe_ratio": None, "win_rate_pct": None, "data_source": None}
+    return {"latest_return_pct": None, "sharpe_ratio": None, "win_rate_pct": None, "pnl_series": None, "data_source": None}
+
+
+# Sparkline point cap -- a dashboard row-height chart needs enough points
+# to look like a real line, not hundreds/thousands like the full Backtest/
+# Execution Details equity curve. Kept far smaller than that page's own
+# MAX_EQUITY_POINTS (2000) since this renders at a fraction of the size,
+# once per row, for potentially many rows on one page.
+_PNL_SPARKLINE_POINTS = 30
+
+
+def _pnl_series_from_equity(equity, initial_balance) -> list[dict] | None:
+    """
+    Downsample a pandas equity Series (see build_execution_equity_curve_from_ledger
+    / build_equity_curve_from_ledger) into <= _PNL_SPARKLINE_POINTS
+    {"t": iso timestamp, "v": pct return vs initial_balance} points for a
+    per-row sparkline. Returns None if there's no equity curve or no
+    initial_balance to normalize against (mirrors _perf_from_summary's
+    same guard).
+    """
+    if equity is None or len(equity) == 0 or not initial_balance:
+        return None
+
+    if len(equity) > _PNL_SPARKLINE_POINTS:
+        step = len(equity) // _PNL_SPARKLINE_POINTS
+        equity = equity.iloc[::step]
+
+    return [
+        {"t": ts.isoformat() if hasattr(ts, "isoformat") else str(ts), "v": (float(val) - initial_balance) / initial_balance * 100.0}
+        for ts, val in equity.items()
+    ]
 
 
 def _perf_from_summary(summary: dict, initial_balance) -> dict | None:
@@ -252,6 +296,7 @@ def list_strategies(conn) -> list[dict]:
             "latest_return_pct": perf["latest_return_pct"],
             "sharpe_ratio": perf["sharpe_ratio"],
             "win_rate_pct": perf["win_rate_pct"],
+            "pnl_series": perf.get("pnl_series"),
             "created_at": row.get("created_at"),
         })
     return results

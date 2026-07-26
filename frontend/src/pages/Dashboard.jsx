@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Table, Input, Select, Spin, Alert, Tooltip } from 'antd';
+import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts';
 import { useNavigate } from 'react-router-dom';
 import {
   FundOutlined,
@@ -52,6 +53,30 @@ function SectionHeader({ title, subtitle }) {
     <div style={{ marginBottom: 18 }}>
       <h3 style={{ fontSize: 19, fontWeight: 700, color: '#F5F6F7', margin: 0 }}>{title}</h3>
       {subtitle && <p style={{ color: '#9096A0', fontSize: 13, margin: '4px 0 0' }}>{subtitle}</p>}
+    </div>
+  );
+}
+
+// Small per-row PnL sparkline for the strategy table -- series is
+// [{t, v}], v = % return vs initial_balance (see
+// strategies_repo._pnl_series_from_equity). Color follows the series'
+// own net direction (last point vs first), not latest_return_pct, so a
+// strategy that's currently up but was net negative over this window
+// still reads as red -- matches what the line itself shows.
+function PnlSparkline({ series }) {
+  if (!series || series.length < 2) {
+    return <span style={{ color: '#6B7280', fontSize: 12 }}>—</span>;
+  }
+  const trendUp = series[series.length - 1].v >= series[0].v;
+  const color = trendUp ? MINT : RED;
+  return (
+    <div style={{ width: 100, height: 28 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={series} margin={{ top: 2, right: 2, left: 2, bottom: 2 }}>
+          <YAxis hide domain={['auto', 'auto']} />
+          <Line type="monotone" dataKey="v" stroke={color} strokeWidth={1.75} dot={false} isAnimationActive={false} />
+        </LineChart>
+      </ResponsiveContainer>
     </div>
   );
 }
@@ -154,25 +179,15 @@ export default function Dashboard() {
     { title: 'Exchange', dataIndex: 'exchange', key: 'exchange', render: (t) => <span style={{ color: '#9096A0' }}>{t[0].toUpperCase() + t.slice(1)}</span> },
     { title: 'Timeframe', dataIndex: 'time_horizon', key: 'time_horizon', render: (t) => <span style={{ color: '#9096A0' }}>{t}</span> },
     {
-      title: 'Current Status', dataIndex: 'pair_status', key: 'pair_status',
-      filters: Object.keys(STATUS_META).map((k) => ({ text: STATUS_META[k].label, value: k })),
-      onFilter: (value, record) => record.pair_status === value,
-      render: (status) => {
-        const meta = STATUS_META[status] || { label: status, bg: 'rgba(255,255,255,0.06)', fg: '#9096A0' };
-        return (
-          <span style={{
-            fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 8,
-            background: meta.bg, color: meta.fg,
-          }}>
-            {meta.label}
-          </span>
-        );
-      },
-    },
-    {
       title: 'Latest Return', dataIndex: 'latest_return_pct', key: 'latest_return_pct',
       sorter: (a, b) => (a.latest_return_pct ?? -Infinity) - (b.latest_return_pct ?? -Infinity),
       render: (v) => <span style={{ color: pnlColor(v), fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}>{fmtPct(v)}</span>,
+    },
+    {
+      title: 'PnL',
+      dataIndex: 'pnl_series',
+      key: 'pnl_series',
+      render: (series) => <PnlSparkline series={series} />,
     },
     {
       title: (
@@ -190,6 +205,22 @@ export default function Dashboard() {
       title: 'Win Rate', dataIndex: 'win_rate_pct', key: 'win_rate_pct',
       sorter: (a, b) => (a.win_rate_pct ?? -Infinity) - (b.win_rate_pct ?? -Infinity),
       render: (v) => <span style={{ fontFamily: 'ui-monospace, monospace', color: '#F5F6F7' }}>{v == null ? '—' : `${v.toFixed(1)}%`}</span>,
+    },
+    {
+      title: 'Current Status', dataIndex: 'pair_status', key: 'pair_status',
+      filters: Object.keys(STATUS_META).map((k) => ({ text: STATUS_META[k].label, value: k })),
+      onFilter: (value, record) => record.pair_status === value,
+      render: (status) => {
+        const meta = STATUS_META[status] || { label: status, bg: 'rgba(255,255,255,0.06)', fg: '#9096A0' };
+        return (
+          <span style={{
+            fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 8,
+            background: meta.bg, color: meta.fg,
+          }}>
+            {meta.label}
+          </span>
+        );
+      },
     },
   ];
 
