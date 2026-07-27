@@ -59,33 +59,6 @@ function buildColumns() {
         ),
     },
     {
-      title: 'Status', dataIndex: 'status', key: 'status',
-      filters: Object.entries(STATUS_META).map(([value, m]) => ({ text: m.label, value })),
-      onFilter: (value, record) => record.status === value,
-      render: (status, record) => {
-        const m = STATUS_META[status] || STATUS_META.never_run;
-        return <Tag style={{ background: m.bg, color: m.fg, border: 'none', borderRadius: 8, fontWeight: 600 }}>{m.label}</Tag>;
-      },
-    },
-    {
-      title: 'Trade Status', dataIndex: 'position', key: 'trade_status',
-      filters: [
-        { text: 'Open', value: 'open' },
-        { text: 'Closed', value: 'closed' },
-      ],
-      onFilter: (value, record) => (value === 'open' ? !!record.position : !record.position),
-      render: (position) =>
-        position ? (
-          <Tag style={{ background: 'rgba(61,220,151,0.12)', color: MINT, border: 'none', borderRadius: 8, fontWeight: 600 }}>
-            Open
-          </Tag>
-        ) : (
-          <Tag style={{ background: 'rgba(255,255,255,0.06)', color: '#9096A0', border: 'none', borderRadius: 8, fontWeight: 600 }}>
-            Closed
-          </Tag>
-        ),
-    },
-    {
       title: 'Position', dataIndex: 'position', key: 'position',
       render: (position) =>
         position ? (
@@ -114,10 +87,40 @@ function buildColumns() {
         </span>
       ),
     },
-    { title: 'Last Signal', dataIndex: 'last_signal', key: 'last_signal', render: (t) => <span style={{ color: '#9096A0', fontSize: 13 }}>{t || '—'}</span> },
+    {
+      title: 'Last Signal', dataIndex: 'position', key: 'last_signal',
+      render: (position) =>
+        position ? (
+          <span style={{ color: position.direction === 'long' ? MINT : RED, fontWeight: 600, fontSize: 13, textTransform: 'capitalize' }}>
+            {position.direction}
+          </span>
+        ) : (
+          <span style={{ color: '#9096A0', fontSize: 13 }}>—</span>
+        ),
+    },
     {
       title: 'Last Execution', dataIndex: 'last_processed', key: 'last_processed',
       render: (t) => <span style={{ color: '#6B7280', fontSize: 13 }}>{t ? new Date(t).toLocaleString() : '—'}</span>,
+    },
+    {
+      title: 'Status', dataIndex: 'status', key: 'status',
+      render: (status, record) => {
+        const m = STATUS_META[status] || STATUS_META.never_run;
+        return <Tag style={{ background: m.bg, color: m.fg, border: 'none', borderRadius: 8, fontWeight: 600 }}>{m.label}</Tag>;
+      },
+    },
+    {
+      title: 'Trade Status', dataIndex: 'position', key: 'trade_status',
+      render: (position) =>
+        position ? (
+          <Tag style={{ background: 'rgba(61,220,151,0.12)', color: MINT, border: 'none', borderRadius: 8, fontWeight: 600 }}>
+            Open
+          </Tag>
+        ) : (
+          <Tag style={{ background: 'rgba(255,255,255,0.06)', color: '#9096A0', border: 'none', borderRadius: 8, fontWeight: 600 }}>
+            Closed
+          </Tag>
+        ),
     },
   ];
 }
