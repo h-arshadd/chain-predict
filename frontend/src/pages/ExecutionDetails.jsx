@@ -2,10 +2,6 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Tag, Table, Spin, Alert } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
-import {
-  AreaChart, Area, LineChart, Line, BarChart, Bar, Cell,
-  ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip,
-} from 'recharts';
 import { api } from '../lib/api';
 import { fmtUsd, pnlColor } from '../lib/format';
 import { recordsToSeries, monthlyHeatmapToRows, heatColor } from '../lib/quantstats';
@@ -13,9 +9,13 @@ import { METRIC_CARDS_COL_1, METRIC_CARDS_COL_2, fmtMetric } from '../lib/metric
 import Panel, { panelFlat as panel } from '../components/Panel';
 import EmptyChart from '../components/EmptyChart';
 import TradePnlChart from '../components/TradePnlChart';
+import EquityCurveChart from '../components/EquityCurveChart';
+import DrawdownChart from '../components/DrawdownChart';
+import RollingSharpeChart from '../components/RollingSharpeChart';
+import RollingVolatilityChart from '../components/RollingVolatilityChart';
+import YearlyReturnsChart from '../components/YearlyReturnsChart';
 import KeyValue from '../components/KeyValue';
 import StatBox from '../components/StatBox';
-import { tooltipStyle, tooltipLabelStyle, tooltipItemStyle, axisStyle } from '../lib/chartStyle';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
@@ -210,103 +210,27 @@ export default function ExecutionDetails() {
       {/* Equity Curve + Drawdown */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
         <Panel title="Equity Curve">
-          {equitySeries.length > 1 ? (
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={equitySeries} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="eqGrad2" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={MINT} stopOpacity={0.35} />
-                    <stop offset="95%" stopColor={MINT} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                <YAxis tick={axisStyle} axisLine={false} tickLine={false} domain={['auto', 'auto']} />
-                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
-                <Area type="monotone" dataKey="balance" stroke={MINT} strokeWidth={2.5} fill="url(#eqGrad2)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          ) : (
-            <EmptyChart text="Not enough closed trades yet to plot an equity curve." />
-          )}
+          <EquityCurveChart series={equitySeries} gradientId="eqGrad2" emptyText="Not enough closed trades yet to plot an equity curve." />
         </Panel>
         <Panel title="Drawdown">
-          {drawdownSeries.length > 1 ? (
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={drawdownSeries} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="ddGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={RED} stopOpacity={0.35} />
-                    <stop offset="95%" stopColor={RED} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                <YAxis tick={axisStyle} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} />
-                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v) => `${(v * 100).toFixed(2)}%`} />
-                <Area type="monotone" dataKey="dd" stroke={RED} strokeWidth={2} fill="url(#ddGrad)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          ) : (
-            <EmptyChart text={data.stats ? 'No drawdown periods yet.' : 'Not enough trade history for stats yet.'} />
-          )}
+          <DrawdownChart series={drawdownSeries} gradientId="ddGrad" emptyText={data.stats ? 'No drawdown periods yet.' : 'Not enough trade history for stats yet.'} />
         </Panel>
       </div>
 
       {/* Rolling Sharpe + Rolling Volatility */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
         <Panel title="Rolling Sharpe">
-          {rollingSharpeSeries.length > 1 ? (
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={rollingSharpeSeries} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
-                <Line type="monotone" dataKey="sharpe" stroke={MINT} strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <EmptyChart text="Not enough history for a rolling Sharpe window yet." />
-          )}
+          <RollingSharpeChart series={rollingSharpeSeries} emptyText="Not enough history for a rolling Sharpe window yet." />
         </Panel>
         <Panel title="Rolling Volatility">
-          {rollingVolSeries.length > 1 ? (
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={rollingVolSeries} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
-                <Line type="monotone" dataKey="vol" stroke={AMBER} strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <EmptyChart text="Not enough history for rolling volatility yet." />
-          )}
+          <RollingVolatilityChart series={rollingVolSeries} emptyText="Not enough history for rolling volatility yet." />
         </Panel>
       </div>
 
       {/* Yearly Returns + Trade PnL sequence */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
         <Panel title="Yearly Returns">
-          {yearlyReturns.length > 0 ? (
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={yearlyReturns} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                <XAxis dataKey="year" tick={axisStyle} axisLine={false} tickLine={false} />
-                <YAxis tick={axisStyle} axisLine={false} tickLine={false} tickFormatter={(v) => `${v.toFixed(0)}%`} />
-                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v) => `${v.toFixed(2)}%`} />
-                <Bar dataKey="ret" radius={[6, 6, 6, 6]}>
-                  {yearlyReturns.map((entry, i) => (
-                    <Cell key={i} fill={entry.ret >= 0 ? MINT : RED} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <EmptyChart text="Not enough history to compute yearly returns." />
-          )}
+          <YearlyReturnsChart data={yearlyReturns} emptyText="Not enough history to compute yearly returns." />
         </Panel>
         <Panel title="Trade PnL Sequence">
           <TradePnlChart trades={data.trades} reverse />
