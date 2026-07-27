@@ -15,9 +15,10 @@ const panel = {
   borderRadius: 20,
 };
 
-// Backend statuses: "running" | "paused" | "unassigned" | "never_run"
+// Backend statuses: "running" | "flat" | "paused" | "unassigned" | "never_run"
 const STATUS_META = {
   running: { label: 'Running', bg: 'rgba(61,220,151,0.12)', fg: MINT },
+  flat: { label: 'Flat', bg: 'rgba(255,255,255,0.06)', fg: '#9096A0' },
   paused: { label: 'Paused', bg: 'rgba(255,138,92,0.14)', fg: AMBER },
   unassigned: { label: 'Unassigned', bg: 'rgba(255,255,255,0.06)', fg: '#9096A0' },
   never_run: { label: 'Never Run', bg: 'rgba(255,255,255,0.06)', fg: '#6B7280' },
