@@ -24,6 +24,12 @@ execution.config -- see _wallet_expandable_row() below. No new tables:
 same execution.config/positions/*_trades + metadata.strategy this router
 already re-derives for the Strategy Deployment page, just filtered to
 one wallet.
+
+Also: GET/PATCH/DELETE /{account_name}/assignments -- the "one strategy
+per coin" picker. Click a wallet to see every execution-configured coin,
+pick a strategy per coin, and that pair's execution.config gets pointed
+at this wallet while the chosen strategy becomes execution_enabled (see
+wallets_repo.assign_strategy/unassign_strategy).
 """
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -33,6 +39,7 @@ from api.core.responses import item, list_response
 from api.schemas.wallets import (
     WalletCreate, WalletUpdate, WalletEnabledUpdate,
     WalletSummary, WalletDetail,
+    AssignableCoin, StrategyAssignmentUpdate,
 )
 from api.repos import wallets_repo, wallets_live as wallet_live, executions_repo
 from crypto_pipeline.accounts.accounts_utils import get_account_stats
@@ -222,3 +229,39 @@ def set_enabled(account_name: str, body: WalletEnabledUpdate, conn=Depends(get_c
     if row is None:
         raise HTTPException(status_code=404, detail=f"Wallet '{account_name}' not found")
     return item(_to_summary(conn, row).model_dump())
+
+
+# ----------------------------------------------------------------------
+# Strategy assignment -- "one strategy per coin" picker. Click a wallet
+# on the Wallets page to see every execution-configured coin and pick
+# which strategy runs for it on this wallet.
+# ----------------------------------------------------------------------
+
+@router.get("/{account_name}/assignments")
+def list_assignments(account_name: str, conn=Depends(get_conn)):
+    if wallets_repo.get_wallet(conn, account_name) is None:
+        raise HTTPException(status_code=404, detail=f"Wallet '{account_name}' not found")
+
+    rows = wallets_repo.list_assignable_coins(conn, account_name)
+    return list_response([AssignableCoin(**r).model_dump() for r in rows], len(rows), len(rows), 0)
+
+
+@router.patch("/{account_name}/assignments")
+def set_assignment(account_name: str, body: StrategyAssignmentUpdate, conn=Depends(get_conn)):
+    if wallets_repo.get_wallet(conn, account_name) is None:
+        raise HTTPException(status_code=404, detail=f"Wallet '{account_name}' not found")
+
+    try:
+        result = wallets_repo.assign_strategy(conn, account_name, body.exchange, body.symbol, body.strategy_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return item(result)
+
+
+@router.delete("/{account_name}/assignments")
+def clear_assignment(account_name: str, exchange: str, symbol: str, conn=Depends(get_conn)):
+    if wallets_repo.get_wallet(conn, account_name) is None:
+        raise HTTPException(status_code=404, detail=f"Wallet '{account_name}' not found")
+
+    wallets_repo.unassign_strategy(conn, exchange, symbol)
+    return None

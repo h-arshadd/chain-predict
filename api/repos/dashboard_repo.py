@@ -170,6 +170,15 @@ def _today_simulator_pnl(conn) -> float | None:
     Table lookup goes through sql.Identifier + as_string() for
     to_regclass, same quoting fix get_simulator_summary() uses, so
     strategy names with uppercase letters resolve correctly.
+
+    NOTE: unlike execution's trades table, the simulator's Trade Ledger
+    (see append_simulator_trades) has no `status` column -- its columns
+    are whatever's in the closed-trade DataFrame (direction,
+    entry_date_time, exit_date_time, entry_price, exit_price, quantity,
+    gross_pnl, commission, slippage, net_pnl, exit_reason, balance).
+    Every row in this table is already a closed trade (only closed
+    trades ever get appended), so there's nothing to filter on besides
+    exit_date_time.
     """
     today = _dt.datetime.now(_dt.timezone.utc).date()
     total = 0.0
@@ -194,7 +203,7 @@ def _today_simulator_pnl(conn) -> float | None:
             any_table = True
             cursor.execute(sql.SQL("""
                 SELECT COALESCE(SUM(net_pnl), 0) FROM {schema}.{table}
-                WHERE status = 'closed' AND exit_date_time::date = %s
+                WHERE exit_date_time::date = %s
             """).format(
                 schema=sql.Identifier("simulator"),
                 table=sql.Identifier(table_name),

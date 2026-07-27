@@ -112,3 +112,34 @@ class WalletDetail(WalletSummary):
     positions: list[WalletPosition] = []
     open_orders: list[WalletOpenOrder] = []
     executions: list[WalletExecution] = []
+
+
+# ----------------------------------------------------------------------
+# Strategy assignment -- "one strategy per coin" picker on the Wallets
+# page. See api/repos/wallets_repo.py's list_assignable_coins()/
+# assign_strategy()/unassign_strategy().
+# ----------------------------------------------------------------------
+
+class AssignableStrategy(BaseModel):
+    strategy_id: int
+    strategy_name: str
+    time_horizon: Optional[str] = None
+    execution_enabled: bool
+
+
+class AssignableCoin(BaseModel):
+    """One (exchange, symbol) pair this wallet could be assigned to."""
+    exchange: str
+    symbol: str
+    # Which wallet's account_name execution.config currently has for this
+    # pair -- None if unassigned, or another wallet's name if it's
+    # currently assigned elsewhere (picking a strategy here reassigns it
+    # to THIS wallet).
+    assigned_account: Optional[str] = None
+    strategies: list[AssignableStrategy] = []
+
+
+class StrategyAssignmentUpdate(BaseModel):
+    exchange: str
+    symbol: str
+    strategy_id: int

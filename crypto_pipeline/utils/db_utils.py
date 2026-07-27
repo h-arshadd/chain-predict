@@ -1613,6 +1613,34 @@ def save_execution_config(
     logger.info(f"Saved execution config: execution.config ({exchange}/{symbol})")
 
 
+def set_execution_account(conn, exchange, symbol, account_name):
+    """
+    Point an EXISTING execution.config row at a different wallet, without
+    touching any of its other fields (initial_balance, position sizing,
+    commission, etc) and without requiring the caller to resupply them --
+    unlike save_execution_config(), which is a full upsert. Used by the
+    Wallets page's "assign strategy" flow, where the user is only ever
+    picking a wallet + strategy for a pair that's already configured.
+
+    No-op (returns False) if this (exchange, symbol) pair has no
+    execution.config row yet -- assigning a wallet to a pair that hasn't
+    been set up for execution isn't meaningful, same as
+    get_execution_config() returning None for that case.
+    """
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("""
+        UPDATE {schema}.config
+        SET account_name = %s, updated_at = now()
+        WHERE exchange = %s AND symbol = %s
+    """).format(schema=sql.Identifier("execution")), (account_name, exchange, symbol))
+    updated = cursor.rowcount > 0
+    conn.commit()
+    cursor.close()
+    if updated:
+        logger.info(f"Assigned execution.config ({exchange}/{symbol}) to wallet '{account_name}'")
+    return updated
+
+
 def get_execution_universe(conn):
     """
     Return every (exchange, symbol) pair currently registered in

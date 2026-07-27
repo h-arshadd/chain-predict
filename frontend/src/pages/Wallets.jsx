@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Table, Tag, Switch, Modal, Form, Input, Select, message, Tooltip, Spin, Alert } from 'antd';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, EyeInvisibleOutlined, EyeOutlined,
-  WalletOutlined, WarningFilled,
+  WalletOutlined, WarningFilled, ControlOutlined,
 } from '@ant-design/icons';
 import { api } from '../lib/api';
 
@@ -184,6 +184,12 @@ export default function Wallets() {
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm();
 
+  const [assignModalOpen, setAssignModalOpen] = useState(false);
+  const [assignWallet, setAssignWallet] = useState(null); // wallet row this modal is for
+  const [assignCoins, setAssignCoins] = useState([]);
+  const [assignLoading, setAssignLoading] = useState(false);
+  const [assignSavingKey, setAssignSavingKey] = useState(null); // `${exchange}-${symbol}` currently saving
+
   const loadWallets = useCallback(() => {
     setLoading(true);
     setError(null);
@@ -279,6 +285,47 @@ export default function Wallets() {
       .catch((err) => message.error(err.message));
   };
 
+  const openAssignModal = (wallet) => {
+    setAssignWallet(wallet);
+    setAssignModalOpen(true);
+    setAssignLoading(true);
+    api.get(`/api/wallets/${wallet.account_name}/assignments`)
+      .then((res) => setAssignCoins(res.data))
+      .catch((err) => message.error(err.message))
+      .finally(() => setAssignLoading(false));
+  };
+
+  const closeAssignModal = () => {
+    setAssignModalOpen(false);
+    setAssignWallet(null);
+    setAssignCoins([]);
+  };
+
+  const handleAssignStrategy = (coin, strategyId) => {
+    const key = `${coin.exchange}-${coin.symbol}`;
+    setAssignSavingKey(key);
+
+    const request = strategyId == null
+      ? api.delete(`/api/wallets/${assignWallet.account_name}/assignments?exchange=${coin.exchange}&symbol=${coin.symbol}`)
+      : api.patch(`/api/wallets/${assignWallet.account_name}/assignments`, {
+          exchange: coin.exchange,
+          symbol: coin.symbol,
+          strategy_id: strategyId,
+        });
+
+    request
+      .then(() => {
+        message.success(
+          strategyId == null
+            ? `Execution turned off for ${coin.symbol.toUpperCase()}`
+            : `${coin.symbol.toUpperCase()} now running on ${assignWallet.account_name}`
+        );
+        return api.get(`/api/wallets/${assignWallet.account_name}/assignments`).then((res) => setAssignCoins(res.data));
+      })
+      .catch((err) => message.error(err.message))
+      .finally(() => setAssignSavingKey(null));
+  };
+
   const columns = [
     {
       title: 'Wallet', key: 'account_name',
@@ -349,6 +396,11 @@ export default function Wallets() {
       title: '', key: 'actions',
       render: (_, row) => (
         <div style={{ display: 'flex', gap: 6 }} onClick={(e) => e.stopPropagation()}>
+          <Tooltip title="Manage strategies">
+            <button onClick={() => openAssignModal(row)} style={iconBtnStyle}>
+              <ControlOutlined />
+            </button>
+          </Tooltip>
           <Tooltip title="Edit API keys">
             <button onClick={() => openEditModal(row)} style={iconBtnStyle}>
               <EditOutlined />
@@ -475,6 +527,74 @@ export default function Wallets() {
             <Input.Password placeholder={editingWallet ? 'Leave blank to keep current secret' : 'Enter API secret'} />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={assignWallet ? `Manage Strategies — ${assignWallet.account_name}` : 'Manage Strategies'}
+        open={assignModalOpen}
+        onCancel={closeAssignModal}
+        footer={null}
+        destroyOnClose
+        width={640}
+      >
+        <p style={{ color: '#9096A0', fontSize: 13, marginTop: -4, marginBottom: 16 }}>
+          Pick one strategy per coin to run live on this wallet. Choosing a strategy here disables
+          any other strategy currently live for that coin — only one strategy can run per coin at a time.
+        </p>
+
+        {assignLoading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}>
+            <Spin size="large" />
+          </div>
+        ) : assignCoins.length === 0 ? (
+          <div style={{ color: '#6B7280', fontSize: 13, padding: '16px 2px' }}>
+            No coins are set up for execution yet. Configure a pair in Execution first.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {assignCoins.map((coin) => {
+              const key = `${coin.exchange}-${coin.symbol}`;
+              const liveStrategy = coin.strategies.find((s) => s.execution_enabled);
+              const isOtherWallet = coin.assigned_account && coin.assigned_account !== assignWallet?.account_name;
+              return (
+                <div
+                  key={key}
+                  style={{
+                    ...subPanel, padding: 14,
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 600, color: '#F5F6F7' }}>
+                      {coin.symbol.toUpperCase()} <span style={{ color: '#6B7280', fontWeight: 400 }}>· {coin.exchange}</span>
+                    </div>
+                    {isOtherWallet && (
+                      <div style={{ fontSize: 12, color: AMBER, marginTop: 2 }}>
+                        Currently assigned to {coin.assigned_account} — picking a strategy moves it here.
+                      </div>
+                    )}
+                    {coin.strategies.length === 0 && (
+                      <div style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>No strategies loaded for this coin yet.</div>
+                    )}
+                  </div>
+                  <Select
+                    allowClear
+                    placeholder="No strategy running"
+                    value={liveStrategy ? liveStrategy.strategy_id : undefined}
+                    loading={assignSavingKey === key}
+                    disabled={coin.strategies.length === 0}
+                    onChange={(value) => handleAssignStrategy(coin, value ?? null)}
+                    style={{ width: 260 }}
+                    options={coin.strategies.map((s) => ({
+                      value: s.strategy_id,
+                      label: `${s.strategy_name} (${s.time_horizon || '—'})`,
+                    }))}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        )}
       </Modal>
     </div>
   );
