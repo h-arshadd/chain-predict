@@ -15,7 +15,7 @@ import EmptyChart from '../components/EmptyChart';
 import TradePnlChart from '../components/TradePnlChart';
 import KeyValue from '../components/KeyValue';
 import StatBox from '../components/StatBox';
-import { tooltipStyle, axisStyle } from '../lib/chartStyle';
+import { tooltipStyle, tooltipLabelStyle, tooltipItemStyle, axisStyle } from '../lib/chartStyle';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
@@ -222,7 +222,7 @@ export default function ExecutionDetails() {
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                 <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
                 <YAxis tick={axisStyle} axisLine={false} tickLine={false} domain={['auto', 'auto']} />
-                <Tooltip contentStyle={tooltipStyle} />
+                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
                 <Area type="monotone" dataKey="balance" stroke={MINT} strokeWidth={2.5} fill="url(#eqGrad2)" />
               </AreaChart>
             </ResponsiveContainer>
@@ -243,7 +243,7 @@ export default function ExecutionDetails() {
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                 <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
                 <YAxis tick={axisStyle} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} />
-                <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${(v * 100).toFixed(2)}%`} />
+                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v) => `${(v * 100).toFixed(2)}%`} />
                 <Area type="monotone" dataKey="dd" stroke={RED} strokeWidth={2} fill="url(#ddGrad)" />
               </AreaChart>
             </ResponsiveContainer>
@@ -262,7 +262,7 @@ export default function ExecutionDetails() {
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                 <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
                 <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={tooltipStyle} />
+                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
                 <Line type="monotone" dataKey="sharpe" stroke={MINT} strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
@@ -277,7 +277,7 @@ export default function ExecutionDetails() {
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                 <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
                 <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={tooltipStyle} />
+                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
                 <Line type="monotone" dataKey="vol" stroke={AMBER} strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
@@ -296,7 +296,7 @@ export default function ExecutionDetails() {
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                 <XAxis dataKey="year" tick={axisStyle} axisLine={false} tickLine={false} />
                 <YAxis tick={axisStyle} axisLine={false} tickLine={false} tickFormatter={(v) => `${v.toFixed(0)}%`} />
-                <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${v.toFixed(2)}%`} />
+                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v) => `${v.toFixed(2)}%`} />
                 <Bar dataKey="ret" radius={[6, 6, 6, 6]}>
                   {yearlyReturns.map((entry, i) => (
                     <Cell key={i} fill={entry.ret >= 0 ? MINT : RED} />

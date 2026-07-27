@@ -1,10 +1,8 @@
 import { BarChart, Bar, Cell, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
+import { tooltipStyle, tooltipLabelStyle, tooltipItemStyle, axisStyle } from '../lib/chartStyle';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
-
-const tooltipStyle = { background: '#161B21', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, fontSize: 12 };
-const axisStyle = { fill: '#6B7280', fontSize: 11 };
 
 /**
  * Per-trade PnL bar chart. One bar per trade, colored green/red by
@@ -33,7 +31,7 @@ export default function TradePnlChart({ trades, reverse = false, height = 200 })
         <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
         <XAxis dataKey="idx" tick={axisStyle} axisLine={false} tickLine={false} />
         <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
-        <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}`} />
+        <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}`} />
         <Bar dataKey="pnl" radius={[4, 4, 4, 4]}>
           {data.map((entry, i) => (
             <Cell key={i} fill={entry.pnl >= 0 ? MINT : RED} />

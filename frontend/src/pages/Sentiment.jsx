@@ -7,7 +7,7 @@ import {
 import { api } from '../lib/api';
 import Panel, { panelFlat as panel } from '../components/Panel';
 import StatBox from '../components/StatBox';
-import { tooltipStyle, axisStyle } from '../lib/chartStyle';
+import { tooltipStyle, tooltipLabelStyle, tooltipItemStyle, axisStyle } from '../lib/chartStyle';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
@@ -293,7 +293,7 @@ export default function Sentiment() {
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                     <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
                     <YAxis tick={axisStyle} axisLine={false} tickLine={false} domain={[0, 100]} />
-                    <Tooltip contentStyle={tooltipStyle} />
+                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
                     <Area type="monotone" dataKey="score" stroke={AMBER} strokeWidth={2.5} fill="url(#fgGrad)" />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -308,7 +308,7 @@ export default function Sentiment() {
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                     <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
                     <YAxis tick={axisStyle} axisLine={false} tickLine={false} domain={[-1, 1]} />
-                    <Tooltip contentStyle={tooltipStyle} />
+                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
                     <Line type="monotone" dataKey="score" stroke={MINT} strokeWidth={2.5} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -327,7 +327,7 @@ export default function Sentiment() {
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                     <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
                     <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
-                    <Tooltip contentStyle={tooltipStyle} />
+                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
                     <Bar dataKey="bullish" stackId="a" fill={MINT} radius={[0, 0, 0, 0]} />
                     <Bar dataKey="neutral" stackId="a" fill="#9096A0" radius={[0, 0, 0, 0]} />
                     <Bar dataKey="bearish" stackId="a" fill={RED} radius={[4, 4, 0, 0]} />
@@ -352,7 +352,7 @@ export default function Sentiment() {
                       <Cell fill={MINT} /><Cell fill="#9096A0" /><Cell fill={RED} />
                     </Pie>
                     <Legend verticalAlign="middle" align="right" layout="vertical" iconType="circle" wrapperStyle={{ fontSize: 12.5, color: '#9096A0' }} />
-                    <Tooltip contentStyle={tooltipStyle} />
+                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
                   </PieChart>
                 </ResponsiveContainer>
               )}

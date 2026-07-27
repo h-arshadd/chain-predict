@@ -1,378 +1,395 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { Tag, Table, Spin, Alert } from 'antd';
-import { ArrowLeftOutlined } from '@ant-design/icons';
+import { useState, useEffect, useCallback } from 'react';
+import { Tag, Select, Table, Spin, Alert, Empty } from 'antd';
 import {
-  AreaChart, Area, LineChart, Line, BarChart, Bar, Cell,
-  ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip,
+  AreaChart, Area, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
+  ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
 import { api } from '../lib/api';
-import { fmtUsd, pnlColor } from '../lib/format';
-import { recordsToSeries, monthlyHeatmapToRows, heatColor } from '../lib/quantstats';
-import { METRIC_CARDS_COL_1, METRIC_CARDS_COL_2, fmtMetric } from '../lib/metricCards';
 import Panel, { panelFlat as panel } from '../components/Panel';
-import EmptyChart from '../components/EmptyChart';
-import TradePnlChart from '../components/TradePnlChart';
-import KeyValue from '../components/KeyValue';
 import StatBox from '../components/StatBox';
-import { tooltipStyle, axisStyle } from '../lib/chartStyle';
+import { tooltipStyle, tooltipLabelStyle, tooltipItemStyle, axisStyle } from '../lib/chartStyle';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
 const AMBER = '#FF8A5C';
 
-const STATUS_META = {
-  running: { label: 'Running', bg: 'rgba(61,220,151,0.12)', fg: MINT },
-  flat: { label: 'Flat', bg: 'rgba(255,255,255,0.06)', fg: '#9096A0' },
-  never_run: { label: 'Never Run', bg: 'rgba(255,255,255,0.06)', fg: '#6B7280' },
-};
+// ---- Fear & Greed gauge: semicircular dial with needle ----
+function fearGreedColor(score) {
+  if (score == null) return '#6B7280';
+  if (score < 25) return RED;
+  if (score < 45) return AMBER;
+  if (score < 55) return '#E8C547';
+  if (score < 75) return MINT;
+  return '#2FBF80';
+}
 
-export default function SimulationDetails() {
-  const { exchange, symbol, strategyName } = useParams();
-  const navigate = useNavigate();
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+function FearGreedGauge({ score, label }) {
+  const cx = 150, cy = 165, r = 110;
+  const pct = score ?? 50;
+  const angle = 180 - (pct / 100) * 180;
+  const rad = (angle * Math.PI) / 180;
+  const needleX = cx + r * 0.82 * Math.cos(rad);
+  const needleY = cy - r * 0.82 * Math.sin(rad);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    api.get(`/api/simulator/${exchange}/${symbol}/${encodeURIComponent(strategyName)}`)
-      .then((res) => setData(res.data))
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, [exchange, symbol, strategyName]);
+  const polarToCartesian = (angleDeg, radius) => {
+    const a = (angleDeg * Math.PI) / 180;
+    return { x: cx + radius * Math.cos(a), y: cy - radius * Math.sin(a) };
+  };
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Filled donut-wedge (outer arc + inner arc, closed) instead of a
+  // stroked arc -- adjacent wedges share an exact edge, so there's no
+  // seam/gap from stroke caps and no gradient coordinate-space issues.
+  const donutWedge = (fromPct, toPct, outerR, innerR) => {
+    const fromAngle = 180 - (fromPct / 100) * 180;
+    const toAngle = 180 - (toPct / 100) * 180;
+    const outerStart = polarToCartesian(fromAngle, outerR);
+    const outerEnd = polarToCartesian(toAngle, outerR);
+    const innerStart = polarToCartesian(toAngle, innerR);
+    const innerEnd = polarToCartesian(fromAngle, innerR);
+    const largeArc = Math.abs(fromAngle - toAngle) > 180 ? 1 : 0;
+    return [
+      `M ${outerStart.x} ${outerStart.y}`,
+      `A ${outerR} ${outerR} 0 ${largeArc} 0 ${outerEnd.x} ${outerEnd.y}`,
+      `L ${innerStart.x} ${innerStart.y}`,
+      `A ${innerR} ${innerR} 0 ${largeArc} 1 ${innerEnd.x} ${innerEnd.y}`,
+      'Z',
+    ].join(' ');
+  };
 
-  const equitySeries = useMemo(
-    () => (data?.equity_curve || []).map((p) => ({ ts: p.timestamp, balance: p.balance, label: new Date(p.timestamp).toLocaleDateString() })),
-    [data]
-  );
-
-  const plots = data?.stats?.plots || {};
-  const metrics = data?.stats?.metrics || {};
-  const metricCardsCol1 = METRIC_CARDS_COL_1.filter((m) => metrics[m.key] !== undefined);
-  const metricCardsCol2 = METRIC_CARDS_COL_2.filter((m) => metrics[m.key] !== undefined);
-  const drawdownSeries = recordsToSeries(plots.drawdown?.drawdown_series, 'dd');
-  const rollingSharpeSeries = recordsToSeries(plots.rolling_sharpe?.rolling_sharpe, 'sharpe');
-  const rollingVolSeries = recordsToSeries(plots.rolling_volatility?.rolling_volatility, 'vol');
-  const yearlyReturns = plots.yearly_returns?.yearly_returns
-    ? Object.entries(plots.yearly_returns.yearly_returns).map(([year, ret]) => ({ year, ret: ret * 100 }))
-    : [];
-  const monthlyRows = monthlyHeatmapToRows(plots.monthly_heatmap?.monthly_returns);
-
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', padding: '100px 0' }}>
-        <Spin size="large" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div style={{ paddingTop: 8 }}>
-        <Alert
-          type="error"
-          message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Couldn't load this simulation</span>}
-          description={<span style={{ color: '#C9CDD3' }}>{error}</span>}
-          action={<button onClick={load} style={backBtnStyle}>Retry</button>}
-          showIcon
-          style={{ background: 'rgba(240, 70, 107, 0.08)', border: '1px solid rgba(240, 70, 107, 0.3)' }}
-        />
-      </div>
-    );
-  }
-
-  if (!data) return null;
-
-  const statusStyle = STATUS_META[data.status] || STATUS_META.never_run;
-  const sc = data.strategy_config || {};
-  const position = data.position;
-  const winLoss = data.win_loss;
+  const segments = [
+    { from: 0, to: 20, color: RED },
+    { from: 20, to: 40, color: AMBER },
+    { from: 40, to: 60, color: '#E8C547' },
+    { from: 60, to: 80, color: MINT },
+    { from: 80, to: 100, color: '#2FBF80' },
+  ];
+  const outerR = r + 9;
+  const innerR = r - 9;
 
   return (
-    <div style={{ paddingTop: 8 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 24 }}>
-        <button onClick={() => navigate(-1)} style={backBtnStyle}>
-          <ArrowLeftOutlined />
-        </button>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <h2 style={{ fontSize: 22, fontWeight: 700, color: '#F5F6F7', margin: 0 }}>{data.strategy_name}</h2>
-            <Tag style={{ background: statusStyle.bg, color: statusStyle.fg, border: 'none', borderRadius: 8, fontWeight: 600 }}>
-              {statusStyle.label}
-            </Tag>
-            <Tag style={{ background: 'rgba(91,156,246,0.14)', color: '#5B9CF6', border: 'none', borderRadius: 8, fontWeight: 600 }}>
-              Simulator
-            </Tag>
-          </div>
-          <div style={{ color: '#9096A0', fontSize: 13, marginTop: 2, textTransform: 'uppercase' }}>
-            {data.symbol} &middot; {data.exchange} &middot; {data.time_horizon}
-          </div>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+      <svg width="300" height="175" viewBox="0 0 300 175">
+        {segments.map((seg, i) => (
+          <path key={i} d={donutWedge(seg.from, seg.to, outerR, innerR)} fill={seg.color} opacity={0.85} />
+        ))}
+        <line x1={cx} y1={cy} x2={needleX} y2={needleY} stroke="#F5F6F7" strokeWidth={3} strokeLinecap="round" />
+        <circle cx={cx} cy={cy} r={7} fill="#F5F6F7" />
+        <circle cx={cx} cy={cy} r={3} fill="#0B0E11" />
+      </svg>
+      <div style={{ marginTop: -8, textAlign: 'center' }}>
+        <div style={{ fontSize: 40, fontWeight: 800, color: fearGreedColor(score), fontFamily: 'ui-monospace, monospace', lineHeight: 1 }}>
+          {score ?? '—'}
         </div>
-      </div>
-
-      {/* Current position summary strip -- paper position from
-          simulator.positions, no live exchange call (this is simulated
-          trading, not execution). */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 14, marginBottom: 20 }}>
-        <StatBox label="Position" value={position ? `${position.direction} ${position.quantity ?? ''}`.trim() : 'Flat'} />
-        <StatBox label="Entry Price" value={position?.entry_price != null ? position.entry_price.toLocaleString() : '—'} />
-        <StatBox label="Balance" value={fmtUsd(data.balance)} />
-        <StatBox label="Cumulative PnL" value={data.cumulative_pnl != null ? `${data.cumulative_pnl >= 0 ? '+' : ''}${fmtUsd(data.cumulative_pnl)}` : '—'} positive={data.cumulative_pnl != null ? data.cumulative_pnl >= 0 : undefined} />
-        <StatBox label="Take Profit" value={position?.take_profit != null ? position.take_profit.toLocaleString() : '—'} />
-        <StatBox label="Stop Loss" value={position?.stop_loss != null ? position.stop_loss.toLocaleString() : '—'} />
-      </div>
-
-      {/* Strategy info / Risk statistics -- no Wallet panel here, simulator has no wallet concept */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20, marginBottom: 20 }}>
-        <Panel title="Strategy Information">
-          <KeyValue label="Symbol" value={data.symbol.toUpperCase()} />
-          <KeyValue label="Timeframe" value={data.time_horizon || '—'} />
-          <KeyValue label="Entry Logic (Long)" value={sc.entry_logic_long || 'No long rule'} />
-          <KeyValue label="Entry Logic (Short)" value={sc.entry_logic_short || 'No short rule'} />
-          <KeyValue label="Indicators" value={sc.indicators?.length ? sc.indicators.join(', ') : '—'} />
-        </Panel>
-        <Panel title="Risk Statistics">
-          <KeyValue label="Take Profit" value={sc.take_profit_value != null ? `${sc.take_profit_value}${sc.take_profit_type === 'percentage' ? '%' : ''}` : '—'} />
-          <KeyValue label="Stop Loss" value={sc.stop_loss_value != null ? `${sc.stop_loss_value}${sc.stop_loss_type === 'percentage' ? '%' : ''}` : '—'} />
-          <KeyValue label="Commission" value={data.commission != null ? `${(data.commission * 100).toFixed(3)}%` : '—'} />
-          <KeyValue label="Slippage" value={data.slippage != null ? `${(data.slippage * 100).toFixed(3)}%` : '—'} />
-          <KeyValue label="Long / Short Allowed" value={`${data.allow_long ? 'Long' : ''}${data.allow_long && data.allow_short ? ' / ' : ''}${data.allow_short ? 'Short' : ''}` || '—'} />
-        </Panel>
-      </div>
-
-      {/* Trade summary strip */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 14, marginBottom: 20 }}>
-        <StatBox label="Total Trades" value={data.total_trades ?? 0} />
-        <StatBox label="Total Net Profit" value={data.total_net_profit != null ? `${data.total_net_profit >= 0 ? '+' : ''}${fmtUsd(data.total_net_profit)}` : '—'} positive={data.total_net_profit != null ? data.total_net_profit >= 0 : undefined} />
-        <StatBox label="Win Rate" value={winLoss?.win_rate != null ? `${(winLoss.win_rate * 100).toFixed(1)}%` : '—'} />
-        <StatBox label="Wins / Losses" value={winLoss ? `${winLoss.wins} / ${winLoss.losses}` : '—'} />
-      </div>
-
-      {/* Performance metrics -- pulled from data.stats.metrics, the
-          quantstats dict compute_stats() computed and stored for this
-          simulator strategy's own equity curve. Split into two equal-
-          length cards instead of one big wall of tiles. */}
-      {(metricCardsCol1.length > 0 || metricCardsCol2.length > 0) && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-          {metricCardsCol1.length > 0 && (
-            <Panel title="Performance Metrics">
-              {metricCardsCol1.map((m) => {
-                const value = metrics[m.key];
-                const positive = value == null ? undefined : m.invert ? value <= 0 : value >= 0;
-                return (
-                  <KeyValue
-                    key={m.key}
-                    label={m.label}
-                    value={fmtMetric(value, m.kind)}
-                    mono
-                    color={positive === undefined ? undefined : positive ? MINT : RED}
-                  />
-                );
-              })}
-            </Panel>
-          )}
-          {metricCardsCol2.length > 0 && (
-            <Panel title="Performance Metrics (cont.)">
-              {metricCardsCol2.map((m) => {
-                const value = metrics[m.key];
-                const positive = value == null ? undefined : m.invert ? value <= 0 : value >= 0;
-                return (
-                  <KeyValue
-                    key={m.key}
-                    label={m.label}
-                    value={fmtMetric(value, m.kind)}
-                    mono
-                    color={positive === undefined ? undefined : positive ? MINT : RED}
-                  />
-                );
-              })}
-            </Panel>
-          )}
+        <div style={{ fontSize: 15, fontWeight: 700, color: fearGreedColor(score), marginTop: 6 }}>
+          {label ?? 'Not enough data'}
         </div>
-      )}
-
-      {/* Equity Curve + Drawdown */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-        <Panel title="Equity Curve">
-          {equitySeries.length > 1 ? (
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={equitySeries} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="simEqGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={MINT} stopOpacity={0.35} />
-                    <stop offset="95%" stopColor={MINT} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                <YAxis tick={axisStyle} axisLine={false} tickLine={false} domain={['auto', 'auto']} />
-                <Tooltip contentStyle={tooltipStyle} />
-                <Area type="monotone" dataKey="balance" stroke={MINT} strokeWidth={2.5} fill="url(#simEqGrad)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          ) : (
-            <EmptyChart centered text="Not enough closed simulator trades yet to plot an equity curve." />
-          )}
-        </Panel>
-        <Panel title="Drawdown">
-          {drawdownSeries.length > 1 ? (
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={drawdownSeries} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="simDdGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={RED} stopOpacity={0.35} />
-                    <stop offset="95%" stopColor={RED} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                <YAxis tick={axisStyle} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} />
-                <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${(v * 100).toFixed(2)}%`} />
-                <Area type="monotone" dataKey="dd" stroke={RED} strokeWidth={2} fill="url(#simDdGrad)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          ) : (
-            <EmptyChart centered text={data.stats ? 'No drawdown periods yet.' : 'Not enough trade history for stats yet.'} />
-          )}
-        </Panel>
-      </div>
-
-      {/* Rolling Sharpe + Rolling Volatility */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-        <Panel title="Rolling Sharpe">
-          {rollingSharpeSeries.length > 1 ? (
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={rollingSharpeSeries} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={tooltipStyle} />
-                <Line type="monotone" dataKey="sharpe" stroke={MINT} strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <EmptyChart centered text="Not enough history for a rolling Sharpe window yet." />
-          )}
-        </Panel>
-        <Panel title="Rolling Volatility">
-          {rollingVolSeries.length > 1 ? (
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={rollingVolSeries} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={tooltipStyle} />
-                <Line type="monotone" dataKey="vol" stroke={AMBER} strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <EmptyChart centered text="Not enough history for rolling volatility yet." />
-          )}
-        </Panel>
-      </div>
-
-      {/* Yearly Returns + Trade PnL sequence */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-        <Panel title="Yearly Returns">
-          {yearlyReturns.length > 0 ? (
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={yearlyReturns} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                <XAxis dataKey="year" tick={axisStyle} axisLine={false} tickLine={false} />
-                <YAxis tick={axisStyle} axisLine={false} tickLine={false} tickFormatter={(v) => `${v.toFixed(0)}%`} />
-                <Tooltip contentStyle={tooltipStyle} formatter={(v) => `${v.toFixed(2)}%`} />
-                <Bar dataKey="ret" radius={[6, 6, 6, 6]}>
-                  {yearlyReturns.map((entry, i) => (
-                    <Cell key={i} fill={entry.ret >= 0 ? MINT : RED} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <EmptyChart centered text="Not enough history to compute yearly returns." />
-          )}
-        </Panel>
-        <Panel title="Trade PnL Sequence">
-          <TradePnlChart trades={data.trades} reverse />
-        </Panel>
-      </div>
-
-      {/* Monthly Returns heatmap */}
-      <div style={{ marginBottom: 20 }}>
-        <Panel title="Monthly Returns">
-          {monthlyRows.length > 0 ? (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 4, fontSize: 12 }}>
-                <thead>
-                  <tr>
-                    <th style={{ color: '#6B7280', textAlign: 'left', fontWeight: 600 }}>Year</th>
-                    {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((m) => (
-                      <th key={m} style={{ color: '#6B7280', fontWeight: 600 }}>{m}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {monthlyRows.map((row) => (
-                    <tr key={row.year}>
-                      <td style={{ color: '#F5F6F7', fontWeight: 600 }}>{row.year}</td>
-                      {row.cells.map((v, i) => (
-                        <td
-                          key={i}
-                          title={v != null ? `${(v * 100).toFixed(2)}%` : ''}
-                          style={{ background: heatColor(v), borderRadius: 6, textAlign: 'center', padding: '6px 4px', color: '#F5F6F7', minWidth: 44 }}
-                        >
-                          {v != null ? `${(v * 100).toFixed(1)}%` : ''}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <EmptyChart centered text="Not enough history to compute monthly returns." />
-          )}
-        </Panel>
-      </div>
-
-      {/* Trade Ledger */}
-      <div style={{ marginBottom: 8 }}>
-        <Panel title="Trade Ledger">
-          <Table
-            size="small"
-            pagination={{ pageSize: 10 }}
-            rowKey={(r) => r.entry_date_time}
-            dataSource={data.trades || []}
-            locale={{ emptyText: 'No simulator trades yet for this strategy.' }}
-            columns={[
-              { title: 'Direction', dataIndex: 'direction', key: 'direction', render: (v) => <span style={{ color: v === 'long' ? MINT : RED, fontWeight: 600, textTransform: 'capitalize' }}>{v}</span> },
-              { title: 'Entry Time', dataIndex: 'entry_date_time', key: 'entry_date_time', render: (v) => new Date(v).toLocaleString() },
-              { title: 'Entry Price', dataIndex: 'entry_price', key: 'entry_price', render: (v) => v?.toLocaleString() },
-              { title: 'Qty', dataIndex: 'quantity', key: 'quantity' },
-              { title: 'Exit Time', dataIndex: 'exit_date_time', key: 'exit_date_time', render: (v) => (v ? new Date(v).toLocaleString() : '—') },
-              { title: 'Exit Price', dataIndex: 'exit_price', key: 'exit_price', render: (v) => (v != null ? v.toLocaleString() : '—') },
-              {
-                title: 'Net PnL', dataIndex: 'net_pnl', key: 'net_pnl',
-                render: (v) => v == null ? '—' : <span style={{ color: v >= 0 ? MINT : RED, fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}>{v >= 0 ? '+' : ''}{v.toFixed(2)}</span>,
-              },
-              { title: 'Exit Reason', dataIndex: 'exit_reason', key: 'exit_reason', render: (v) => v || '—' },
-            ]}
-          />
-        </Panel>
       </div>
     </div>
   );
 }
 
-const backBtnStyle = {
-  width: 36, height: 36, borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)',
-  background: 'rgba(255,255,255,0.04)', color: '#F5F6F7', cursor: 'pointer',
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-};
+function SentimentBar({ label, pct, color }) {
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4 }}>
+        <span style={{ color: '#9096A0', fontWeight: 600 }}>{label}</span>
+        <span style={{ color: '#F5F6F7', fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>{pct}%</span>
+      </div>
+      <div style={{ width: '100%', height: 8, borderRadius: 999, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 999 }} />
+      </div>
+    </div>
+  );
+}
+
+const sentimentTagColor = { Bullish: MINT, Bearish: RED, Neutral: '#9096A0' };
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+function timeAgo(iso) {
+  if (!iso) return '—';
+  const seconds = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (seconds < 3600) return `${Math.max(1, Math.round(seconds / 60))}m ago`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
+  return `${Math.round(seconds / 86400)}d ago`;
+}
+
+// Reddit titles come through as-typed (often lowercase) -- capitalize
+// just the first letter for display, leave the rest of the title as-is
+// (don't title-case the whole thing, that would mangle acronyms like
+// "ETF" or tickers like "BTC" inside the title).
+function capitalizeFirst(text) {
+  if (!text) return text;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+export default function Sentiment() {
+  const [coins, setCoins] = useState([]);
+  const [coinsLoading, setCoinsLoading] = useState(true);
+  const [coinsError, setCoinsError] = useState(null);
+  const [selectedCoin, setSelectedCoin] = useState(null);
+
+  const [overview, setOverview] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  // Discover which coins have real sentiment data -- not hardcoded, so
+  // new coins show up automatically once sentiment_pipeline has run for them.
+  const loadCoins = useCallback(() => {
+    setCoinsLoading(true);
+    setCoinsError(null);
+    api.get('/api/sentiment/coins')
+      .then((res) => {
+        const list = res.data.coins || [];
+        setCoins(list);
+        setSelectedCoin((prev) => prev || list[0] || null);
+      })
+      .catch((err) => setCoinsError(err.message))
+      .finally(() => setCoinsLoading(false));
+  }, []);
+
+  useEffect(() => { loadCoins(); }, [loadCoins]);
+
+  const loadOverview = useCallback(() => {
+    if (!selectedCoin) return;
+    setLoading(true);
+    setError(null);
+    api.get(`/api/sentiment/${selectedCoin}?top_posts_limit=5`)
+      .then((res) => setOverview(res.data))
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, [selectedCoin]);
+
+  useEffect(() => { loadOverview(); }, [loadOverview]);
+
+  return (
+    <div style={{ paddingTop: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16, marginBottom: 24 }}>
+        <div>
+          <h2 style={{ fontSize: 24, fontWeight: 700, color: '#F5F6F7', margin: 0 }}>Sentiment</h2>
+          <p style={{ color: '#9096A0', fontSize: 14, marginTop: 4 }}>
+            Reddit-derived market mood and community sentiment for tracked coins.
+          </p>
+        </div>
+        <Select
+          value={selectedCoin}
+          onChange={setSelectedCoin}
+          style={{ width: 160 }}
+          loading={coinsLoading}
+          disabled={coinsLoading || coins.length === 0}
+          placeholder="No coins tracked yet"
+          options={coins.map((c) => ({ value: c, label: c }))}
+        />
+      </div>
+
+      {coinsError && (
+        <Alert
+          type="error" message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Couldn't load tracked coins</span>} description={<span style={{ color: '#C9CDD3' }}>{coinsError}</span>}
+          action={<button onClick={loadCoins} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#F5F6F7', borderRadius: 8, padding: '4px 12px', cursor: 'pointer' }}>Retry</button>}
+          style={{ marginBottom: 20, background: 'rgba(240, 70, 107, 0.08)', border: '1px solid rgba(240, 70, 107, 0.3)' }} showIcon
+        />
+      )}
+
+      {!coinsLoading && !coinsError && coins.length === 0 && (
+        <div style={{ ...panel, padding: 40, textAlign: 'center', marginBottom: 20 }}>
+          <Empty
+            description={
+              <span style={{ color: '#9096A0' }}>
+                No sentiment data yet. Run <code>sentiment_pipeline/main.py</code> to populate one or more coins.
+              </span>
+            }
+          />
+        </div>
+      )}
+
+      {error && selectedCoin && (
+        <Alert
+          type="error" message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>{`Couldn't load sentiment for ${selectedCoin}`}</span>} description={<span style={{ color: '#C9CDD3' }}>{error}</span>}
+          action={<button onClick={loadOverview} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#F5F6F7', borderRadius: 8, padding: '4px 12px', cursor: 'pointer' }}>Retry</button>}
+          style={{ marginBottom: 20, background: 'rgba(240, 70, 107, 0.08)', border: '1px solid rgba(240, 70, 107, 0.3)' }} showIcon
+        />
+      )}
+
+      {selectedCoin && loading && (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0' }}>
+          <Spin size="large" />
+        </div>
+      )}
+
+      {selectedCoin && !loading && overview && (
+        <>
+          {/* Fear & Greed Index + Overall Market Sentiment */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+            <Panel
+              title="Fear & Greed Index"
+              hint="Derived from this coin's real bullish/neutral/bearish Reddit post distribution — not the external Fear & Greed Index (alternative.me), which this app doesn't fetch."
+            >
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                <FearGreedGauge score={overview.fear_greed.score} label={overview.fear_greed.label} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginTop: 12 }}>
+                <StatBox label="Yesterday" value={overview.fear_greed.yesterday} />
+                <StatBox label="Last Week" value={overview.fear_greed.last_week} />
+                <StatBox label="Last Month" value={overview.fear_greed.last_month} />
+              </div>
+            </Panel>
+
+            <Panel column title="Overall Market Sentiment" hint={`Based on ${overview.overall.post_count} Reddit posts scored by CryptoBERT.`}>
+              {overview.overall.post_count === 0 ? (
+                <Empty description={<span style={{ color: '#9096A0' }}>No posts yet for {selectedCoin}.</span>} style={{ padding: '20px 0' }} />
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 24, height: '100%', minHeight: 200 }}>
+                  <div style={{ position: 'relative', width: 160, height: 160, flexShrink: 0 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={[
+                            { name: 'Bullish', value: overview.overall.bullish_pct },
+                            { name: 'Neutral', value: overview.overall.neutral_pct },
+                            { name: 'Bearish', value: overview.overall.bearish_pct },
+                          ]}
+                          dataKey="value" nameKey="name"
+                          cx="50%" cy="50%" innerRadius={55} outerRadius={75} paddingAngle={3} startAngle={90} endAngle={-270}
+                        >
+                          <Cell fill={MINT} /><Cell fill="#9096A0" /><Cell fill={RED} />
+                        </Pie>
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', textAlign: 'center' }}>
+                      <div style={{ fontSize: 24, fontWeight: 800, color: (overview.overall.score ?? 0) >= 0 ? MINT : RED, fontFamily: 'ui-monospace, monospace' }}>
+                        {overview.overall.score != null ? `${overview.overall.score >= 0 ? '+' : ''}${overview.overall.score.toFixed(2)}` : '—'}
+                      </div>
+                      <div style={{ fontSize: 12, color: '#9096A0', fontWeight: 600 }}>{overview.overall.label ?? '—'}</div>
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <SentimentBar label="Bullish" pct={overview.overall.bullish_pct} color={MINT} />
+                    <SentimentBar label="Neutral" pct={overview.overall.neutral_pct} color="#9096A0" />
+                    <SentimentBar label="Bearish" pct={overview.overall.bearish_pct} color={RED} />
+                  </div>
+                </div>
+              )}
+            </Panel>
+          </div>
+
+          {/* Fear & Greed Timeline + Sentiment Timeline */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+            <Panel column title="Fear & Greed Timeline">
+              {overview.fear_greed_timeline.length === 0 ? (
+                <Empty description={<span style={{ color: '#9096A0' }}>Not enough history yet.</span>} style={{ padding: '30px 0' }} />
+              ) : (
+                <ResponsiveContainer width="100%" height={200}>
+                  <AreaChart data={overview.fear_greed_timeline.map((p) => ({ ...p, label: fmtDate(p.date) }))} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="fgGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={AMBER} stopOpacity={0.35} />
+                        <stop offset="95%" stopColor={AMBER} stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                    <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+                    <YAxis tick={axisStyle} axisLine={false} tickLine={false} domain={[0, 100]} />
+                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+                    <Area type="monotone" dataKey="score" stroke={AMBER} strokeWidth={2.5} fill="url(#fgGrad)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </Panel>
+            <Panel column title="Sentiment Timeline">
+              {overview.sentiment_timeline.length === 0 ? (
+                <Empty description={<span style={{ color: '#9096A0' }}>Not enough history yet.</span>} style={{ padding: '30px 0' }} />
+              ) : (
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart data={overview.sentiment_timeline.map((p) => ({ ...p, label: fmtDate(p.date) }))} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                    <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+                    <YAxis tick={axisStyle} axisLine={false} tickLine={false} domain={[-1, 1]} />
+                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+                    <Line type="monotone" dataKey="score" stroke={MINT} strokeWidth={2.5} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </Panel>
+          </div>
+
+          {/* Post Volume + Sentiment Distribution */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+            <Panel column title="Post Volume" hint="Reddit posts per day, split by sentiment label.">
+              {overview.post_volume.length === 0 ? (
+                <Empty description={<span style={{ color: '#9096A0' }}>Not enough history yet.</span>} style={{ padding: '30px 0' }} />
+              ) : (
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={overview.post_volume.map((p) => ({ ...p, label: fmtDate(p.day) }))} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                    <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+                    <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
+                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+                    <Bar dataKey="bullish" stackId="a" fill={MINT} radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="neutral" stackId="a" fill="#9096A0" radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="bearish" stackId="a" fill={RED} radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </Panel>
+            <Panel column title="Sentiment Distribution">
+              {overview.overall.post_count === 0 ? (
+                <Empty description={<span style={{ color: '#9096A0' }}>No posts yet.</span>} style={{ padding: '30px 0' }} />
+              ) : (
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie
+                      data={[
+                        { name: 'Bullish', value: overview.overall.bullish_pct },
+                        { name: 'Neutral', value: overview.overall.neutral_pct },
+                        { name: 'Bearish', value: overview.overall.bearish_pct },
+                      ]}
+                      dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={78} paddingAngle={3}
+                    >
+                      <Cell fill={MINT} /><Cell fill="#9096A0" /><Cell fill={RED} />
+                    </Pie>
+                    <Legend verticalAlign="middle" align="right" layout="vertical" iconType="circle" wrapperStyle={{ fontSize: 12.5, color: '#9096A0' }} />
+                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </Panel>
+          </div>
+
+          {/* Top 5 Reddit posts -- stands in for the PDF's "News Sentiment" (no news source exists in this codebase) */}
+          <div style={{ marginBottom: 8 }}>
+            <Panel column title="Top 5 Reddit Posts" hint='Standing in for "News Sentiment" — this system tracks Reddit, not a news wire. Sorted by Reddit score (upvotes), not sentiment.'>
+              <Table
+                size="small"
+                pagination={false}
+                dataSource={overview.top_posts.map((r) => ({ ...r, key: r.post_id }))}
+                locale={{ emptyText: 'No posts yet for this coin.' }}
+                columns={[
+                  { title: 'Title', dataIndex: 'title', key: 'title', render: (t) => <span style={{ color: '#F5F6F7' }}>{t ? capitalizeFirst(t) : '(no title)'}</span> },
+                  { title: 'Subreddit', dataIndex: 'subreddit', key: 'subreddit', render: (t) => <span style={{ color: '#9096A0' }}>r/{t}</span> },
+                  {
+                    title: 'Sentiment', dataIndex: 'sentiment_label', key: 'sentiment_label',
+                    render: (v) => v ? (
+                      <Tag style={{ background: 'rgba(255,255,255,0.06)', color: sentimentTagColor[v] || '#9096A0', border: 'none', borderRadius: 8, fontWeight: 600 }}>
+                        {v}
+                      </Tag>
+                    ) : '—',
+                  },
+                  {
+                    title: 'Score', dataIndex: 'sentiment_score', key: 'sentiment_score',
+                    render: (v) => v == null ? '—' : <span style={{ color: v >= 0 ? MINT : RED, fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}>{v >= 0 ? '+' : ''}{v.toFixed(2)}</span>,
+                  },
+                  { title: 'Upvotes', dataIndex: 'score', key: 'upvotes', align: 'right', render: (v) => <span style={{ color: '#9096A0', fontFamily: 'ui-monospace, monospace' }}>{v ?? '—'}</span> },
+                  { title: 'Posted', dataIndex: 'created_utc', key: 'created_utc', render: (t) => <span style={{ color: '#6B7280', fontSize: 13 }}>{timeAgo(t)}</span> },
+                ]}
+              />
+            </Panel>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
