@@ -465,7 +465,17 @@ if __name__ == "__main__":
             take_profit_pct = float(strategy_row["take_profit_value"])
             stop_loss_pct = float(strategy_row["stop_loss_value"])
 
-            run_simulator(
-                exchange, symbol, config, strategy_name, time_horizon, strategy_config_dict,
-                take_profit_pct, stop_loss_pct
-            )
+            try:
+                run_simulator(
+                    exchange, symbol, config, strategy_name, time_horizon, strategy_config_dict,
+                    take_profit_pct, stop_loss_pct
+                )
+            except Exception as exc:
+                # Same reasoning as execution/main.py's equivalent loop:
+                # one strategy's failure must not stop every other
+                # strategy/pair combo after it in this run -- with no
+                # exclusivity rule, simulator can have many strategies
+                # per pair, so an unhandled exception here would
+                # otherwise silently skip everything remaining until the
+                # next scheduled run.
+                print(f"{exchange} {symbol} ({strategy_name}): run_simulator failed -- {exc!r}. Skipping to next strategy.")

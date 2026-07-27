@@ -1202,6 +1202,30 @@ def save_simulator_stats(conn, exchange, symbol, strategy_name, time_horizon, st
     )
 
 
+def get_simulator_stats(conn, exchange, symbol, strategy_name):
+    """
+    Return this (exchange, symbol, strategy_name)'s single stats row
+    from simulator.stats as a dict, or None if it hasn't been computed/
+    saved yet (table doesn't exist, or no row for this combo -- e.g. no
+    closed trades yet). Read-side counterpart to save_simulator_stats();
+    same to_regclass existence check + RealDictCursor pattern as
+    get_account_stats() in accounts_utils.py.
+    """
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute(sql.SQL("SELECT to_regclass('simulator.stats')"))
+    if cursor.fetchone()["to_regclass"] is None:
+        cursor.close()
+        return None
+
+    cursor.execute(
+        sql.SQL("SELECT * FROM simulator.stats WHERE exchange = %s AND symbol = %s AND strategy_name = %s"),
+        (exchange, symbol, strategy_name),
+    )
+    row = cursor.fetchone()
+    cursor.close()
+    return dict(row) if row else None
+
+
 # ==========================================================
 # Simulator Config (simulator.config)
 # ==========================================================
@@ -2378,6 +2402,29 @@ def save_execution_stats(conn, exchange, symbol, strategy_name, time_horizon, st
         f"Saved execution stats ({len(metric_cols)} metric column(s)): "
         f"execution.stats ({exchange}/{symbol}/{strategy_name})"
     )
+
+
+def get_execution_stats(conn, exchange, symbol, strategy_name):
+    """
+    Return this (exchange, symbol, strategy_name)'s single stats row
+    from execution.stats as a dict, or None if it hasn't been computed/
+    saved yet (table doesn't exist, or no row for this combo -- e.g. no
+    closed trades yet). Read-side counterpart to save_execution_stats();
+    same pattern as get_simulator_stats().
+    """
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute(sql.SQL("SELECT to_regclass('execution.stats')"))
+    if cursor.fetchone()["to_regclass"] is None:
+        cursor.close()
+        return None
+
+    cursor.execute(
+        sql.SQL("SELECT * FROM execution.stats WHERE exchange = %s AND symbol = %s AND strategy_name = %s"),
+        (exchange, symbol, strategy_name),
+    )
+    row = cursor.fetchone()
+    cursor.close()
+    return dict(row) if row else None
 
 
 # ==========================================================

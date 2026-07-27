@@ -557,14 +557,6 @@ def run_execution(client, exchange, symbol, config, strategy_name, time_horizon,
         }
         signal = int(aligned["signal"].iloc[i])
 
-        # TEMP TEST SIGNAL -- forces a signal on the first candle of this
-        # run only, to sanity-check order placement/TP-SL/fill/ledger
-        # end-to-end on live demo. REMOVE this block before leaving
-        # execution running unattended -- it overrides the real strategy
-        # signal every time this runs while position is flat.
-        if i == 0 and position is None:
-            signal = 1  # set to -1 to test a short instead
-
         closed_trade = None
 
         # Step: monitor open position (mark price / unrealized PnL / leaning) --
@@ -810,7 +802,19 @@ if __name__ == "__main__":
         take_profit_pct = float(strategy_row["take_profit_value"])
         stop_loss_pct = float(strategy_row["stop_loss_value"])
 
-        run_execution(
-            client, exchange, symbol, config, strategy_name, time_horizon,
-            strategy_config_dict, take_profit_pct, stop_loss_pct
-        )
+        try:
+            run_execution(
+                client, exchange, symbol, config, strategy_name, time_horizon,
+                strategy_config_dict, take_profit_pct, stop_loss_pct
+            )
+        except Exception as exc:
+            # One pair's failure (network blip, Bybit API error, a bug
+            # triggered only by this pair's specific data/state, etc.)
+            # must not stop every pair after it in `universe` from being
+            # processed this run -- this loop only runs every 1-5 minutes
+            # (see run_execution.bat), so a single unhandled exception
+            # here would otherwise silently starve every later pair of
+            # position monitoring/TP-SL reconciliation until someone
+            # notices. Log it and move on; the next scheduled run will
+            # retry this pair fresh.
+            print(f"{exchange} {symbol} ({strategy_name}): run_execution failed -- {exc!r}. Skipping to next pair.")

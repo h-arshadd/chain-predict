@@ -10,9 +10,9 @@ Each run does two things:
   1. Registers/updates the account in accounts.api_keys (only inserts
      the key the FIRST time -- if the account already exists, this does
      NOT touch its stored key, so re-running this script never
-     overwrites a key with the placeholder below). Edit ACCOUNT_NAME /
-     API_KEY / API_SECRET / DEMO below before your first run, then you
-     can leave them as-is afterward.
+     overwrites a key with whatever is currently in your .env). Set the
+     env vars described in the SECURITY note below before your first
+     run; they're only read/needed for that first registration.
 
   2. Refreshes accounts.history and accounts.stats from EVERY
      (exchange, symbol, strategy) combo currently in execution.config --
@@ -31,11 +31,24 @@ orders. It reads execution.config (to know which symbols this account
 trades) but pulls the actual trade/fill data live from Bybit itself,
 not from execution's own stored ledger.
 
-SECURITY: put your REAL Bybit API key/secret below only on your own
-machine, in your own copy of this file -- never commit a real key, and
-never paste one into a chat/ticket/PR. If a key is ever exposed that
-way, revoke it on Bybit and generate a new one before using it further.
+SECURITY: credentials are read from environment variables (via a local
+.env file, same convention as db_utils.py/bybit_client.py -- see
+python-dotenv's load_dotenv() below), never hardcoded in this file.
+Add these to your own .env (never commit .env -- it's already
+gitignored):
+
+    ACCOUNTS_ACCOUNT_NAME=bybit_demo_1
+    ACCOUNTS_BYBIT_API_KEY=your_key_here
+    ACCOUNTS_BYBIT_API_SECRET=your_secret_here
+    ACCOUNTS_BYBIT_DEMO=true
+
+If a key is ever exposed (e.g. committed to git before this fix), revoke
+it on Bybit and generate a new one before using it further -- editing
+this file to remove it afterward does not undo an already-public commit.
 """
+
+import os
+from dotenv import load_dotenv
 
 from crypto_pipeline.utils.db_utils import get_db_connection, get_execution_config, get_execution_universe
 from crypto_pipeline.utils.metadata_utils import (
@@ -49,13 +62,15 @@ from crypto_pipeline.accounts.accounts_utils import (
     refresh_account_stats,
 )
 
-# ---- EDIT THESE before your first run ----
-ACCOUNT_NAME = "bybit_demo_1"     # your own label for this account -- pick anything
+load_dotenv()
+
+# ---- Set these in your .env, not here (see SECURITY note above) ----
+ACCOUNT_NAME = os.getenv("ACCOUNTS_ACCOUNT_NAME", "bybit_demo_1")
 EXCHANGE = "bybit"
-API_KEY = "dqImKT6rBvUGeKSbBl"
-API_SECRET = "b28lVBRZhHl7QZjHIbzghgj8qz9yyavxwFLM"
-DEMO = True                        # True = Bybit Demo Trading, False = production
-# -------------------------------------------
+API_KEY = os.getenv("ACCOUNTS_BYBIT_API_KEY")
+API_SECRET = os.getenv("ACCOUNTS_BYBIT_API_SECRET")
+DEMO = os.getenv("ACCOUNTS_BYBIT_DEMO", "true").strip().lower() == "true"
+# ----------------------------------------------------------------------
 
 
 def _get_strategy_combos(conn):
@@ -119,6 +134,23 @@ def _get_strategy_combos(conn):
 
 
 def main():
+    # Only actually needed on this account's very first run (see Step 1
+    # below) -- but checked upfront so a missing .env fails clearly and
+    # immediately, instead of registering an account with a NULL/empty
+    # key that would only surface as a confusing Bybit auth error later.
+    existing_check_conn = get_db_connection()
+    try:
+        already_registered = get_account_api_key(existing_check_conn, ACCOUNT_NAME) is not None
+    finally:
+        existing_check_conn.close()
+
+    if not already_registered and (not API_KEY or not API_SECRET):
+        raise RuntimeError(
+            f"Account {ACCOUNT_NAME!r} isn't registered yet and ACCOUNTS_BYBIT_API_KEY/"
+            f"ACCOUNTS_BYBIT_API_SECRET aren't set in your .env -- see the SECURITY note "
+            f"at the top of this file for the required .env keys."
+        )
+
     conn = get_db_connection()
     try:
         # Step 1: register the account, but only if it doesn't already
