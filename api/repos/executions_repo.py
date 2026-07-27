@@ -46,6 +46,7 @@ from psycopg2 import sql
 from crypto_pipeline.utils.db_utils import (
     get_execution_universe,
     get_execution_config,
+    save_execution_config,
     get_execution_state,
     get_execution_summary,
     build_execution_equity_curve_from_ledger,
@@ -356,6 +357,48 @@ def _build_summary(conn, exchange, symbol, config, strategy_row) -> dict:
         "last_signal": last_signal,
         "last_processed": state["last_processed"],
     }
+
+
+def assign_wallet(conn, exchange, symbol, account_name):
+    """
+    Set (or clear, if account_name is None) execution.config.account_name
+    for one already-deployed (exchange, symbol) pair -- this is the
+    "which wallet places real orders for this pair" link execution/main.py
+    checks before it will trade. Everything else on the row (balance,
+    position sizing, commission/slippage, allow_long/short,
+    max_open_positions) is read from the existing row and passed straight
+    back through save_execution_config()'s upsert unchanged, since this
+    is a targeted field update, not a full reconfigure.
+
+    Returns the updated config dict, or None if this pair has no
+    execution.config row yet (nothing to assign a wallet to -- deploy it
+    first), or raises ValueError if account_name doesn't match any row
+    in accounts.api_keys (assigning a wallet that doesn't exist would
+    silently no-op at run time otherwise, same failure mode this whole
+    fix is for).
+    """
+    config = get_execution_config(conn, exchange, symbol)
+    if config is None:
+        return None
+
+    if account_name:
+        wallet = get_account_api_key(conn, account_name)
+        if wallet is None:
+            raise ValueError(f"Wallet '{account_name}' not found in accounts.api_keys")
+
+    save_execution_config(
+        conn, exchange, symbol,
+        initial_balance=config["initial_balance"],
+        position_size=config["position_size"],
+        commission=config["commission"],
+        slippage=config["slippage"],
+        allow_long=config["allow_long"],
+        allow_short=config["allow_short"],
+        max_open_positions=config["max_open_positions"],
+        account_name=account_name,
+    )
+
+    return get_execution_config(conn, exchange, symbol)
 
 
 def _list_trades(conn, exchange, symbol, strategy_name, limit: int = 200) -> list[dict]:

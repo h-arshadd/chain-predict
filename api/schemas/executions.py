@@ -41,6 +41,16 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+class ExecutionWalletAssign(BaseModel):
+    """
+    Body for PATCH /api/executions/{exchange}/{symbol}/wallet -- sets
+    which wallet (accounts.api_keys.account_name) places real orders for
+    an already-deployed pair. account_name=None clears the assignment
+    (pair goes back to "no wallet assigned", skipped at run time).
+    """
+    account_name: Optional[str] = None
+
+
 class ExecutionPosition(BaseModel):
     """Current open position, if any -- mirrors get_execution_state()'s "position" dict."""
     direction: str
