@@ -7,14 +7,17 @@ import {
   ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
 import { api } from '../lib/api';
+import { METRIC_CARDS, fmtMetric } from '../lib/metricCards';
+import Panel, { panelFlat as panel } from '../components/Panel';
+import EmptyChart from '../components/EmptyChart';
+import KeyValue from '../components/KeyValue';
+import StatBox from '../components/StatBox';
+import { tooltipStyle, axisStyle } from '../lib/chartStyle';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
 const AMBER = '#FF8A5C';
 const BLUE = '#4D9DE0';
-
-const tooltipStyle = { background: '#161B21', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, fontSize: 12 };
-const axisStyle = { fill: '#6B7280', fontSize: 11 };
 
 const SIGNAL_COLORS = { Buy: MINT, Sell: RED, Hold: '#6B7280' };
 
@@ -31,44 +34,6 @@ const KIND_COLORS = {
   deep_learning_regressor: { bg: 'rgba(255,138,92,0.14)', fg: AMBER },
   deep_learning_classifier: { bg: 'rgba(255,138,92,0.14)', fg: AMBER },
 };
-
-const panel = {
-  background: 'rgba(21, 26, 31, 0.75)',
-  backdropFilter: 'blur(16px)',
-  border: '1px solid rgba(255,255,255,0.07)',
-  borderRadius: 22,
-};
-
-function Panel({ title, children, style }) {
-  return (
-    <div style={{ ...panel, padding: 22, ...style }}>
-      {title && <h3 style={{ fontSize: 15.5, fontWeight: 700, color: '#F5F6F7', margin: '0 0 16px' }}>{title}</h3>}
-      {children}
-    </div>
-  );
-}
-
-function KeyValue({ label, value, mono }) {
-  return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-      <span style={{ color: '#9096A0', fontSize: 13, flexShrink: 0 }}>{label}</span>
-      <span style={{ color: '#F5F6F7', fontSize: 13, fontWeight: 600, fontFamily: mono ? 'ui-monospace, monospace' : undefined, textAlign: 'right' }}>
-        {value ?? '—'}
-      </span>
-    </div>
-  );
-}
-
-function StatBox({ label, value, positive }) {
-  return (
-    <div style={{ ...panel, padding: 16 }}>
-      <div style={{ color: '#9096A0', fontSize: 12, marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 19, fontWeight: 700, color: positive === undefined ? '#F5F6F7' : positive ? MINT : RED, fontFamily: 'ui-monospace, monospace' }}>
-        {value}
-      </div>
-    </div>
-  );
-}
 
 function PillList({ items, color, mono }) {
   if (!items || items.length === 0) {
@@ -93,74 +58,9 @@ function PillList({ items, color, mono }) {
   );
 }
 
-function EmptyChart({ text }) {
-  return (
-    <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6B7280', fontSize: 13, textAlign: 'center', padding: '0 20px' }}>
-      {text}
-    </div>
-  );
-}
-
 const fmtMetricName = (k) => k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 const fmtNum = (v, digits = 4) => (typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(digits)) : (v ?? '—'));
 const fmtPct = (v) => (v == null ? '—' : `${(v * 100).toFixed(2)}%`);
-
-// Subset of evaluation.trading_metrics_full (the full quantstats dict
-// build_evaluation_metadata() now keeps, alongside the older 7-metric
-// trading_metrics_summary) to headline as cards -- same list used on
-// the Backtest/Execution/Simulation Details pages for consistency.
-// "pct" metrics are ratios quantstats returns as fractions (0.42 ->
-// 42%), "ratio" metrics are shown as-is to 2 decimals. `invert` means a
-// LOWER number is the better outcome (drawdown, losses, risk measures),
-// so the green/red coloring flips for those.
-const METRIC_CARDS = [
-  { key: 'sharpe', label: 'Sharpe Ratio', kind: 'ratio' },
-  { key: 'smart_sharpe', label: 'Smart Sharpe', kind: 'ratio' },
-  { key: 'sortino', label: 'Sortino Ratio', kind: 'ratio' },
-  { key: 'smart_sortino', label: 'Smart Sortino', kind: 'ratio' },
-  { key: 'adjusted_sortino', label: 'Adjusted Sortino', kind: 'ratio' },
-  { key: 'calmar', label: 'Calmar Ratio', kind: 'ratio' },
-  { key: 'omega', label: 'Omega Ratio', kind: 'ratio' },
-  { key: 'max_drawdown', label: 'Max Drawdown', kind: 'pct', invert: true },
-  { key: 'cagr', label: 'CAGR', kind: 'pct' },
-  { key: 'comp', label: 'Total Compounded Return', kind: 'pct' },
-  { key: 'volatility', label: 'Volatility (ann.)', kind: 'pct', invert: true },
-  { key: 'win_rate', label: 'Win Rate', kind: 'pct' },
-  { key: 'win_loss_ratio', label: 'Win/Loss Ratio', kind: 'ratio' },
-  { key: 'profit_factor', label: 'Profit Factor', kind: 'ratio' },
-  { key: 'profit_ratio', label: 'Profit Ratio', kind: 'ratio' },
-  { key: 'payoff_ratio', label: 'Payoff Ratio', kind: 'ratio' },
-  { key: 'gain_to_pain_ratio', label: 'Gain to Pain Ratio', kind: 'ratio' },
-  { key: 'best', label: 'Best Period', kind: 'pct' },
-  { key: 'worst', label: 'Worst Period', kind: 'pct', invert: true },
-  { key: 'avg_return', label: 'Avg Return', kind: 'pct' },
-  { key: 'avg_win', label: 'Avg Win', kind: 'pct' },
-  { key: 'avg_loss', label: 'Avg Loss', kind: 'pct', invert: true },
-  { key: 'expected_return', label: 'Expected Return', kind: 'pct' },
-  { key: 'expected_shortfall', label: 'Expected Shortfall (CVaR)', kind: 'pct', invert: true },
-  { key: 'value_at_risk', label: 'Value at Risk', kind: 'pct', invert: true },
-  { key: 'conditional_value_at_risk', label: 'Conditional VaR', kind: 'pct', invert: true },
-  { key: 'kelly_criterion', label: 'Kelly Criterion', kind: 'pct' },
-  { key: 'risk_of_ruin', label: 'Risk of Ruin', kind: 'pct', invert: true },
-  { key: 'tail_ratio', label: 'Tail Ratio', kind: 'ratio' },
-  { key: 'recovery_factor', label: 'Recovery Factor', kind: 'ratio' },
-  { key: 'ulcer_index', label: 'Ulcer Index', kind: 'ratio', invert: true },
-  { key: 'ulcer_performance_index', label: 'Ulcer Performance Index', kind: 'ratio' },
-  { key: 'serenity_index', label: 'Serenity Index', kind: 'ratio' },
-  { key: 'common_sense_ratio', label: 'Common Sense Ratio', kind: 'ratio' },
-  { key: 'exposure', label: 'Exposure', kind: 'pct' },
-  { key: 'consecutive_wins', label: 'Max Consecutive Wins', kind: 'plain' },
-  { key: 'consecutive_losses', label: 'Max Consecutive Losses', kind: 'plain', invert: true },
-  { key: 'skew', label: 'Skew', kind: 'ratio' },
-  { key: 'kurtosis', label: 'Kurtosis', kind: 'ratio' },
-];
-
-function fmtMetric(value, kind) {
-  if (value == null || Number.isNaN(value)) return '—';
-  if (kind === 'pct') return `${(value * 100).toFixed(2)}%`;
-  if (kind === 'plain') return `${value}`;
-  return value.toFixed(2);
-}
 
 function algorithmLabel(algo) {
   if (!algo) return '—';
@@ -439,7 +339,7 @@ export default function ModelDetails() {
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <EmptyChart text="No ML metrics recorded for this run." />
+            <EmptyChart centered text="No ML metrics recorded for this run." />
           )}
         </Panel>
         <Panel title="Trading Metrics (signal-converted backtest)">
@@ -477,7 +377,7 @@ export default function ModelDetails() {
               )}
             </div>
           ) : (
-            <EmptyChart text="No trading metrics recorded for this run." />
+            <EmptyChart centered text="No trading metrics recorded for this run." />
           )}
         </Panel>
       </div>
@@ -502,7 +402,7 @@ export default function ModelDetails() {
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <EmptyChart text="No signal counts recorded for this run." />
+            <EmptyChart centered text="No signal counts recorded for this run." />
           )}
         </Panel>
         <Panel title="Win / Loss">
@@ -526,7 +426,7 @@ export default function ModelDetails() {
               </PieChart>
             </ResponsiveContainer>
           ) : (
-            <EmptyChart text="No trade win/loss data recorded for this run." />
+            <EmptyChart centered text="No trade win/loss data recorded for this run." />
           )}
         </Panel>
       </div>

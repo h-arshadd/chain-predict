@@ -3,17 +3,13 @@ import { Table, Input, Select, Spin, Alert } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { SearchOutlined, ExperimentOutlined } from '@ant-design/icons';
 import { api } from '../lib/api';
+import { panelGradient as panel } from '../components/Panel';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
 const AMBER = '#FF8A5C';
 
-const panel = {
-  background: 'linear-gradient(155deg, rgba(30, 36, 34, 0.8) 0%, rgba(19, 23, 27, 0.8) 100%)',
-  backdropFilter: 'blur(16px)',
-  border: '1px solid rgba(255,255,255,0.08)',
-  borderRadius: 20,
-};
+
 
 // Real model_type values from the backend (ml_repo.py's _SUPPORTED_KINDS
 // filtering) -- "timeseries" runs are excluded entirely, never sent by

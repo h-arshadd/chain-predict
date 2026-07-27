@@ -4,6 +4,8 @@ import { Table, Select, Spin, Alert, Modal, Form, InputNumber, DatePicker, Switc
 import { PlusOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../lib/api';
+import { fmtUsd, pnlColor } from '../lib/format';
+import { panelGradient as panel } from '../components/Panel';
 
 // Matches start_date in crypto_pipeline/data/binance/config_binance.yml
 // and config_bybit.yml -- there's no candle data in the DB before this,
@@ -27,20 +29,14 @@ const STATUS_META = {
   failed: { label: 'Failed', bg: 'rgba(240,70,107,0.14)', fg: RED },
 };
 
-const panel = {
-  background: 'linear-gradient(155deg, rgba(30, 36, 34, 0.8) 0%, rgba(19, 23, 27, 0.8) 100%)',
-  backdropFilter: 'blur(16px)',
-  border: '1px solid rgba(255,255,255,0.08)',
-  borderRadius: 20,
-};
+
 
 const primaryBtnStyle = {
   display: 'flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 10,
   border: 'none', background: MINT, color: '#0B0F12', fontWeight: 700, fontSize: 13.5, cursor: 'pointer',
 };
 
-const fmtUsd = (v) => (v == null ? '—' : v.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }));
-const pnlColor = (v) => (v == null ? '#F5F6F7' : v > 0 ? MINT : v < 0 ? RED : '#F5F6F7');
+
 
 const TABS = [
   { key: 'all', label: 'All' },
@@ -167,7 +163,7 @@ export default function Backtests() {
       title: 'Net Profit', key: 'total_net_profit',
       render: (_, r) => {
         const v = r.result_summary?.total_net_profit;
-        return <span style={{ color: pnlColor(v), fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}>{v == null ? '—' : `${v >= 0 ? '+' : ''}${fmtUsd(v)}`}</span>;
+        return <span style={{ color: pnlColor(v, '#F5F6F7', '#F5F6F7'), fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}>{v == null ? '—' : `${v >= 0 ? '+' : ''}${fmtUsd(v)}`}</span>;
       },
     },
     {

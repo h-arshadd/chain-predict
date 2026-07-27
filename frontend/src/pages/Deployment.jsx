@@ -3,17 +3,14 @@ import { Table, Tag, Input, Select, Spin, Alert, Tooltip } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { SearchOutlined, WarningFilled } from '@ant-design/icons';
 import { api } from '../lib/api';
+import { fmtUsd, pnlColor } from '../lib/format';
+import { panelGradient as panel } from '../components/Panel';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
 const AMBER = '#FF8A5C';
 
-const panel = {
-  background: 'linear-gradient(155deg, rgba(30, 36, 34, 0.8) 0%, rgba(19, 23, 27, 0.8) 100%)',
-  backdropFilter: 'blur(16px)',
-  border: '1px solid rgba(255,255,255,0.08)',
-  borderRadius: 20,
-};
+
 
 // Backend statuses: "running" | "flat" | "paused" | "unassigned" | "never_run"
 const STATUS_META = {
@@ -28,11 +25,6 @@ const statusFilterOptions = [
   { value: 'All', label: 'All statuses' },
   ...Object.entries(STATUS_META).map(([value, m]) => ({ value, label: m.label })),
 ];
-
-const fmtUsd = (v) =>
-  v == null ? '—' : `${v >= 0 ? '' : '-'}$${Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-const pnlColor = (v) => (v == null ? '#6B7280' : v > 0 ? MINT : v < 0 ? RED : '#9096A0');
 
 function buildColumns() {
   return [

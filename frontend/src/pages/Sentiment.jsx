@@ -1,48 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Tag, Select, Table, Spin, Alert, Empty, Tooltip as AntTooltip } from 'antd';
-import { InfoCircleOutlined } from '@ant-design/icons';
+import { Tag, Select, Table, Spin, Alert, Empty } from 'antd';
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
 import { api } from '../lib/api';
+import Panel, { panelFlat as panel } from '../components/Panel';
+import StatBox from '../components/StatBox';
+import { tooltipStyle, axisStyle } from '../lib/chartStyle';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
 const AMBER = '#FF8A5C';
-
-const panel = {
-  background: 'rgba(21, 26, 31, 0.75)',
-  backdropFilter: 'blur(16px)',
-  border: '1px solid rgba(255,255,255,0.07)',
-  borderRadius: 22,
-};
-
-const tooltipStyle = { background: '#161B21', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, fontSize: 12 };
-const axisStyle = { fill: '#6B7280', fontSize: 11 };
-
-function Panel({ title, children, style, action, hint }) {
-  return (
-    <div style={{ ...panel, padding: 22, display: 'flex', flexDirection: 'column', ...style }}>
-      {(title || action) && (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-          {title && (
-            <h3 style={{ fontSize: 15.5, fontWeight: 700, color: '#F5F6F7', margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
-              {title}
-              {hint && (
-                <AntTooltip title={hint}>
-                  <InfoCircleOutlined style={{ fontSize: 12.5, color: '#6B7280', cursor: 'help' }} />
-                </AntTooltip>
-              )}
-            </h3>
-          )}
-          {action}
-        </div>
-      )}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>{children}</div>
-    </div>
-  );
-}
 
 // ---- Fear & Greed gauge: semicircular dial with needle ----
 function fearGreedColor(score) {
@@ -101,17 +70,6 @@ function FearGreedGauge({ score, label }) {
         <div style={{ fontSize: 15, fontWeight: 700, color: fearGreedColor(score), marginTop: 6 }}>
           {label ?? 'Not enough data'}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function StatBox({ label, value }) {
-  return (
-    <div style={{ ...panel, padding: 16 }}>
-      <div style={{ color: '#9096A0', fontSize: 12, marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 19, fontWeight: 700, color: '#F5F6F7', fontFamily: 'ui-monospace, monospace' }}>
-        {value ?? '—'}
       </div>
     </div>
   );
@@ -267,7 +225,7 @@ export default function Sentiment() {
               </div>
             </Panel>
 
-            <Panel title="Overall Market Sentiment" hint={`Based on ${overview.overall.post_count} Reddit posts scored by CryptoBERT.`}>
+            <Panel column title="Overall Market Sentiment" hint={`Based on ${overview.overall.post_count} Reddit posts scored by CryptoBERT.`}>
               {overview.overall.post_count === 0 ? (
                 <Empty description={<span style={{ color: '#9096A0' }}>No posts yet for {selectedCoin}.</span>} style={{ padding: '20px 0' }} />
               ) : (
@@ -307,7 +265,7 @@ export default function Sentiment() {
 
           {/* Fear & Greed Timeline + Sentiment Timeline */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-            <Panel title="Fear & Greed Timeline">
+            <Panel column title="Fear & Greed Timeline">
               {overview.fear_greed_timeline.length === 0 ? (
                 <Empty description={<span style={{ color: '#9096A0' }}>Not enough history yet.</span>} style={{ padding: '30px 0' }} />
               ) : (
@@ -328,7 +286,7 @@ export default function Sentiment() {
                 </ResponsiveContainer>
               )}
             </Panel>
-            <Panel title="Sentiment Timeline">
+            <Panel column title="Sentiment Timeline">
               {overview.sentiment_timeline.length === 0 ? (
                 <Empty description={<span style={{ color: '#9096A0' }}>Not enough history yet.</span>} style={{ padding: '30px 0' }} />
               ) : (
@@ -347,7 +305,7 @@ export default function Sentiment() {
 
           {/* Post Volume + Sentiment Distribution */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-            <Panel title="Post Volume" hint="Reddit posts per day, split by sentiment label.">
+            <Panel column title="Post Volume" hint="Reddit posts per day, split by sentiment label.">
               {overview.post_volume.length === 0 ? (
                 <Empty description={<span style={{ color: '#9096A0' }}>Not enough history yet.</span>} style={{ padding: '30px 0' }} />
               ) : (
@@ -364,7 +322,7 @@ export default function Sentiment() {
                 </ResponsiveContainer>
               )}
             </Panel>
-            <Panel title="Sentiment Distribution">
+            <Panel column title="Sentiment Distribution">
               {overview.overall.post_count === 0 ? (
                 <Empty description={<span style={{ color: '#9096A0' }}>No posts yet.</span>} style={{ padding: '30px 0' }} />
               ) : (
@@ -390,7 +348,7 @@ export default function Sentiment() {
 
           {/* Top 5 Reddit posts -- stands in for the PDF's "News Sentiment" (no news source exists in this codebase) */}
           <div style={{ marginBottom: 8 }}>
-            <Panel title="Top 5 Reddit Posts" hint='Standing in for "News Sentiment" — this system tracks Reddit, not a news wire. Sorted by Reddit score (upvotes), not sentiment.'>
+            <Panel column title="Top 5 Reddit Posts" hint='Standing in for "News Sentiment" — this system tracks Reddit, not a news wire. Sorted by Reddit score (upvotes), not sentiment.'>
               <Table
                 size="small"
                 pagination={false}
