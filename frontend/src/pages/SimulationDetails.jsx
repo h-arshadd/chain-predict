@@ -3,10 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Tag, Table, Spin, Alert } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { api } from '../lib/api';
-import { fmtUsd, pnlColor } from '../lib/format';
+import { fmtUsd } from '../lib/format';
 import { recordsToSeries, monthlyHeatmapToRows, heatColor } from '../lib/quantstats';
 import { METRIC_CARDS_COL_1, METRIC_CARDS_COL_2, fmtMetric } from '../lib/metricCards';
-import Panel, { panelFlat as panel } from '../components/Panel';
+import Panel from '../components/Panel';
 import EmptyChart from '../components/EmptyChart';
 import TradePnlChart from '../components/TradePnlChart';
 import EquityCurveChart from '../components/EquityCurveChart';
@@ -19,7 +19,6 @@ import StatBox from '../components/StatBox';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
-const AMBER = '#FF8A5C';
 
 const STATUS_META = {
   running: { label: 'Running', bg: 'rgba(61,220,151,0.12)', fg: MINT },

@@ -98,7 +98,7 @@ function buildColumns() {
     },
     {
       title: 'Status', dataIndex: 'status', key: 'status',
-      render: (status, record) => {
+      render: (status) => {
         const m = STATUS_META[status] || STATUS_META.never_run;
         return <Tag style={{ background: m.bg, color: m.fg, border: 'none', borderRadius: 8, fontWeight: 600 }}>{m.label}</Tag>;
       },

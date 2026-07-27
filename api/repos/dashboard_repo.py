@@ -65,11 +65,18 @@ def _simulator_strategy_lookup(conn):
 
 def _running_simulations(conn) -> int:
     """
-    Count of (exchange, symbol) pairs with at least one simulator
-    strategy currently holding an open position (simulator.positions,
-    via get_simulator_state) -- real running-simulation count, not
-    derived from simulator_enabled alone (a strategy can be enabled but
-    flat between trades).
+    Count of (exchange, symbol, strategy) combos currently holding an
+    open simulator position (simulator.positions, via
+    get_simulator_state) -- real running-simulation count, not derived
+    from simulator_enabled alone (a strategy can be enabled but flat
+    between trades).
+
+    Counts every strategy independently -- simulator has no exclusivity
+    rule, so several strategies can be open on the same pair at once,
+    and each open one should add to this count (previously this broke
+    out after the first open strategy per pair, which undercounted down
+    to "at most one per coin" instead of the real total across all
+    running strategies).
     """
     running = 0
     for exchange, symbol in get_simulator_universe(conn):
@@ -77,7 +84,6 @@ def _running_simulations(conn) -> int:
             state = get_simulator_state(conn, exchange, symbol, strategy_row["strategy_name"])
             if state is not None and state.get("position") is not None:
                 running += 1
-                break  # one open position is enough to count this pair as running
     return running
 
 
@@ -99,8 +105,11 @@ def _running_executions(conn) -> int:
     """
     Count of (exchange, symbol) pairs with an open LIVE position
     (execution.positions, via get_execution_state) for that pair's
-    single execution-enabled strategy -- mirrors _running_simulations()
-    but on the execution side.
+    single execution-enabled strategy. One-per-pair is correct here
+    (unlike _running_simulations(), which counts per strategy) because
+    execution enforces exclusivity -- at most one execution_enabled
+    strategy per pair, so "per pair" and "per strategy" are the same
+    count on this side.
     """
     running = 0
     for exchange, symbol in get_execution_universe(conn):
