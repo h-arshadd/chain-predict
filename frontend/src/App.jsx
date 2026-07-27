@@ -4,7 +4,7 @@ import { themeConfig } from './theme';
 import DashboardLayout from './layouts/DashboardLayout';
 import Dashboard from './pages/Dashboard';
 import Wallets from './pages/Wallets';
-import Deployment from './pages/Deployment';
+import Execution from './pages/Execution';
 import ExecutionDetails from './pages/ExecutionDetails';
 import Backtests from './pages/Backtests';
 import BacktestDetails from './pages/BacktestDetails';
@@ -21,8 +21,8 @@ function App() {
           <Route element={<DashboardLayout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/wallets" element={<Wallets />} />
-            <Route path="/deployment" element={<Deployment />} />
-            <Route path="/deployment/:exchange/:symbol" element={<ExecutionDetails />} />
+            <Route path="/execution" element={<Execution />} />
+            <Route path="/execution/:exchange/:symbol" element={<ExecutionDetails />} />
             <Route path="/backtests" element={<Backtests />} />
             <Route path="/backtests/:id" element={<BacktestDetails />} />
             <Route path="/models" element={<Models />} />

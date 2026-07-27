@@ -3,7 +3,7 @@ import { InfoCircleOutlined } from '@ant-design/icons';
 
 // Two background treatments used across the app. "flat" is a plain dark
 // glass card (Details pages, Sentiment); "gradient" is a subtle diagonal
-// gradient glass card (list/table pages: Backtests, Dashboard, Deployment,
+// gradient glass card (list/table pages: Backtests, Dashboard, Execution,
 // Models, Wallets). Pass variant="gradient" to opt into the latter.
 export const panelFlat = {
   background: 'rgba(21, 26, 31, 0.75)',

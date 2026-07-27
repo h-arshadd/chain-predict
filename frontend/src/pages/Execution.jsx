@@ -119,7 +119,7 @@ function buildColumns() {
   ];
 }
 
-export default function Deployment() {
+export default function Execution() {
   const navigate = useNavigate();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -174,7 +174,7 @@ export default function Deployment() {
       {error && (
         <Alert
           type="error"
-          message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Couldn't load deployments</span>}
+          message={<span style={{ color: '#F5F6F7', fontWeight: 600 }}>Couldn't load executions</span>}
           description={<span style={{ color: '#C9CDD3' }}>{error}</span>}
           action={<button onClick={load} style={iconBtnStyle}>Retry</button>}
           style={{ marginBottom: 20, background: 'rgba(240, 70, 107, 0.08)', border: '1px solid rgba(240, 70, 107, 0.3)' }}
@@ -184,7 +184,7 @@ export default function Deployment() {
 
       {/* Summary strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 }}>
-        <SummaryCard label="Running Deployments" value={`${runningCount} / ${rows.length}`} />
+        <SummaryCard label="Running Executions" value={`${runningCount} / ${rows.length}`} />
         <SummaryCard label="Combined Cumulative PnL" value={`${totalPnl >= 0 ? '+' : ''}${fmtUsd(totalPnl)}`} color={pnlColor(totalPnl)} />
         <SummaryCard label="Combined Current PnL" value={`${totalUnrealizedPnl >= 0 ? '+' : ''}${fmtUsd(totalUnrealizedPnl)}`} color={pnlColor(totalUnrealizedPnl)} />
       </div>
@@ -214,9 +214,9 @@ export default function Deployment() {
             columns={buildColumns()}
             dataSource={filtered}
             pagination={{ pageSize: 10 }}
-            locale={{ emptyText: 'No deployments configured yet. Add a pair to execution.config to see it here.' }}
+            locale={{ emptyText: 'No executions configured yet. Add a pair to execution.config to see it here.' }}
             onRow={(row) => ({
-              onClick: () => navigate(`/deployment/${row.exchange}/${row.symbol}`),
+              onClick: () => navigate(`/execution/${row.exchange}/${row.symbol}`),
               style: { cursor: 'pointer' },
             })}
           />

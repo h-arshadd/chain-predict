@@ -68,7 +68,7 @@ function MiniTable({ columns, data, emptyText }) {
 }
 
 // Strategies/positions/open orders/executions are always [] for now --
-// the wallets API stubs these until the Strategy Deployment module is
+// the wallets API stubs these until the Execution module is
 // wired up to join against them. The expandable row still renders
 // correctly with its own empty states in the meantime.
 function WalletExpandedRow({ wallet }) {
