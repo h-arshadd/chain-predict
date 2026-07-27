@@ -7,6 +7,7 @@ import {
   ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts';
 import { api } from '../lib/api';
+import TradePnlChart from '../components/TradePnlChart';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
@@ -178,11 +179,6 @@ export default function ExecutionDetails() {
 
   const equitySeries = useMemo(
     () => (data?.equity_curve || []).map((p) => ({ ts: p.timestamp, balance: p.balance, label: new Date(p.timestamp).toLocaleDateString() })),
-    [data]
-  );
-
-  const tradesForChart = useMemo(
-    () => [...(data?.trades || [])].reverse().map((t, i) => ({ idx: `#${i + 1}`, pnl: t.net_pnl ?? 0 })),
     [data]
   );
 
@@ -413,19 +409,7 @@ export default function ExecutionDetails() {
           )}
         </Panel>
         <Panel title="Trade PnL Sequence">
-          {tradesForChart.length > 0 ? (
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={tradesForChart} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                <XAxis dataKey="idx" tick={axisStyle} axisLine={false} tickLine={false} />
-                <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={tooltipStyle} />
-                <Line type="monotone" dataKey="pnl" stroke={MINT} strokeWidth={2.5} dot={{ r: 3, fill: MINT }} />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <EmptyChart text="No trades yet." />
-          )}
+          <TradePnlChart trades={data.trades} reverse />
         </Panel>
       </div>
 
