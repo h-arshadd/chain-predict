@@ -142,11 +142,6 @@ export default function Dashboard() {
       icon: <BarChartOutlined />,
     },
     {
-      title: 'Overall Portfolio Value',
-      value: fmtMoney(summary.overall_portfolio_value),
-      icon: <WalletOutlined />,
-    },
-    {
       title: 'Total Return',
       value: fmtPct(summary.total_return_pct),
       valueColor: pnlColor(summary.total_return_pct),

@@ -3,22 +3,19 @@ repos/dashboard_repo.py
 ------------------------
 DB access for the Dashboard (landing page).
 
-Exactly the 10 widgets the spec asks for -- Total Strategies, Active
-Strategies, Running Executions, Running Simulations, Connected
-Accounts, Trained ML Models, Total Backtests, Today's PnL, Overall
-Portfolio Value, Total Return -- plus the strategies table. Nothing
-extra. Nothing here is invented -- every widget reads a real number
-from execution/simulator/backtest data.
+Total Strategies, Active Strategies, Running Executions, Running
+Simulations, Connected Accounts, Trained ML Models, Total Backtests,
+Today's PnL, Total Return -- plus the strategies table. Nothing here
+is invented -- every widget reads a real number from
+execution/simulator/backtest data.
 
 Two pieces:
 
 1. get_summary() -- the top stat-card strip. Running Executions/
    Simulations are read from execution.positions/simulator.positions
-   directly (open position = running). Today's PnL, Overall Portfolio
-   Value, and Total Return combine BOTH execution and simulator money
-   (no separate execution/simulator line items are exposed here -- the
-   spec asks for one Overall Portfolio Value / one Total Return, not a
-   breakdown).
+   directly (open position = running). Today's PnL and Total Return
+   are read from SIMULATOR data only (simulator.positions +
+   simulator.{...}_trades), not execution.
 
 2. list_strategies() -- the Dashboard's strategy table. This table is
    SIMULATOR data, deliberately separate from strategies_repo's
@@ -34,6 +31,7 @@ Two pieces:
 """
 
 import datetime as _dt
+import re
 
 from psycopg2 import sql
 
@@ -46,8 +44,6 @@ from crypto_pipeline.utils.db_utils import (
     build_equity_curve_from_ledger,
     get_execution_universe,
     get_execution_state,
-    get_execution_config,
-    _execution_trades_table,
 )
 from crypto_pipeline.accounts.accounts_utils import list_accounts
 from api.repos import ml_repo
@@ -152,77 +148,58 @@ def _simulator_portfolio(conn) -> dict:
     return {"balance": total_balance, "net_profit": net_profit, "return_pct": return_pct}
 
 
-def _execution_portfolio(conn) -> dict:
+def _simulator_trades_table(symbol, strategy_name, time_horizon):
     """
-    Real balance/PnL rollup across every (exchange, symbol) pair's
-    single execution-enabled strategy -- summed from execution.positions
-    (via get_execution_config/get_execution_state). Exact mirror of
-    _simulator_portfolio(), execution side, one strategy per pair
-    (execution's real exclusivity rule) instead of simulator's "every
-    enabled row".
+    Same table-name builder get_simulator_summary() uses internally for
+    reading the Trade Ledger: simulator.{symbol}_{strategy}_{time_horizon}_trades.
     """
-    pairs = get_execution_universe(conn)
-    total_balance = 0.0
-    total_initial = 0.0
-    any_data = False
-
-    for exchange, symbol in pairs:
-        config = get_execution_config(conn, exchange, symbol)
-        if config is None:
-            continue
-        strategy_row = _current_execution_strategy(conn, exchange, symbol)
-        if strategy_row is None:
-            continue
-        state = get_execution_state(conn, exchange, symbol, strategy_row["strategy_name"])
-        if state is None:
-            continue
-        any_data = True
-        total_balance += state.get("balance") or 0.0
-        total_initial += config.get("initial_balance") or 0.0
-
-    if not any_data:
-        return {"balance": None, "net_profit": None, "return_pct": None}
-
-    net_profit = total_balance - total_initial
-    return_pct = (net_profit / total_initial * 100.0) if total_initial else None
-    return {"balance": total_balance, "net_profit": net_profit, "return_pct": return_pct}
+    safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name)
+    safe_time_horizon = re.sub(r"[^0-9a-zA-Z_]", "_", time_horizon)
+    return f"{symbol}_{safe_strategy_name}_{safe_time_horizon}_trades"
 
 
-def _today_execution_pnl(conn) -> float | None:
+def _today_simulator_pnl(conn) -> float | None:
     """
-    Sum of net_pnl for every LIVE trade that closed today (UTC), across
-    every (exchange, symbol) pair's execution-enabled strategy trades
-    table (execution.{symbol}_{strategy}_trades, see
-    _execution_trades_table). Real closed-trade PnL, not an estimate --
-    returns None if no pair has ever traded (table doesn't exist for
-    any of them yet), 0.0 if tables exist but nothing closed today.
+    Sum of net_pnl for every simulator trade that closed today (UTC),
+    across every (exchange, symbol) pair and every simulator_enabled
+    strategy's trades table (simulator.{symbol}_{strategy}_{time_horizon}_trades).
+    Real closed-trade PnL, not an estimate -- returns None if no pair
+    has ever traded (table doesn't exist for any of them yet), 0.0 if
+    tables exist but nothing closed today.
+
+    Table lookup goes through sql.Identifier + as_string() for
+    to_regclass, same quoting fix get_simulator_summary() uses, so
+    strategy names with uppercase letters resolve correctly.
     """
     today = _dt.datetime.now(_dt.timezone.utc).date()
     total = 0.0
     any_table = False
 
     cursor = conn.cursor()
-    for exchange, symbol in get_execution_universe(conn):
-        strategy_row = _current_execution_strategy(conn, exchange, symbol)
-        if strategy_row is None:
-            continue
-        table_name = _execution_trades_table(exchange, symbol, strategy_row["strategy_name"])
-        qualified_name = sql.SQL(".").join(
-            [sql.Identifier("execution"), sql.Identifier(table_name)]
-        ).as_string(conn)
-        cursor.execute(sql.SQL("SELECT to_regclass(%s)"), (qualified_name,))
-        if cursor.fetchone()[0] is None:
-            continue
+    for exchange, symbol in get_simulator_universe(conn):
+        strategy_rows = [
+            r for r in get_strategies(conn, exchange=exchange, coin=symbol)
+            if r.get("simulator_enabled", True)
+        ]
+        for row in strategy_rows:
+            time_horizon = row.get("time_horizon") or "1h"
+            table_name = _simulator_trades_table(symbol, row["strategy_name"], time_horizon)
+            qualified_name = sql.SQL(".").join(
+                [sql.Identifier("simulator"), sql.Identifier(table_name)]
+            ).as_string(conn)
+            cursor.execute(sql.SQL("SELECT to_regclass(%s)"), (qualified_name,))
+            if cursor.fetchone()[0] is None:
+                continue
 
-        any_table = True
-        cursor.execute(sql.SQL("""
-            SELECT COALESCE(SUM(net_pnl), 0) FROM {schema}.{table}
-            WHERE status = 'closed' AND exit_date_time::date = %s
-        """).format(
-            schema=sql.Identifier("execution"),
-            table=sql.Identifier(table_name),
-        ), (today,))
-        total += cursor.fetchone()[0] or 0.0
+            any_table = True
+            cursor.execute(sql.SQL("""
+                SELECT COALESCE(SUM(net_pnl), 0) FROM {schema}.{table}
+                WHERE status = 'closed' AND exit_date_time::date = %s
+            """).format(
+                schema=sql.Identifier("simulator"),
+                table=sql.Identifier(table_name),
+            ), (today,))
+            total += cursor.fetchone()[0] or 0.0
 
     cursor.close()
     return total if any_table else None
@@ -242,25 +219,11 @@ def get_summary(conn) -> dict:
     connected_accounts = len(list_accounts(conn))
     ml_model_count = len(ml_repo.list_runs(conn))
 
+    # Today's PnL and Total Return are read entirely from simulator
+    # data (simulator.positions + simulator.{...}_trades) -- no
+    # execution money involved, no Overall Portfolio Value widget.
     sim_portfolio = _simulator_portfolio(conn)
-    exec_portfolio = _execution_portfolio(conn)
-    today_exec_pnl = _today_execution_pnl(conn)
-
-    # Overall Portfolio Value / Total Return combine execution + sim
-    # balances only where at least one has real data -- never silently
-    # treats a missing side as zero if BOTH are missing.
-    balances = [b for b in (sim_portfolio["balance"], exec_portfolio["balance"]) if b is not None]
-    initials = []
-    if sim_portfolio["balance"] is not None and sim_portfolio["net_profit"] is not None:
-        initials.append(sim_portfolio["balance"] - sim_portfolio["net_profit"])
-    if exec_portfolio["balance"] is not None and exec_portfolio["net_profit"] is not None:
-        initials.append(exec_portfolio["balance"] - exec_portfolio["net_profit"])
-
-    overall_portfolio_value = sum(balances) if balances else None
-    if balances and initials and sum(initials):
-        total_return_pct = (sum(balances) - sum(initials)) / sum(initials) * 100.0
-    else:
-        total_return_pct = None
+    today_sim_pnl = _today_simulator_pnl(conn)
 
     return {
         "total_strategies": total_strategies,
@@ -273,13 +236,13 @@ def get_summary(conn) -> dict:
         # backtests_repo.py / metadata_utils.get_backtests) -- every
         # request ever submitted, any status.
         "total_backtests": len(get_backtests(conn)),
-        # Real closed-trade PnL for live trades that exited today (UTC).
-        # None if execution has never traded at all yet.
-        "today_pnl": today_exec_pnl,
-        # Execution + simulator balances combined. None if neither side
-        # has any real data yet.
-        "overall_portfolio_value": overall_portfolio_value,
-        "total_return_pct": total_return_pct,
+        # Real closed-trade PnL for simulator trades that exited today
+        # (UTC). None if the simulator has never traded at all yet.
+        "today_pnl": today_sim_pnl,
+        # Simulator balance vs. simulator initial balance across every
+        # registered pair/strategy. None if the simulator has no real
+        # data yet.
+        "total_return_pct": sim_portfolio["return_pct"],
     }
 
 
