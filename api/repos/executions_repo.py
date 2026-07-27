@@ -297,7 +297,7 @@ def _build_summary(conn, exchange, symbol, config, strategy_row) -> dict:
             "position": None,
             "balance": config.get("initial_balance"),
             "cumulative_pnl": None,
-            "daily_return_pct": None,
+            "unrealized_pnl": None,
             "last_signal": None,
             "last_processed": None,
         }
@@ -318,17 +318,13 @@ def _build_summary(conn, exchange, symbol, config, strategy_row) -> dict:
             "position": None,
             "balance": config.get("initial_balance"),
             "cumulative_pnl": None,
-            "daily_return_pct": None,
+            "unrealized_pnl": None,
             "last_signal": None,
             "last_processed": None,
         }
 
     position = state["position"]
     balance = state["balance"]
-    initial_balance = config.get("initial_balance") or balance
-    daily_return_pct = None
-    if initial_balance:
-        daily_return_pct = ((balance - initial_balance) / initial_balance) * 100.0
 
     if account_name and wallet_enabled is False:
         status = "paused"
@@ -353,7 +349,7 @@ def _build_summary(conn, exchange, symbol, config, strategy_row) -> dict:
         "position": position,
         "balance": balance,
         "cumulative_pnl": state["cumulative_pnl"],
-        "daily_return_pct": daily_return_pct,
+        "unrealized_pnl": position["unrealized_pnl"] if position is not None else None,
         "last_signal": last_signal,
         "last_processed": state["last_processed"],
     }

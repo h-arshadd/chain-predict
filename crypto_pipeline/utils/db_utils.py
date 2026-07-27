@@ -1755,6 +1755,7 @@ def get_execution_state(conn, exchange, symbol, strategy_name):
             stop_loss       DOUBLE PRECISION,
             leaning         TEXT,
             status          TEXT,
+            unrealized_pnl  DOUBLE PRECISION,
             UNIQUE (exchange, symbol, strategy_name)
         )
     """).format(
@@ -1762,9 +1763,21 @@ def get_execution_state(conn, exchange, symbol, strategy_name):
     ))
     conn.commit()
 
+    # Defensive self-heal: if execution.positions already exists from
+    # before unrealized_pnl was added, add the column now instead of
+    # failing on the SELECT below. No-op if the column already exists.
+    cursor.execute(sql.SQL("""
+        ALTER TABLE {schema}.positions
+            ADD COLUMN IF NOT EXISTS unrealized_pnl DOUBLE PRECISION
+    """).format(
+        schema=sql.Identifier("execution")
+    ))
+    conn.commit()
+
     cursor.execute(sql.SQL(
         "SELECT last_processed, balance, cumulative_pnl, direction, entry_time, "
-        "entry_price, quantity, take_profit, stop_loss, leaning, status, time_horizon FROM {schema}.positions "
+        "entry_price, quantity, take_profit, stop_loss, leaning, status, time_horizon, "
+        "unrealized_pnl FROM {schema}.positions "
         "WHERE exchange = %s AND symbol = %s AND strategy_name = %s LIMIT 1"
     ).format(
         schema=sql.Identifier("execution")
@@ -1776,7 +1789,8 @@ def get_execution_state(conn, exchange, symbol, strategy_name):
         return None
 
     columns = ["last_processed", "balance", "cumulative_pnl", "direction", "entry_time",
-               "entry_price", "quantity", "take_profit", "stop_loss", "leaning", "status", "time_horizon"]
+               "entry_price", "quantity", "take_profit", "stop_loss", "leaning", "status", "time_horizon",
+               "unrealized_pnl"]
     values = dict(zip(columns, row))
 
     position = None
@@ -1790,6 +1804,7 @@ def get_execution_state(conn, exchange, symbol, strategy_name):
             "stop_loss": values["stop_loss"],
             "leaning": values["leaning"],
             "status": values["status"] or "open",
+            "unrealized_pnl": values["unrealized_pnl"],
         }
 
     return {
@@ -1807,8 +1822,8 @@ def save_execution_state(conn, exchange, symbol, strategy_name, time_horizon, la
     Called at the end of every run so the next scheduled run resumes from
     here. position=None is stored with status="closed" and every other
     position field (direction, entry_time, entry_price, quantity,
-    take_profit, stop_loss) left NULL -- there is no trade to describe, so
-    only status gets an explicit value.
+    take_profit, stop_loss, unrealized_pnl) left NULL -- there is no
+    trade to describe, so only status gets an explicit value.
 
     Schema: execution.positions -- ONE shared table for every strategy/
     exchange/symbol combo.
@@ -1842,6 +1857,7 @@ def save_execution_state(conn, exchange, symbol, strategy_name, time_horizon, la
             stop_loss       DOUBLE PRECISION,
             leaning         TEXT,
             status          TEXT,
+            unrealized_pnl  DOUBLE PRECISION,
             UNIQUE (exchange, symbol, strategy_name)
         )
     """).format(
@@ -1870,6 +1886,17 @@ def save_execution_state(conn, exchange, symbol, strategy_name, time_horizon, la
     """))
     conn.commit()
 
+    # Defensive self-heal: if execution.positions already exists from
+    # before unrealized_pnl was added, add the column now instead of
+    # failing on the INSERT below. No-op if the column already exists.
+    cursor.execute(sql.SQL("""
+        ALTER TABLE {schema}.positions
+            ADD COLUMN IF NOT EXISTS unrealized_pnl DOUBLE PRECISION
+    """).format(
+        schema=sql.Identifier("execution")
+    ))
+    conn.commit()
+
     position = position or {}
     values = (
         exchange,
@@ -1887,13 +1914,14 @@ def save_execution_state(conn, exchange, symbol, strategy_name, time_horizon, la
         position.get("stop_loss"),
         position.get("leaning"),
         position.get("status") if position else "closed",
+        position.get("unrealized_pnl"),
     )
 
     cursor.execute(sql.SQL("""
         INSERT INTO {schema}.positions
             (exchange, symbol, strategy_name, time_horizon, last_processed, balance, cumulative_pnl,
-             direction, entry_time, entry_price, quantity, take_profit, stop_loss, leaning, status)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             direction, entry_time, entry_price, quantity, take_profit, stop_loss, leaning, status, unrealized_pnl)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (exchange, symbol, strategy_name) DO UPDATE SET
             time_horizon   = EXCLUDED.time_horizon,
             last_processed = EXCLUDED.last_processed,
@@ -1906,7 +1934,8 @@ def save_execution_state(conn, exchange, symbol, strategy_name, time_horizon, la
             take_profit    = EXCLUDED.take_profit,
             stop_loss      = EXCLUDED.stop_loss,
             leaning        = EXCLUDED.leaning,
-            status         = EXCLUDED.status
+            status         = EXCLUDED.status,
+            unrealized_pnl = EXCLUDED.unrealized_pnl
     """).format(
         schema=sql.Identifier("execution")
     ), values)

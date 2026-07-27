@@ -61,6 +61,7 @@ class ExecutionPosition(BaseModel):
     stop_loss: Optional[float] = None
     leaning: Optional[str] = None
     status: str
+    unrealized_pnl: Optional[float] = None
 
 
 class ExecutionSummary(BaseModel):
@@ -76,7 +77,7 @@ class ExecutionSummary(BaseModel):
     position: Optional[ExecutionPosition] = None
     balance: Optional[float] = None
     cumulative_pnl: Optional[float] = None
-    daily_return_pct: Optional[float] = None
+    unrealized_pnl: Optional[float] = None  # current open position's PnL, distinct from all-time cumulative_pnl
     last_signal: Optional[str] = None
     last_processed: Optional[datetime] = None
 

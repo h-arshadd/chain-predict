@@ -105,6 +105,63 @@ const fmtMetricName = (k) => k.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUp
 const fmtNum = (v, digits = 4) => (typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(digits)) : (v ?? '—'));
 const fmtPct = (v) => (v == null ? '—' : `${(v * 100).toFixed(2)}%`);
 
+// Subset of evaluation.trading_metrics_full (the full quantstats dict
+// build_evaluation_metadata() now keeps, alongside the older 7-metric
+// trading_metrics_summary) to headline as cards -- same list used on
+// the Backtest/Execution/Simulation Details pages for consistency.
+// "pct" metrics are ratios quantstats returns as fractions (0.42 ->
+// 42%), "ratio" metrics are shown as-is to 2 decimals. `invert` means a
+// LOWER number is the better outcome (drawdown, losses, risk measures),
+// so the green/red coloring flips for those.
+const METRIC_CARDS = [
+  { key: 'sharpe', label: 'Sharpe Ratio', kind: 'ratio' },
+  { key: 'smart_sharpe', label: 'Smart Sharpe', kind: 'ratio' },
+  { key: 'sortino', label: 'Sortino Ratio', kind: 'ratio' },
+  { key: 'smart_sortino', label: 'Smart Sortino', kind: 'ratio' },
+  { key: 'adjusted_sortino', label: 'Adjusted Sortino', kind: 'ratio' },
+  { key: 'calmar', label: 'Calmar Ratio', kind: 'ratio' },
+  { key: 'omega', label: 'Omega Ratio', kind: 'ratio' },
+  { key: 'max_drawdown', label: 'Max Drawdown', kind: 'pct', invert: true },
+  { key: 'cagr', label: 'CAGR', kind: 'pct' },
+  { key: 'comp', label: 'Total Compounded Return', kind: 'pct' },
+  { key: 'volatility', label: 'Volatility (ann.)', kind: 'pct', invert: true },
+  { key: 'win_rate', label: 'Win Rate', kind: 'pct' },
+  { key: 'win_loss_ratio', label: 'Win/Loss Ratio', kind: 'ratio' },
+  { key: 'profit_factor', label: 'Profit Factor', kind: 'ratio' },
+  { key: 'profit_ratio', label: 'Profit Ratio', kind: 'ratio' },
+  { key: 'payoff_ratio', label: 'Payoff Ratio', kind: 'ratio' },
+  { key: 'gain_to_pain_ratio', label: 'Gain to Pain Ratio', kind: 'ratio' },
+  { key: 'best', label: 'Best Period', kind: 'pct' },
+  { key: 'worst', label: 'Worst Period', kind: 'pct', invert: true },
+  { key: 'avg_return', label: 'Avg Return', kind: 'pct' },
+  { key: 'avg_win', label: 'Avg Win', kind: 'pct' },
+  { key: 'avg_loss', label: 'Avg Loss', kind: 'pct', invert: true },
+  { key: 'expected_return', label: 'Expected Return', kind: 'pct' },
+  { key: 'expected_shortfall', label: 'Expected Shortfall (CVaR)', kind: 'pct', invert: true },
+  { key: 'value_at_risk', label: 'Value at Risk', kind: 'pct', invert: true },
+  { key: 'conditional_value_at_risk', label: 'Conditional VaR', kind: 'pct', invert: true },
+  { key: 'kelly_criterion', label: 'Kelly Criterion', kind: 'pct' },
+  { key: 'risk_of_ruin', label: 'Risk of Ruin', kind: 'pct', invert: true },
+  { key: 'tail_ratio', label: 'Tail Ratio', kind: 'ratio' },
+  { key: 'recovery_factor', label: 'Recovery Factor', kind: 'ratio' },
+  { key: 'ulcer_index', label: 'Ulcer Index', kind: 'ratio', invert: true },
+  { key: 'ulcer_performance_index', label: 'Ulcer Performance Index', kind: 'ratio' },
+  { key: 'serenity_index', label: 'Serenity Index', kind: 'ratio' },
+  { key: 'common_sense_ratio', label: 'Common Sense Ratio', kind: 'ratio' },
+  { key: 'exposure', label: 'Exposure', kind: 'pct' },
+  { key: 'consecutive_wins', label: 'Max Consecutive Wins', kind: 'plain' },
+  { key: 'consecutive_losses', label: 'Max Consecutive Losses', kind: 'plain', invert: true },
+  { key: 'skew', label: 'Skew', kind: 'ratio' },
+  { key: 'kurtosis', label: 'Kurtosis', kind: 'ratio' },
+];
+
+function fmtMetric(value, kind) {
+  if (value == null || Number.isNaN(value)) return '—';
+  if (kind === 'pct') return `${(value * 100).toFixed(2)}%`;
+  if (kind === 'plain') return `${value}`;
+  return value.toFixed(2);
+}
+
 function algorithmLabel(algo) {
   if (!algo) return '—';
   const upper = new Set(['mlp', 'gru', 'knn', 'svm', 'svr']);
@@ -165,6 +222,15 @@ export default function ModelDetails() {
 
   const mlMetrics = evaluation.ml_metrics || {};
   const tradingMetrics = evaluation.trading_metrics_summary || {};
+  // Full quantstats dict -- only present for runs trained after this was
+  // added (see build_evaluation_metadata() in metadata.py). Older runs
+  // just won't show the extra cards below; the existing summary-based
+  // Sharpe/Total Return/Max Drawdown cards further down still work off
+  // trading_metrics either way.
+  const tradingMetricsFull = evaluation.trading_metrics_full || null;
+  const metricCards = tradingMetricsFull
+    ? METRIC_CARDS.filter((m) => tradingMetricsFull[m.key] !== undefined)
+    : [];
   const tradeSummary = evaluation.trade_summary || {};
   const signalCounts = evaluation.signal_counts || {};
   const winLoss = tradeSummary.win_loss || {};
@@ -261,6 +327,28 @@ export default function ModelDetails() {
           positive={false}
         />
       </div>
+
+      {/* Extended performance metrics -- pulled from
+          evaluation.trading_metrics_full, the full quantstats dict
+          evaluate_model() already computes but older runs never
+          persisted (see build_evaluation_metadata() in metadata.py).
+          Falls back to a plain note for runs trained before that field
+          existed, rather than silently showing nothing. */}
+      {metricCards.length > 0 ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 14, marginBottom: 20 }}>
+          {metricCards.map((m) => {
+            const value = tradingMetricsFull[m.key];
+            const positive = value == null ? undefined : m.invert ? value <= 0 : value >= 0;
+            return (
+              <StatBox key={m.key} label={m.label} value={fmtMetric(value, m.kind)} positive={positive} />
+            );
+          })}
+        </div>
+      ) : (
+        <div style={{ ...panel, padding: 16, marginBottom: 20, color: '#6B7280', fontSize: 13 }}>
+          Extended performance metrics aren't available for this run -- it was trained before this was tracked. Retrain to see the full metric breakdown here.
+        </div>
+      )}
 
       {/* Dataset Information + Training Information */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>

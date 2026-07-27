@@ -374,6 +374,19 @@ _SUMMARY_TRADING_METRICS = (
     "comp", "sharpe", "sortino", "calmar", "max_drawdown", "profit_factor", "win_rate",
 )
 
+# quantstats keys that are full per-day series (one value per date), not
+# a single scalar summary number -- these belong in stats/plots.py's
+# plot data (already computed separately for backtests/executions/
+# simulator), not a metrics table, and can be very large for a long
+# backtest. Dropped from trading_metrics_full for the same reason
+# stats/metrics.py's discover_metrics() already excludes them from its
+# scalar-metric discovery (see _NON_METRIC_NAMES there).
+_SCALAR_ONLY_EXCLUDE = {
+    "rolling_sharpe", "rolling_sortino", "rolling_volatility",
+    "compsum", "to_drawdown_series", "pct_rank", "remove_outliers", "outliers",
+    "implied_volatility", "monthly_returns",
+}
+
 
 def build_evaluation_metadata(
     ml_metrics: Optional[dict] = None,
@@ -383,8 +396,9 @@ def build_evaluation_metadata(
 ) -> dict:
     """
     Evaluation results (PDF heading 10) -- a short, scalar-only summary
-    meant to be read at a glance and reused for inference later, not
-    the full backtest/quantstats computation.
+    meant to be read at a glance and reused for inference later, plus
+    the full quantstats dict for anyone (e.g. the Model Details page)
+    who wants more than the 7-metric headline summary.
 
     Args:
         ml_metrics: dict from compute_regression_metrics() /
@@ -392,9 +406,14 @@ def build_evaluation_metadata(
             e.g. {"mae": ..., "rmse": ...} or {"accuracy": ..., ...})
         trading_metrics: the full "metrics" dict from
             stats.calculator.compute_stats() (evaluation["trading_metrics"]);
-            only the named scalars in _SUMMARY_TRADING_METRICS are
-            pulled out of it, everything else (rolling/per-day series)
-            is dropped
+            _SUMMARY_TRADING_METRICS is pulled out into
+            trading_metrics_summary for the quick-glance view, and the
+            whole dict is also kept as-is under trading_metrics_full
+            (dropping only per-day series quantstats returns alongside
+            the scalars, e.g. rolling_sharpe/pct_rank/implied_volatility
+            -- see _SCALAR_ONLY_EXCLUDE below -- since those belong in
+            stats/plots.py's plot data, not a metrics table, and can be
+            huge for a long backtest).
         trade_summary: the "trade_summary" dict from compute_stats()
             (final_balance, total_net_profit, total_trades, win_loss)
             -- already scalar-only, kept as-is
@@ -409,6 +428,13 @@ def build_evaluation_metadata(
         "ml_metrics": ml_metrics or {},
         "trading_metrics_summary": {
             k: trading_metrics.get(k) for k in _SUMMARY_TRADING_METRICS if k in trading_metrics
+        },
+        # Every quantstats metric compute_stats() discovered, scalars
+        # only (see _SCALAR_ONLY_EXCLUDE) -- this is what the Model
+        # Details page's performance-metric cards read, same dict shape
+        # backtests/executions/simulator's stats.metrics already uses.
+        "trading_metrics_full": {
+            k: v for k, v in trading_metrics.items() if k not in _SCALAR_ONLY_EXCLUDE
         },
         "trade_summary": trade_summary or {},
         "signal_counts": signal_counts or {},

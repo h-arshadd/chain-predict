@@ -71,8 +71,8 @@ function buildColumns() {
         ),
     },
     {
-      title: 'Current PnL', dataIndex: 'cumulative_pnl', key: 'cumulative_pnl',
-      sorter: (a, b) => (a.cumulative_pnl ?? -Infinity) - (b.cumulative_pnl ?? -Infinity),
+      title: 'Current PnL', dataIndex: 'unrealized_pnl', key: 'unrealized_pnl',
+      sorter: (a, b) => (a.unrealized_pnl ?? -Infinity) - (b.unrealized_pnl ?? -Infinity),
       render: (v) => (
         <span style={{ color: pnlColor(v), fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}>
           {v == null ? '—' : `${v >= 0 ? '+' : ''}${fmtUsd(v)}`}
@@ -80,11 +80,11 @@ function buildColumns() {
       ),
     },
     {
-      title: 'Daily Return', dataIndex: 'daily_return_pct', key: 'daily_return_pct',
-      sorter: (a, b) => (a.daily_return_pct ?? -Infinity) - (b.daily_return_pct ?? -Infinity),
+      title: 'Cumulative PnL', dataIndex: 'cumulative_pnl', key: 'cumulative_pnl',
+      sorter: (a, b) => (a.cumulative_pnl ?? -Infinity) - (b.cumulative_pnl ?? -Infinity),
       render: (v) => (
         <span style={{ color: pnlColor(v), fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}>
-          {v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`}
+          {v == null ? '—' : `${v >= 0 ? '+' : ''}${fmtUsd(v)}`}
         </span>
       ),
     },
@@ -167,10 +167,7 @@ export default function Deployment() {
 
   const runningCount = rows.filter((r) => r.status === 'running').length;
   const totalPnl = rows.reduce((s, r) => s + (r.cumulative_pnl ?? 0), 0);
-  const returnsWithValue = rows.filter((r) => r.daily_return_pct != null);
-  const avgDailyReturn = returnsWithValue.length
-    ? returnsWithValue.reduce((s, r) => s + r.daily_return_pct, 0) / returnsWithValue.length
-    : null;
+  const totalUnrealizedPnl = rows.reduce((s, r) => s + (r.unrealized_pnl ?? 0), 0);
 
   return (
     <div style={{ paddingTop: 8 }}>
@@ -195,8 +192,8 @@ export default function Deployment() {
       {/* Summary strip */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 24 }}>
         <SummaryCard label="Running Deployments" value={`${runningCount} / ${rows.length}`} />
-        <SummaryCard label="Combined Current PnL" value={`${totalPnl >= 0 ? '+' : ''}${fmtUsd(totalPnl)}`} color={pnlColor(totalPnl)} />
-        <SummaryCard label="Avg Daily Return" value={avgDailyReturn == null ? '—' : `${avgDailyReturn >= 0 ? '+' : ''}${avgDailyReturn.toFixed(2)}%`} color={avgDailyReturn == null ? undefined : pnlColor(avgDailyReturn)} />
+        <SummaryCard label="Combined Cumulative PnL" value={`${totalPnl >= 0 ? '+' : ''}${fmtUsd(totalPnl)}`} color={pnlColor(totalPnl)} />
+        <SummaryCard label="Combined Current PnL" value={`${totalUnrealizedPnl >= 0 ? '+' : ''}${fmtUsd(totalUnrealizedPnl)}`} color={pnlColor(totalUnrealizedPnl)} />
       </div>
 
       {/* Filters */}
