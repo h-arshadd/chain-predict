@@ -9,7 +9,7 @@ import {
 import { api } from '../lib/api';
 import { fmtUsd } from '../lib/format';
 import { recordsToSeries, monthlyHeatmapToRows, heatColor } from '../lib/quantstats';
-import { METRIC_CARDS, fmtMetric } from '../lib/metricCards';
+import { METRIC_CARDS_COL_1, METRIC_CARDS_COL_2, fmtMetric } from '../lib/metricCards';
 import Panel, { panelFlat as panel } from '../components/Panel';
 import EmptyChart from '../components/EmptyChart';
 import TradePnlChart from '../components/TradePnlChart';
@@ -78,7 +78,8 @@ export default function BacktestDetails() {
 
   const plots = data?.stats?.plots || {};
   const metrics = data?.stats?.metrics || {};
-  const metricCards = METRIC_CARDS.filter((m) => metrics[m.key] !== undefined);
+  const metricCardsCol1 = METRIC_CARDS_COL_1.filter((m) => metrics[m.key] !== undefined);
+  const metricCardsCol2 = METRIC_CARDS_COL_2.filter((m) => metrics[m.key] !== undefined);
   const drawdownSeries = recordsToSeries(plots.drawdown?.drawdown_series, 'dd');
   const rollingSharpeSeries = recordsToSeries(plots.rolling_sharpe?.rolling_sharpe, 'sharpe');
   const rollingVolSeries = recordsToSeries(plots.rolling_volatility?.rolling_volatility, 'vol');
@@ -219,16 +220,44 @@ export default function BacktestDetails() {
 
           {/* Performance metrics -- pulled from data.stats.metrics, the
               quantstats dict compute_stats() computed and stored against
-              this backtest run. */}
-          {metricCards.length > 0 && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 14, marginBottom: 20 }}>
-              {metricCards.map((m) => {
-                const value = metrics[m.key];
-                const positive = value == null ? undefined : m.invert ? value <= 0 : value >= 0;
-                return (
-                  <StatBox key={m.key} label={m.label} value={fmtMetric(value, m.kind)} positive={positive} />
-                );
-              })}
+              this backtest run. Split into two equal-length cards instead
+              of one big wall of tiles. */}
+          {(metricCardsCol1.length > 0 || metricCardsCol2.length > 0) && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+              {metricCardsCol1.length > 0 && (
+                <Panel title="Performance Metrics">
+                  {metricCardsCol1.map((m) => {
+                    const value = metrics[m.key];
+                    const positive = value == null ? undefined : m.invert ? value <= 0 : value >= 0;
+                    return (
+                      <KeyValue
+                        key={m.key}
+                        label={m.label}
+                        value={fmtMetric(value, m.kind)}
+                        mono
+                        color={positive === undefined ? undefined : positive ? MINT : RED}
+                      />
+                    );
+                  })}
+                </Panel>
+              )}
+              {metricCardsCol2.length > 0 && (
+                <Panel title="Performance Metrics (cont.)">
+                  {metricCardsCol2.map((m) => {
+                    const value = metrics[m.key];
+                    const positive = value == null ? undefined : m.invert ? value <= 0 : value >= 0;
+                    return (
+                      <KeyValue
+                        key={m.key}
+                        label={m.label}
+                        value={fmtMetric(value, m.kind)}
+                        mono
+                        color={positive === undefined ? undefined : positive ? MINT : RED}
+                      />
+                    );
+                  })}
+                </Panel>
+              )}
             </div>
           )}
 

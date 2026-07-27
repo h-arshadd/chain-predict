@@ -7,7 +7,7 @@ import {
   ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
 import { api } from '../lib/api';
-import { METRIC_CARDS, fmtMetric } from '../lib/metricCards';
+import { METRIC_CARDS_COL_1, METRIC_CARDS_COL_2, fmtMetric } from '../lib/metricCards';
 import Panel, { panelFlat as panel } from '../components/Panel';
 import EmptyChart from '../components/EmptyChart';
 import KeyValue from '../components/KeyValue';
@@ -128,8 +128,11 @@ export default function ModelDetails() {
   // Sharpe/Total Return/Max Drawdown cards further down still work off
   // trading_metrics either way.
   const tradingMetricsFull = evaluation.trading_metrics_full || null;
-  const metricCards = tradingMetricsFull
-    ? METRIC_CARDS.filter((m) => tradingMetricsFull[m.key] !== undefined)
+  const metricCardsCol1 = tradingMetricsFull
+    ? METRIC_CARDS_COL_1.filter((m) => tradingMetricsFull[m.key] !== undefined)
+    : [];
+  const metricCardsCol2 = tradingMetricsFull
+    ? METRIC_CARDS_COL_2.filter((m) => tradingMetricsFull[m.key] !== undefined)
     : [];
   const tradeSummary = evaluation.trade_summary || {};
   const signalCounts = evaluation.signal_counts || {};
@@ -228,28 +231,6 @@ export default function ModelDetails() {
         />
       </div>
 
-      {/* Extended performance metrics -- pulled from
-          evaluation.trading_metrics_full, the full quantstats dict
-          evaluate_model() already computes but older runs never
-          persisted (see build_evaluation_metadata() in metadata.py).
-          Falls back to a plain note for runs trained before that field
-          existed, rather than silently showing nothing. */}
-      {metricCards.length > 0 ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 14, marginBottom: 20 }}>
-          {metricCards.map((m) => {
-            const value = tradingMetricsFull[m.key];
-            const positive = value == null ? undefined : m.invert ? value <= 0 : value >= 0;
-            return (
-              <StatBox key={m.key} label={m.label} value={fmtMetric(value, m.kind)} positive={positive} />
-            );
-          })}
-        </div>
-      ) : (
-        <div style={{ ...panel, padding: 16, marginBottom: 20, color: '#6B7280', fontSize: 13 }}>
-          Extended performance metrics aren't available for this run -- it was trained before this was tracked. Retrain to see the full metric breakdown here.
-        </div>
-      )}
-
       {/* Dataset Information + Training Information */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
         <Panel title="Dataset Information">
@@ -321,6 +302,56 @@ export default function ModelDetails() {
           </Panel>
         )}
       </div>
+
+      {/* Extended performance metrics -- pulled from
+          evaluation.trading_metrics_full, the full quantstats dict
+          evaluate_model() already computes but older runs never
+          persisted (see build_evaluation_metadata() in metadata.py).
+          Split into two equal-length cards instead of one big wall of
+          tiles. Falls back to a plain note for runs trained before that
+          field existed, rather than silently showing nothing. */}
+      {metricCardsCol1.length > 0 || metricCardsCol2.length > 0 ? (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+          {metricCardsCol1.length > 0 && (
+            <Panel title="Performance Metrics">
+              {metricCardsCol1.map((m) => {
+                const value = tradingMetricsFull[m.key];
+                const positive = value == null ? undefined : m.invert ? value <= 0 : value >= 0;
+                return (
+                  <KeyValue
+                    key={m.key}
+                    label={m.label}
+                    value={fmtMetric(value, m.kind)}
+                    mono
+                    color={positive === undefined ? undefined : positive ? MINT : RED}
+                  />
+                );
+              })}
+            </Panel>
+          )}
+          {metricCardsCol2.length > 0 && (
+            <Panel title="Performance Metrics (cont.)">
+              {metricCardsCol2.map((m) => {
+                const value = tradingMetricsFull[m.key];
+                const positive = value == null ? undefined : m.invert ? value <= 0 : value >= 0;
+                return (
+                  <KeyValue
+                    key={m.key}
+                    label={m.label}
+                    value={fmtMetric(value, m.kind)}
+                    mono
+                    color={positive === undefined ? undefined : positive ? MINT : RED}
+                  />
+                );
+              })}
+            </Panel>
+          )}
+        </div>
+      ) : (
+        <div style={{ ...panel, padding: 16, marginBottom: 20, color: '#6B7280', fontSize: 13 }}>
+          Extended performance metrics aren't available for this run -- it was trained before this was tracked. Retrain to see the full metric breakdown here.
+        </div>
+      )}
 
       {/* ML Metrics + Trading Metrics -- charted. Exact figures are still
           the tables below (rounding in a bar's tooltip is fine, rounding

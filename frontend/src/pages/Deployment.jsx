@@ -31,7 +31,8 @@ function buildColumns() {
     {
       title: 'Strategy', dataIndex: 'strategy_name', key: 'strategy_name',
       sorter: (a, b) => a.strategy_name.localeCompare(b.strategy_name),
-      render: (t) => <span style={{ fontWeight: 600, color: '#F5F6F7' }}>{t}</span>,
+      width: 220,
+      render: (t) => <span style={{ fontWeight: 600, color: '#F5F6F7', whiteSpace: 'normal', wordBreak: 'break-word' }}>{t}</span>,
     },
     { title: 'Symbol', dataIndex: 'symbol', key: 'symbol', render: (t) => <span style={{ color: '#9096A0', textTransform: 'uppercase' }}>{t}</span> },
     { title: 'Exchange', dataIndex: 'exchange', key: 'exchange', render: (t) => <span style={{ color: '#9096A0', textTransform: 'capitalize' }}>{t}</span> },

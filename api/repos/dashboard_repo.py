@@ -41,6 +41,7 @@ from crypto_pipeline.utils.db_utils import (
     get_simulator_state,
     get_simulator_config,
     get_simulator_summary,
+    get_simulator_stats,
     build_equity_curve_from_ledger,
     get_execution_universe,
     get_execution_state,
@@ -288,9 +289,11 @@ def _pnl_series_from_equity(equity, initial_balance) -> list[dict] | None:
 def list_strategies(conn) -> list[dict]:
     """
     Every simulator_enabled metadata.strategy row, with real performance
-    read from simulator.positions (get_simulator_state) and the
-    simulator's own Trade Ledger (get_simulator_summary), for every pair
-    in simulator.config (get_simulator_universe) -- this pipeline is
+    read from simulator.positions (get_simulator_state), the simulator's
+    own Trade Ledger (get_simulator_summary), and simulator.stats
+    (get_simulator_stats, for sharpe_ratio -- precomputed by whatever job
+    runs compute_stats() for the simulator), for every pair in
+    simulator.config (get_simulator_universe) -- this pipeline is
     continuously running the simulator across all registered pairs, so
     this table reflects that real, ongoing activity. No pair_status
     (Live/Disabled/Conflicted) here -- that's an execution-only
@@ -340,11 +343,10 @@ def list_strategies(conn) -> list[dict]:
                 "time_horizon": time_horizon,
                 "simulator_enabled": row.get("simulator_enabled", True),
                 "latest_return_pct": latest_return_pct,
-                # Sharpe isn't part of get_simulator_summary's lightweight
-                # roll-up (that's compute_stats(), run separately on the
-                # detail page) -- left None here same as the execution
-                # list view does, not computed twice.
-                "sharpe_ratio": None,
+                # Precomputed by whatever job runs compute_stats() for the
+                # simulator (see save_simulator_stats) -- read straight
+                # from simulator.stats instead of recomputing here.
+                "sharpe_ratio": (get_simulator_stats(conn, exchange, symbol, strategy_name) or {}).get("sharpe"),
                 "win_rate_pct": win_rate_pct,
                 "pnl_series": pnl_series,
                 "created_at": row.get("created_at"),

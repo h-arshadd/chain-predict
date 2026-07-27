@@ -24,12 +24,37 @@ function fearGreedColor(score) {
 }
 
 function FearGreedGauge({ score, label }) {
-  const cx = 150, cy = 150, r = 110;
+  const cx = 150, cy = 165, r = 110;
   const pct = score ?? 50;
   const angle = 180 - (pct / 100) * 180;
   const rad = (angle * Math.PI) / 180;
   const needleX = cx + r * 0.82 * Math.cos(rad);
   const needleY = cy - r * 0.82 * Math.sin(rad);
+
+  const polarToCartesian = (angleDeg, radius) => {
+    const a = (angleDeg * Math.PI) / 180;
+    return { x: cx + radius * Math.cos(a), y: cy - radius * Math.sin(a) };
+  };
+
+  // Filled donut-wedge (outer arc + inner arc, closed) instead of a
+  // stroked arc -- adjacent wedges share an exact edge, so there's no
+  // seam/gap from stroke caps and no gradient coordinate-space issues.
+  const donutWedge = (fromPct, toPct, outerR, innerR) => {
+    const fromAngle = 180 - (fromPct / 100) * 180;
+    const toAngle = 180 - (toPct / 100) * 180;
+    const outerStart = polarToCartesian(fromAngle, outerR);
+    const outerEnd = polarToCartesian(toAngle, outerR);
+    const innerStart = polarToCartesian(toAngle, innerR);
+    const innerEnd = polarToCartesian(fromAngle, innerR);
+    const largeArc = Math.abs(fromAngle - toAngle) > 180 ? 1 : 0;
+    return [
+      `M ${outerStart.x} ${outerStart.y}`,
+      `A ${outerR} ${outerR} 0 ${largeArc} 0 ${outerEnd.x} ${outerEnd.y}`,
+      `L ${innerStart.x} ${innerStart.y}`,
+      `A ${innerR} ${innerR} 0 ${largeArc} 1 ${innerEnd.x} ${innerEnd.y}`,
+      'Z',
+    ].join(' ');
+  };
 
   const segments = [
     { from: 0, to: 20, color: RED },
@@ -38,26 +63,14 @@ function FearGreedGauge({ score, label }) {
     { from: 60, to: 80, color: MINT },
     { from: 80, to: 100, color: '#2FBF80' },
   ];
-
-  const polarToCartesian = (angleDeg, radius) => {
-    const a = (angleDeg * Math.PI) / 180;
-    return { x: cx + radius * Math.cos(a), y: cy - radius * Math.sin(a) };
-  };
-
-  const arcPath = (fromPct, toPct, radius) => {
-    const fromAngle = 180 - (fromPct / 100) * 180;
-    const toAngle = 180 - (toPct / 100) * 180;
-    const start = polarToCartesian(fromAngle, radius);
-    const end = polarToCartesian(toAngle, radius);
-    const largeArc = Math.abs(fromAngle - toAngle) > 180 ? 1 : 0;
-    return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 0 ${end.x} ${end.y}`;
-  };
+  const outerR = r + 9;
+  const innerR = r - 9;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       <svg width="300" height="175" viewBox="0 0 300 175">
         {segments.map((seg, i) => (
-          <path key={i} d={arcPath(seg.from, seg.to, r)} fill="none" stroke={seg.color} strokeWidth={18} strokeLinecap="butt" opacity={0.85} />
+          <path key={i} d={donutWedge(seg.from, seg.to, outerR, innerR)} fill={seg.color} opacity={0.85} />
         ))}
         <line x1={cx} y1={cy} x2={needleX} y2={needleY} stroke="#F5F6F7" strokeWidth={3} strokeLinecap="round" />
         <circle cx={cx} cy={cy} r={7} fill="#F5F6F7" />

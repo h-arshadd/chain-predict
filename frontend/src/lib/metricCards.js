@@ -54,3 +54,11 @@ export function fmtMetric(value, kind) {
   if (kind === 'plain') return `${value}`;
   return value.toFixed(2);
 }
+
+// Two-card grouping for METRIC_CARDS -- split down the middle by count
+// (not by kind) so both headline cards render the same number of rows
+// and end up the same height, rather than a "ratios vs percentages"
+// split that comes out lopsided (22 vs 17).
+const _MIDPOINT = Math.ceil(METRIC_CARDS.length / 2);
+export const METRIC_CARDS_COL_1 = METRIC_CARDS.slice(0, _MIDPOINT);
+export const METRIC_CARDS_COL_2 = METRIC_CARDS.slice(_MIDPOINT);

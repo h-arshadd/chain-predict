@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Table, Input, Select, Spin, Alert, Tooltip } from 'antd';
+import { Table, Input, Select, Spin, Alert } from 'antd';
 import { LineChart, Line, ResponsiveContainer, YAxis } from 'recharts';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -10,7 +10,6 @@ import {
   WalletOutlined,
   ExperimentOutlined,
   BarChartOutlined,
-  InfoCircleOutlined,
 } from '@ant-design/icons';
 import { SearchOutlined } from '@ant-design/icons';
 import { api } from '../lib/api';
@@ -174,15 +173,9 @@ export default function Dashboard() {
       render: (series) => <PnlSparkline series={series} />,
     },
     {
-      title: (
-        <span>
-          Sharpe Ratio{' '}
-          <Tooltip title="Full Sharpe is computed on the Strategy Details page; not shown here to keep this list light.">
-            <InfoCircleOutlined style={{ color: '#6B7280', fontSize: 11 }} />
-          </Tooltip>
-        </span>
-      ),
+      title: 'Sharpe Ratio',
       dataIndex: 'sharpe_ratio', key: 'sharpe_ratio',
+      sorter: (a, b) => (a.sharpe_ratio ?? -Infinity) - (b.sharpe_ratio ?? -Infinity),
       render: (v) => <span style={{ fontFamily: 'ui-monospace, monospace', color: '#F5F6F7' }}>{v == null ? '—' : v.toFixed(2)}</span>,
     },
     {
