@@ -244,8 +244,7 @@ export default function Dashboard() {
       {/* Strategies table -- SIMULATOR data (see dashboard_repo.list_strategies).
           This pipeline runs the simulator continuously across every
           registered pair, so this table reflects that real, ongoing
-          activity -- deliberately separate from the Strategies page,
-          which is execution-only. */}
+          activity -- deliberately separate from execution/deployment data. */}
       <div style={{ ...panel, padding: 20 }}>
         <SectionHeader
           title="Strategies (Simulator)"

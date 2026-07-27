@@ -33,7 +33,7 @@ const fmtUsd = (v) =>
 
 const pnlColor = (v) => (v == null ? '#6B7280' : v > 0 ? MINT : v < 0 ? RED : '#9096A0');
 
-function buildColumns(navigate, toggleEnabled) {
+function buildColumns(toggleEnabled) {
   return [
     {
       title: 'Strategy', dataIndex: 'strategy_name', key: 'strategy_name',
@@ -64,22 +64,6 @@ function buildColumns(navigate, toggleEnabled) {
       onFilter: (value, record) => record.status === value,
       render: (status, record) => {
         const m = STATUS_META[status] || STATUS_META.never_run;
-        if (status === 'unassigned') {
-          return (
-            <span
-              onClick={(e) => {
-                e.stopPropagation();
-                navigate(`/strategies?coin=${record.symbol}`);
-              }}
-              style={{ cursor: 'pointer' }}
-              title="No strategy is enabled for this pair yet -- click to go enable one"
-            >
-              <Tag style={{ background: m.bg, color: m.fg, border: 'none', borderRadius: 8, fontWeight: 600 }}>
-                {m.label} &rarr; enable a strategy
-              </Tag>
-            </span>
-          );
-        }
         return <Tag style={{ background: m.bg, color: m.fg, border: 'none', borderRadius: 8, fontWeight: 600 }}>{m.label}</Tag>;
       },
     },
@@ -138,8 +122,7 @@ function buildColumns(navigate, toggleEnabled) {
     {
       title: 'Execution Enabled', key: 'execution_enabled',
       // No strategy assigned to this pair yet (status "unassigned") --
-      // nothing to toggle, same case Strategies.jsx's version never had
-      // to handle since every row there always has a strategy_id.
+      // nothing to toggle in that case.
       render: (_, row) =>
         row.strategy_id == null ? (
           <span style={{ color: '#6B7280', fontSize: 13 }}>—</span>
@@ -315,7 +298,7 @@ export default function Deployment() {
         ) : (
           <Table
             rowKey={(row) => `${row.exchange}-${row.symbol}`}
-            columns={buildColumns(navigate, toggleEnabled)}
+            columns={buildColumns(toggleEnabled)}
             dataSource={filtered}
             pagination={{ pageSize: 10 }}
             locale={{ emptyText: 'No deployments configured yet. Add a pair to execution.config to see it here.' }}

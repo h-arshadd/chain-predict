@@ -1,7 +1,6 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   DashboardOutlined,
-  LineChartOutlined,
   WalletOutlined,
   RocketOutlined,
   ExperimentOutlined,
@@ -11,7 +10,6 @@ import {
 
 const menuItems = [
   { key: '/', icon: <DashboardOutlined />, label: 'Dashboard' },
-  { key: '/strategies', icon: <LineChartOutlined />, label: 'Strategies' },
   { key: '/wallets', icon: <WalletOutlined />, label: 'Wallets' },
   { key: '/deployment', icon: <RocketOutlined />, label: 'Execution' },
   { key: '/backtests', icon: <ExperimentOutlined />, label: 'Backtests' },
