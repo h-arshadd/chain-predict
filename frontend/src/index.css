@@ -168,3 +168,15 @@ html, body, #root {
     position: relative;
     z-index: 1;
 }
+
+/* AntD v6 Select: optionSelectedBg/optionSelectedColor theme tokens don't
+   reliably apply to the dropdown's already-selected option, leaving it on
+   the light default (near-white bg, low-contrast text) against our dark
+   UI. Direct override so the selected option matches the rest of the app. */
+.ant-select-dropdown .ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
+    background: rgba(61, 220, 151, 0.16) !important;
+    color: #F5F6F7 !important;
+}
+.ant-select-dropdown .ant-select-item-option-active:not(.ant-select-item-option-disabled) {
+    background: rgba(255, 255, 255, 0.06) !important;
+}
