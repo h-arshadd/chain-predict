@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Tag, Spin, Alert } from 'antd';
+import { Spin, Alert } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import {
   BarChart, Bar, PieChart, Pie, Cell,
@@ -16,24 +16,9 @@ import { tooltipStyle, tooltipLabelStyle, tooltipItemStyle, axisStyle } from '..
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
-const AMBER = '#FF8A5C';
 const BLUE = '#4D9DE0';
 
 const SIGNAL_COLORS = { Buy: MINT, Sell: RED, Hold: '#6B7280' };
-
-const KIND_LABELS = {
-  regressor: 'Traditional Regressor',
-  classifier: 'Traditional Classifier',
-  deep_learning_regressor: 'Deep Learning Regressor',
-  deep_learning_classifier: 'Deep Learning Classifier',
-};
-
-const KIND_COLORS = {
-  regressor: { bg: 'rgba(61,220,151,0.12)', fg: MINT },
-  classifier: { bg: 'rgba(61,220,151,0.12)', fg: MINT },
-  deep_learning_regressor: { bg: 'rgba(255,138,92,0.14)', fg: AMBER },
-  deep_learning_classifier: { bg: 'rgba(255,138,92,0.14)', fg: AMBER },
-};
 
 function PillList({ items, color, mono }) {
   if (!items || items.length === 0) {
@@ -113,7 +98,6 @@ export default function ModelDetails() {
 
   if (!data) return null;
 
-  const kindStyle = KIND_COLORS[data.model_kind] || KIND_COLORS.regressor;
   const dataPrep = data.data_prep || {};
   const split = data.split || {};
   const preprocessing = data.preprocessing || {};
@@ -192,14 +176,15 @@ export default function ModelDetails() {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <h2 style={{ fontSize: 20, fontWeight: 700, color: '#F5F6F7', margin: 0, fontFamily: 'ui-monospace, monospace' }}>
-              {data.run_id}
+              {data.symbol ? data.symbol.toUpperCase() : '—'}
+              {' · '}
+              {data.model_type ? data.model_type[0].toUpperCase() + data.model_type.slice(1) : '—'}
+              {' · '}
+              {algorithmLabel(data.algorithm)}
             </h2>
-            <Tag style={{ background: kindStyle.bg, color: kindStyle.fg, border: 'none', borderRadius: 8, fontWeight: 600 }}>
-              {KIND_LABELS[data.model_kind] || data.model_kind}
-            </Tag>
           </div>
           <div style={{ color: '#9096A0', fontSize: 13, marginTop: 2 }}>
-            {algorithmLabel(data.algorithm)} · {data.symbol ? data.symbol.toUpperCase() : '—'} · {data.exchange || '—'} · {data.timeframe || '—'}
+            {data.timeframe || '—'}
             {data.horizon != null && <> · horizon {data.horizon}</>}
             {' · '}Trained {data.trained_at ? new Date(data.trained_at).toLocaleString() : 'unknown'}
           </div>

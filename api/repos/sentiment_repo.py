@@ -3,7 +3,7 @@ repos/sentiment_repo.py
 ------------------------
 DB access for the NLP & Sentiment page (spec section 10).
 
-Real data source: sentiment_clean.{coin}_posts (one table per coin,
+Real data source: sentiment.{coin}_posts (one table per coin,
 created by sentiment_pipeline/database.py::create_tables, populated by
 sentiment_pipeline/main.py -- CryptoBERT-scored Reddit posts, see
 sentiment_pipeline/sentiment_model.py). Each row has sentiment_label
@@ -27,7 +27,7 @@ Coin list is NOT hardcoded to BTC/ETH (the only two sentiment_pipeline/
 config.yaml currently configures) -- discovered live from
 information_schema, same pattern as
 metadata_utils.find_existing_candle_tables/discover_data_pairs, so new
-coins show up automatically as their sentiment_clean.{coin}_posts table
+coins show up automatically as their sentiment.{coin}_posts table
 is created and populated, no code change needed here.
 """
 
@@ -37,7 +37,7 @@ from psycopg2.extras import RealDictCursor
 
 def discover_sentiment_coins(conn) -> list[str]:
     """
-    Every coin with a real sentiment_clean.{coin}_posts table right now,
+    Every coin with a real sentiment.{coin}_posts table right now,
     uppercased (e.g. ["BTC", "ETH"]). Read-only introspection, same
     pattern as metadata_utils.find_existing_candle_tables -- returns
     whatever actually exists, not a hardcoded/config-driven list.
@@ -46,7 +46,7 @@ def discover_sentiment_coins(conn) -> list[str]:
     cursor.execute(sql.SQL("""
         SELECT table_name
         FROM information_schema.tables
-        WHERE table_schema = 'sentiment_clean'
+        WHERE table_schema = 'sentiment'
           AND table_name LIKE %s
         ORDER BY table_name
     """), ("%\\_posts",))
@@ -62,7 +62,7 @@ def discover_sentiment_coins(conn) -> list[str]:
 
 def _table_exists(conn, coin: str) -> bool:
     cursor = conn.cursor()
-    qualified_name = f"sentiment_clean.{coin.lower()}_posts"
+    qualified_name = f"sentiment.{coin.lower()}_posts"
     cursor.execute(sql.SQL("SELECT to_regclass(%s)"), (qualified_name,))
     exists = cursor.fetchone()[0] is not None
     cursor.close()
@@ -80,7 +80,7 @@ def _label_counts(conn, coin: str) -> dict:
     cursor = conn.cursor()
     cursor.execute(sql.SQL("""
         SELECT LOWER(sentiment_label), COUNT(*)
-        FROM sentiment_clean.{table}
+        FROM sentiment.{table}
         GROUP BY LOWER(sentiment_label)
     """).format(table=sql.Identifier(table)))
     rows = dict(cursor.fetchall())
@@ -96,7 +96,7 @@ def _mean_score(conn, coin: str):
     """Plain mean of sentiment_score (-1..+1) across all posts for this coin. None if no rows."""
     table = f"{coin.lower()}_posts"
     cursor = conn.cursor()
-    cursor.execute(sql.SQL("SELECT AVG(sentiment_score) FROM sentiment_clean.{table}").format(
+    cursor.execute(sql.SQL("SELECT AVG(sentiment_score) FROM sentiment.{table}").format(
         table=sql.Identifier(table)
     ))
     result = cursor.fetchone()[0]
@@ -108,7 +108,7 @@ def get_overall_sentiment(conn, coin: str) -> dict:
     """
     Overall Market Sentiment widget: mean score (-1..+1), a Bullish/
     Neutral/Bearish label off that mean, and bullish/neutral/bearish
-    post percentages. All real, all from sentiment_clean.{coin}_posts.
+    post percentages. All real, all from sentiment.{coin}_posts.
     Every field is None/0 (not fabricated) if the coin has no table or
     no posts yet.
     """
@@ -172,12 +172,12 @@ def get_fear_greed(conn, coin: str) -> dict:
         cursor = conn.cursor()
         if cutoff is None:
             cursor.execute(sql.SQL("""
-                SELECT LOWER(sentiment_label), COUNT(*) FROM sentiment_clean.{table}
+                SELECT LOWER(sentiment_label), COUNT(*) FROM sentiment.{table}
                 GROUP BY LOWER(sentiment_label)
             """).format(table=sql.Identifier(table)))
         else:
             cursor.execute(sql.SQL("""
-                SELECT LOWER(sentiment_label), COUNT(*) FROM sentiment_clean.{table}
+                SELECT LOWER(sentiment_label), COUNT(*) FROM sentiment.{table}
                 WHERE created_utc <= %s
                 GROUP BY LOWER(sentiment_label)
             """).format(table=sql.Identifier(table)), (cutoff,))
@@ -234,7 +234,7 @@ def get_sentiment_timeline(conn, coin: str, days: int = 30) -> list[dict]:
         SELECT DATE_TRUNC('day', created_utc) AS day,
                AVG(sentiment_score) AS avg_score,
                COUNT(*) AS post_count
-        FROM sentiment_clean.{table}
+        FROM sentiment.{table}
         WHERE created_utc >= now() - (%s || ' days')::interval
         GROUP BY DATE_TRUNC('day', created_utc)
         ORDER BY day
@@ -264,7 +264,7 @@ def get_fear_greed_timeline(conn, coin: str, days: int = 30) -> list[dict]:
                COUNT(*) FILTER (WHERE LOWER(sentiment_label) = 'bullish') AS bullish,
                COUNT(*) FILTER (WHERE LOWER(sentiment_label) = 'bearish') AS bearish,
                COUNT(*) AS total
-        FROM sentiment_clean.{table}
+        FROM sentiment.{table}
         WHERE created_utc >= now() - (%s || ' days')::interval
         GROUP BY DATE_TRUNC('day', created_utc)
         ORDER BY day
@@ -296,7 +296,7 @@ def get_post_volume(conn, coin: str, days: int = 14) -> list[dict]:
                COUNT(*) FILTER (WHERE LOWER(sentiment_label) = 'bullish') AS bullish,
                COUNT(*) FILTER (WHERE LOWER(sentiment_label) = 'neutral') AS neutral,
                COUNT(*) FILTER (WHERE LOWER(sentiment_label) = 'bearish') AS bearish
-        FROM sentiment_clean.{table}
+        FROM sentiment.{table}
         WHERE created_utc >= now() - (%s || ' days')::interval
         GROUP BY DATE_TRUNC('day', created_utc)
         ORDER BY day
@@ -325,7 +325,7 @@ def get_top_posts(conn, coin: str, limit: int = 20) -> list[dict]:
     cursor.execute(sql.SQL("""
         SELECT post_id, subreddit, title, sentiment_label, sentiment_score,
                confidence, score, upvote_ratio, created_utc
-        FROM sentiment_clean.{table}
+        FROM sentiment.{table}
         ORDER BY score DESC NULLS LAST, created_utc DESC
         LIMIT %s
     """).format(table=sql.Identifier(table)), (limit,))
