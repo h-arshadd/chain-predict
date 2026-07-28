@@ -66,18 +66,22 @@ def _monthly_heatmap_data(returns: pd.Series, equity: pd.Series) -> dict:
     monthly = qs.stats.monthly_returns(returns)
     if isinstance(monthly, pd.DataFrame):
         monthly.index = monthly.index.astype(str)
-        # qs.stats.monthly_returns() columns are 'JAN'..'DEC' plus a
-        # trailing 'EOY' summary column -- remap to the "1".."12" string
-        # keys the frontend (monthlyHeatmapToRows) looks up, and drop EOY
-        # since it isn't a month.
-        table = {
-            str(year): {
+        # qs.stats.monthly_returns() fabricates 0.0 (not NaN) for months
+        # after the data ends in the final, in-progress year -- e.g. data
+        # ending Jan 2026 still gets Feb..Dec 2026 filled with 0.0. Cap
+        # each year at the last real (year, month) actually present in
+        # `returns` so those don't get displayed as real 0% months.
+        last_year, last_month = returns.index.max().year, returns.index.max().month
+
+        table = {}
+        for year, row in monthly.iterrows():
+            year_int = int(year)
+            month_cap = last_month if year_int == last_year else 12
+            table[str(year)] = {
                 _MONTH_ABBR_TO_NUM[month]: val
                 for month, val in row.dropna().to_dict().items()
-                if month in _MONTH_ABBR_TO_NUM
+                if month in _MONTH_ABBR_TO_NUM and int(_MONTH_ABBR_TO_NUM[month]) <= month_cap
             }
-            for year, row in monthly.iterrows()
-        }
     else:
         table = _series_to_records(monthly)
     return {"monthly_returns": table}

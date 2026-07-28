@@ -6,7 +6,7 @@
 # generation, evaluation -- is controlled from here. There is only one
 # entry point (ml/main.py) and only one config file.
 
-model_type: regression # regression | classification | timeseries
+model_type: classification # regression | classification | timeseries
 
 # ---------------------------------------------------------------------
 # Data Prep stages (market data, features, sentiment, target)

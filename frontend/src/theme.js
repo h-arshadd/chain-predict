@@ -106,6 +106,10 @@ export const themeConfig = {
     Tag: {
       colorBgContainer: colors.panelAlt,
     },
+    Tooltip: {
+      colorBgSpotlight: colors.panelAlt,
+      colorTextLightSolid: colors.textPrimary,
+    },
     Avatar: {
       colorTextPlaceholder: colors.textPrimary,
     },
