@@ -27,15 +27,15 @@ def get_db_connection():
 
 
 def create_tables(conn, coin):
-    """Create sentiment_clean schema (if missing) and this coin's table."""
+    """Create sentiment schema (if missing) and this coin's table."""
     coin = coin.lower()
     table = f"{coin}_posts"
     cur = conn.cursor()
 
-    cur.execute("CREATE SCHEMA IF NOT EXISTS sentiment_clean")
+    cur.execute("CREATE SCHEMA IF NOT EXISTS sentiment")
 
     cur.execute(sql.SQL("""
-        CREATE TABLE IF NOT EXISTS sentiment_clean.{table} (
+        CREATE TABLE IF NOT EXISTS sentiment.{table} (
             post_id           TEXT PRIMARY KEY,
             created_utc       TIMESTAMP,
             subreddit         TEXT,
@@ -52,7 +52,7 @@ def create_tables(conn, coin):
 
     conn.commit()
     cur.close()
-    logger.info(f"Table ensured: sentiment_clean.{table}")
+    logger.info(f"Table ensured: sentiment.{table}")
 
 
 def insert_analysis(conn, coin, post_id, post, subreddit, sentiment, created_utc, score, upvote_ratio):
@@ -67,7 +67,7 @@ def insert_analysis(conn, coin, post_id, post, subreddit, sentiment, created_utc
     table = f"{coin.lower()}_posts"
     cur = conn.cursor()
     cur.execute(sql.SQL("""
-        INSERT INTO sentiment_clean.{table}
+        INSERT INTO sentiment.{table}
             (post_id, created_utc, subreddit, title, body, comments, sentiment_label, sentiment_score, confidence, score, upvote_ratio)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (post_id) DO NOTHING
@@ -83,7 +83,7 @@ def get_mean_score(conn, coin):
     """Plain (unweighted) mean sentiment score."""
     table = f"{coin.lower()}_posts"
     cur = conn.cursor()
-    cur.execute(sql.SQL("SELECT AVG(sentiment_score) FROM sentiment_clean.{table}").format(
+    cur.execute(sql.SQL("SELECT AVG(sentiment_score) FROM sentiment.{table}").format(
         table=sql.Identifier(table)
     ))
     result = cur.fetchone()[0]

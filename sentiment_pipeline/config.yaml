@@ -14,7 +14,7 @@ coins:
     search_query: "ETH OR Ethereum"
 
 reddit:
-  post_limit: 5
+  post_limit: null  # null = fetch as many as Reddit's API allows (max ~1000 per query)
   user_agent: "sentiment-pipeline/0.1"
 
 model:
