@@ -6,7 +6,7 @@ import { api } from '../lib/api';
 import { fmtUsd } from '../lib/format';
 import { recordsToSeries, monthlyHeatmapToRows, heatColor } from '../lib/quantstats';
 import { METRIC_CARDS_COL_1, METRIC_CARDS_COL_2, fmtMetric } from '../lib/metricCards';
-import Panel, { panelFlat as panel } from '../components/Panel';
+import Panel from '../components/Panel';
 import EmptyChart from '../components/EmptyChart';
 import TradePnlChart from '../components/TradePnlChart';
 import EquityCurveChart from '../components/EquityCurveChart';

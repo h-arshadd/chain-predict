@@ -25,8 +25,6 @@ instructions, this is a single-operator tool with no login"), so there
 is no identity to attribute a request to beyond client_ip.
 """
 
-import time
-
 from psycopg2 import sql
 
 from crypto_pipeline.utils.db_utils import get_db_connection

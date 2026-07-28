@@ -18,7 +18,7 @@ const STATUS_META = {
   flat: { label: 'Flat', bg: 'rgba(255,255,255,0.06)', fg: '#9096A0' },
   paused: { label: 'Paused', bg: 'rgba(255,138,92,0.14)', fg: AMBER },
   unassigned: { label: 'Unassigned', bg: 'rgba(255,255,255,0.06)', fg: '#9096A0' },
-  never_run: { label: 'Never Run', bg: 'rgba(255,255,255,0.06)', fg: '#6B7280' },
+  never_run: { label: "Didn't Start", bg: 'rgba(255,255,255,0.06)', fg: '#6B7280' },
 };
 
 const statusFilterOptions = [

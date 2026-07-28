@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Table, Tag, Switch, Modal, Form, Input, Select, message, Tooltip, Spin, Alert } from 'antd';
 import {
-  PlusOutlined, EditOutlined, DeleteOutlined, EyeInvisibleOutlined, EyeOutlined,
+  PlusOutlined, EditOutlined, DeleteOutlined,
   WalletOutlined, WarningFilled, ControlOutlined,
 } from '@ant-design/icons';
 import { api } from '../lib/api';

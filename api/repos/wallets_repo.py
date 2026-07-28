@@ -3,8 +3,11 @@ repos/wallets_repo.py
 ----------------------
 DB access for the Wallets module. Builds on top of accounts.api_keys
 (defined in crypto_pipeline.accounts.accounts_utils) rather than
-duplicating it -- save_account_api_key / get_account_api_key are reused
-as-is for create/read.
+duplicating it -- save_account_api_key is reused as-is for create.
+(get_wallet() below runs its own SELECT rather than reusing
+accounts_utils.get_account_api_key -- same table/columns, kept separate
+since this module already owns _ensure_schema()'s self-healing for the
+`enabled` column.)
 
 Two things accounts_utils.py doesn't have yet, added here:
   - an `enabled` column on accounts.api_keys (blocks new executions from
@@ -28,10 +31,7 @@ no-ops after the first time.
 from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
 
-from crypto_pipeline.accounts.accounts_utils import (
-    save_account_api_key,
-    get_account_api_key,
-)
+from crypto_pipeline.accounts.accounts_utils import save_account_api_key
 from crypto_pipeline.utils.metadata_utils import get_strategies
 from crypto_pipeline.utils.db_utils import (
     get_execution_universe,
