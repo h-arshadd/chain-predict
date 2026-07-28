@@ -35,6 +35,7 @@ def list_models(
     include_deep_learning: bool = True,
     algorithm: str | None = None,
     symbol: str | None = None,
+    timeframe: str | None = None,
     conn=Depends(get_conn),
 ):
     if model_type is not None and model_type not in _VALID_MODEL_TYPES:
@@ -49,6 +50,11 @@ def list_models(
         rows = [r for r in rows if r["algorithm"] == algorithm]
     if symbol is not None:
         rows = [r for r in rows if r["symbol"] == symbol]
+    if timeframe is not None:
+        # Strategy Builder's "only ML models trained on the same timeframe
+        # as the selected strategy" filter (Strategy_Builder_Module.pdf
+        # Step 3). Same additive-filter pattern as algorithm/symbol above.
+        rows = [r for r in rows if r["timeframe"] == timeframe]
 
     total = len(rows)
     page = rows[offset: offset + limit]

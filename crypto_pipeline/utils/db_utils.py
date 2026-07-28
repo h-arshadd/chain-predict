@@ -2667,3 +2667,121 @@ def delete_ml_run_config(conn, run_id: str) -> bool:
     if deleted:
         logger.info(f"Deleted ML run config: {_ML_SCHEMA}.run_configs (run_id='{run_id}')")
     return deleted
+
+# ==========================================================
+# ml.model_signals
+# ==========================================================
+# Per-bar 1/0/-1 signal series for a trained regression/classification
+# run -- durable Postgres storage the Strategy Builder reads from when
+# combining an ML model's output with playbook entries (see
+# STRATEGY_BUILDER_SPEC.md Section 5.2 / crypto_pipeline/strategy_builder/
+# assemble.py). Additive alongside the existing CSV dump
+# (pipeline_out/{model_type}/{algorithm}/06_signals.csv) -- CSV is not
+# removed, this is purely for the builder's benefit.
+#
+# REGRESSION/CLASSIFICATION ONLY. Never called for a timeseries run --
+# see ml/main.py's _run_one_algorithm, which only calls
+# save_model_signals() from the `else` branch (model_type in
+# ("regression", "classification")), right next to where 06_signals.csv
+# is already dumped. A timeseries forecast is a different shape (a
+# forward-looking multi-step forecast, not a per-bar signal aligned to
+# OHLCV bars) and was never wired into backtest/backtest.py to begin
+# with -- same exclusion api/repos/ml_repo.py's _SUPPORTED_KINDS already
+# enforces for /api/ml-models.
+
+def _ensure_ml_model_signals_table(conn):
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {schema}").format(
+        schema=sql.Identifier(_ML_SCHEMA)
+    ))
+    cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {schema}.model_signals (
+            run_id     TEXT NOT NULL REFERENCES {schema}.run_configs(run_id) ON DELETE CASCADE,
+            datetime   TIMESTAMP NOT NULL,
+            signal     SMALLINT NOT NULL,
+            PRIMARY KEY (run_id, datetime)
+        )
+    """).format(schema=sql.Identifier(_ML_SCHEMA)))
+    conn.commit()
+    cursor.close()
+
+
+def save_model_signals(conn, run_id: str, signals_df: pd.DataFrame,
+                        timestamp_column: str = "datetime", signal_column: str = "signal"):
+    """
+    Write one run's per-bar signal series into ml.model_signals -- called
+    from ml/main.py's _run_one_algorithm, right where "06_signals.csv" is
+    already dumped, for regression/classification runs only.
+
+    signals_df: same DataFrame already written to 06_signals.csv (must
+    already have the run's own run_id row in ml.run_configs, via
+    save_ml_run_config(), since this FK's onto it -- ml/main.py calls
+    save_ml_run_config() earlier in the same run, so the FK is always
+    satisfied by the time this is called).
+
+    Upserts on (run_id, datetime): re-running the same algorithm/run_id
+    (e.g. retraining) overwrites that run's existing signal rows instead
+    of duplicating or leaving stale rows behind. ON DELETE CASCADE means
+    deleting a run's config (delete_ml_run_config) also cleans up its
+    signal rows automatically.
+    """
+    _ensure_ml_model_signals_table(conn)
+
+    if signals_df is None or signals_df.empty:
+        logger.warning(f"save_model_signals: empty signals_df for run_id={run_id!r} -- nothing written.")
+        return
+
+    df = signals_df[[timestamp_column, signal_column]].dropna(subset=[timestamp_column]).copy()
+    df[signal_column] = df[signal_column].fillna(0).astype(int)
+
+    cursor = conn.cursor()
+    rows = [(run_id, ts, int(sig)) for ts, sig in zip(df[timestamp_column], df[signal_column])]
+    cursor.executemany(sql.SQL("""
+        INSERT INTO {schema}.model_signals (run_id, datetime, signal)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (run_id, datetime) DO UPDATE SET
+            signal = EXCLUDED.signal
+    """).format(schema=sql.Identifier(_ML_SCHEMA)), rows)
+    conn.commit()
+    cursor.close()
+    logger.info(f"Saved {len(rows)} signal rows: {_ML_SCHEMA}.model_signals (run_id='{run_id}')")
+
+
+def get_model_signals(conn, run_id: str, start_date=None, end_date=None) -> pd.Series:
+    """
+    Read one run's per-bar signal series back as a datetime-indexed
+    pd.Series of 1/0/-1 int values -- the exact shape generate_signals()'s
+    third return value already is, so strategy_builder/assemble.py's
+    resolve_component_signal() can treat a playbook-entry signal and an
+    ML-model signal identically once both are resolved to a Series.
+
+    start_date/end_date optionally narrow to the requested backtest
+    window (both inclusive) -- omit either to leave that side open.
+    Returns an empty Series (not None) if run_id has no rows, so callers
+    can .reindex()/.fillna(0) it the same way regardless of whether the
+    model ever produced signals for the requested window.
+    """
+    _ensure_ml_model_signals_table(conn)
+    cursor = conn.cursor()
+
+    query = sql.SQL("SELECT datetime, signal FROM {schema}.model_signals WHERE run_id = %s").format(
+        schema=sql.Identifier(_ML_SCHEMA)
+    )
+    params = [run_id]
+    if start_date is not None:
+        query = query + sql.SQL(" AND datetime >= %s")
+        params.append(start_date)
+    if end_date is not None:
+        query = query + sql.SQL(" AND datetime <= %s")
+        params.append(end_date)
+    query = query + sql.SQL(" ORDER BY datetime ASC")
+
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    cursor.close()
+
+    if not rows:
+        return pd.Series(dtype=int, name="signal")
+
+    idx = pd.to_datetime([r[0] for r in rows])
+    return pd.Series([int(r[1]) for r in rows], index=idx, name="signal")

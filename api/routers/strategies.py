@@ -23,7 +23,9 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from api.core.db import get_conn
 from api.core.responses import item, list_response
-from api.schemas.strategies import StrategyEnabledUpdate, StrategySummary, StrategyDetail
+from api.schemas.strategies import (
+    StrategyEnabledUpdate, StrategySummary, StrategyDetail, StrategyBuildRequest,
+)
 from api.repos import strategies_repo
 
 router = APIRouter(prefix="/api/strategies", tags=["strategies"])
@@ -68,4 +70,34 @@ def set_execution_enabled(strategy_id: int, body: StrategyEnabledUpdate, conn=De
         raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
 
     detail = strategies_repo.get_strategy_detail(conn, strategy_id)
+    return item(StrategyDetail(**detail).model_dump())
+
+@router.post("/build")
+def build_strategy(body: StrategyBuildRequest, conn=Depends(get_conn)):
+    """
+    Strategy Builder's "Save Strategy" step. Combines the selected
+    playbook entries (+ optional ML models) into one new metadata.strategy
+    row. Does not run a backtest -- call POST /api/backtests with the
+    returned strategy_id right after, same as any other saved strategy.
+    """
+    try:
+        row = strategies_repo.build_and_save_strategy(
+            conn,
+            strategy_name=body.strategy_name,
+            components=[c.model_dump() for c in body.components],
+            combine_rule=body.combine_rule,
+            coin=body.coin,
+            exchange=body.exchange,
+            time_horizon=body.time_horizon,
+            take_profit_type=body.take_profit_type,
+            take_profit_value=body.take_profit_value,
+            stop_loss_type=body.stop_loss_type,
+            stop_loss_value=body.stop_loss_value,
+            weights=body.weights,
+            threshold=body.threshold,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    detail = strategies_repo.get_strategy_detail(conn, row["strategy_id"])
     return item(StrategyDetail(**detail).model_dump())

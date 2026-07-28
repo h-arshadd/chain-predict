@@ -6,6 +6,7 @@ import {
   ExperimentOutlined,
   FundOutlined,
   SmileOutlined,
+  BuildOutlined,
 } from '@ant-design/icons';
 
 const menuItems = [
@@ -13,6 +14,7 @@ const menuItems = [
   { key: '/wallets', icon: <WalletOutlined />, label: 'Wallets' },
   { key: '/execution', icon: <RocketOutlined />, label: 'Execution' },
   { key: '/backtests', icon: <ExperimentOutlined />, label: 'Backtests' },
+  { key: '/strategy-builder', icon: <BuildOutlined />, label: 'Strategy Builder' },
   { key: '/models', icon: <FundOutlined />, label: 'ML Models' },
   { key: '/sentiment', icon: <SmileOutlined />, label: 'Sentiment' },
 ];

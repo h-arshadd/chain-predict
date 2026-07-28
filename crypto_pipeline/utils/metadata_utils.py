@@ -570,6 +570,127 @@ def load_strategies_from_yaml(conn, strategies_dir, pairs=None):
 
 
 # ==========================================================
+# metadata.playbook
+# ==========================================================
+
+def create_playbook_table(conn):
+    """
+    One row per reusable strategy building block -- the Strategy Builder's
+    "Playbook" (Strategy_Builder_Module.pdf). Deliberately three columns
+    only: playbook_id, strategy_name, strategy_config. No take_profit,
+    stop_loss, position_size, exchange, coin, time_horizon, or enabled
+    flags -- those are execution-context that only makes sense once a
+    playbook entry (or a combination of several) is turned into a real,
+    runnable metadata.strategy row. A playbook entry is a template, not a
+    tradeable strategy.
+
+    strategy_config has the SAME shape as metadata.strategy.strategy_config
+    (indicator blocks + a "strategy" key with long/short rule + conditions,
+    including per-condition persist_bars) -- just without take_profit/
+    stop_loss baked in, since those never belonged in a reusable template
+    to begin with.
+
+    strategy_name is UNIQUE globally (not scoped to exchange/coin like
+    metadata.strategy) -- a playbook entry is generic and pair-agnostic;
+    the same entry gets combined/assigned to whichever pair the builder
+    targets at save time.
+    """
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("""
+        CREATE TABLE IF NOT EXISTS {schema}.playbook (
+            playbook_id        SERIAL PRIMARY KEY,
+            strategy_name       TEXT NOT NULL UNIQUE,
+            strategy_config     JSONB NOT NULL,
+            created_at          TIMESTAMP NOT NULL DEFAULT now()
+        )
+    """).format(schema=sql.Identifier(SCHEMA)))
+    conn.commit()
+    cursor.close()
+    logger.info(f"Table ensured: {SCHEMA}.playbook")
+
+
+def insert_playbook(conn, strategy_name, strategy_config):
+    """
+    Register a playbook entry, or update it in place if strategy_name
+    already exists (upsert on the UNIQUE constraint) -- so re-saving a
+    playbook entry with the same name refreshes its config instead of
+    duplicating the row.
+
+    strategy_config: dict with indicator blocks + a "strategy" key
+    (long/short rule + conditions) -- NO take_profit/stop_loss/
+    position_size/exchange/coin/time_horizon. Stored as-is in JSONB.
+
+    Returns the playbook_id of the inserted or existing row.
+    """
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("""
+        INSERT INTO {schema}.playbook (strategy_name, strategy_config)
+        VALUES (%s, %s)
+        ON CONFLICT (strategy_name) DO UPDATE SET
+            strategy_config = EXCLUDED.strategy_config
+        RETURNING playbook_id
+    """).format(schema=sql.Identifier(SCHEMA)), (
+        strategy_name, Json(strategy_config),
+    ))
+    playbook_id = cursor.fetchone()[0]
+    conn.commit()
+    cursor.close()
+    logger.info(f"Inserted {SCHEMA}.playbook: {strategy_name!r} -> playbook_id={playbook_id}")
+    return playbook_id
+
+
+def get_playbook(conn, playbook_id):
+    """
+    Fetch one playbook entry by id. Returns None if it doesn't exist.
+    """
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute(sql.SQL("""
+        SELECT *
+        FROM {schema}.playbook
+        WHERE playbook_id = %s
+    """).format(schema=sql.Identifier(SCHEMA)), (playbook_id,))
+    row = cursor.fetchone()
+    cursor.close()
+    return dict(row) if row else None
+
+
+def get_playbooks(conn):
+    """
+    Fetch every playbook entry, newest first. What the Strategy Builder's
+    "1. Playbook (Select Strategies)" panel calls to populate its list.
+    """
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute(sql.SQL("""
+        SELECT *
+        FROM {schema}.playbook
+        ORDER BY created_at DESC, playbook_id DESC
+    """).format(schema=sql.Identifier(SCHEMA)))
+    rows = cursor.fetchall()
+    cursor.close()
+    return [dict(row) for row in rows]
+
+
+def delete_playbook(conn, playbook_id):
+    """
+    Remove one playbook entry by id. Does not touch metadata.strategy --
+    strategies already built/saved from this entry are independent rows
+    and are unaffected by deleting the template that originated them.
+
+    Returns True if a row was deleted, False if playbook_id didn't exist.
+    """
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("""
+        DELETE FROM {schema}.playbook
+        WHERE playbook_id = %s
+    """).format(schema=sql.Identifier(SCHEMA)), (playbook_id,))
+    deleted = cursor.rowcount > 0
+    conn.commit()
+    cursor.close()
+    logger.info(f"Deleted {SCHEMA}.playbook playbook_id={playbook_id}: {deleted}")
+    return deleted
+
+
+# ==========================================================
 # metadata.backtest
 # ==========================================================
 
@@ -880,6 +1001,7 @@ def create_all_metadata_tables(conn):
     create_metadata_schema(conn)
     create_data_table(conn)
     create_strategy_table(conn)
+    create_playbook_table(conn)
     create_backtest_table(conn)
     create_sentiment_table(conn)
     logger.info("All metadata tables ensured.")

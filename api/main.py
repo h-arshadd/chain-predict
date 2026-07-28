@@ -29,7 +29,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 import time
 
-from api.routers import wallets, executions, sentiment, strategies, ml, dashboard, backtests, simulator
+from api.routers import wallets, executions, sentiment, strategies, ml, dashboard, backtests, simulator, playbook
 from api.core.request_log import log_request
 
 app = FastAPI(title="Trading Platform API")
@@ -87,6 +87,7 @@ app.include_router(ml.router)
 app.include_router(dashboard.router)
 app.include_router(backtests.router)
 app.include_router(simulator.router)
+app.include_router(playbook.router)
 
 
 @app.get("/api/health")

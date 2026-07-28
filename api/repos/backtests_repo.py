@@ -231,13 +231,78 @@ def run_backtest_job(backtest_id: int):
         # Same shape build_signals() in backtest/main.py produces, just
         # fed this strategy's own DB-stored config instead of a yaml
         # file (see generate_signals()'s config_dict parameter).
-        indicator_df, condition_df, signal_series = generate_signals(
-            ohlcv_resampled, config_dict=strategy_row["strategy_config"]
-        )
-        combined = pd.concat([indicator_df, condition_df], axis=1)
-        combined["signal"] = signal_series
-        combined = combined.dropna().reset_index(drop=True)
-        signals = combined[["datetime", "signal"]]
+        #
+        # A strategy saved via the Strategy Builder (POST /api/strategies/
+        # build) has a different strategy_config shape -- {"builder":
+        # {"components": [...], "combine_rule": ...}} -- see
+        # crypto_pipeline.strategy_builder.assemble.assemble_strategy_config.
+        # generate_signals() doesn't understand that shape (it's not a
+        # single strategy's indicator/condition config), so combined
+        # strategies are routed through build_combined_signal() instead,
+        # which re-resolves each component live against this run's own
+        # OHLCV window (per STRATEGY_BUILDER_SPEC.md decision 5: "recompute
+        # live, no new signal-cache table" -- the only durable/cached piece
+        # is an ML model's own signal series, read via get_model_signals).
+        raw_config = strategy_row["strategy_config"]
+        if isinstance(raw_config, dict) and "builder" in raw_config:
+            from crypto_pipeline.strategy_builder.assemble import build_combined_signal
+            from crypto_pipeline.utils.db_utils import get_model_signals
+            from crypto_pipeline.utils.metadata_utils import get_playbook
+
+            builder = raw_config["builder"]
+
+            # assemble_strategy_config() deliberately stores only
+            # playbook_id/strategy_name per playbook component (a lean,
+            # inspectable reference -- see its own docstring), NOT the
+            # full strategy_config JSON, to avoid duplicating the whole
+            # config into every saved combined strategy. That means
+            # resolve_component_signal() (which needs the actual
+            # strategy_config to call generate_signals()) can't work off
+            # the saved builder dict as-is -- each playbook component has
+            # to be re-hydrated here, by looking its playbook_id back up
+            # in metadata.playbook, right before combining. If a playbook
+            # entry was deleted after this strategy was saved, fail loudly
+            # with a clear message rather than a bare KeyError.
+            hydrated_components = []
+            for c in builder["components"]:
+                if c["kind"] == "playbook":
+                    playbook_row = get_playbook(conn, c["playbook_id"])
+                    if playbook_row is None:
+                        fail_backtest(
+                            conn, backtest_id,
+                            f"Playbook entry {c['playbook_id']} ({c.get('strategy_name')!r}) "
+                            "no longer exists -- this strategy can't be re-backtested."
+                        )
+                        return
+                    hydrated_components.append({
+                        **c,
+                        "strategy_config": playbook_row["strategy_config"],
+                    })
+                else:
+                    hydrated_components.append(c)
+
+            ohlcv_indexed = ohlcv_resampled.set_index("datetime")
+
+            def _get_model_signals(run_id):
+                return get_model_signals(conn, run_id, start_date=config["start_date"], end_date=config["end_date"])
+
+            signal_series = build_combined_signal(
+                hydrated_components, ohlcv_indexed, builder["combine_rule"],
+                weights=builder.get("weights"), threshold=builder.get("threshold"),
+                get_model_signals=_get_model_signals,
+            )
+            combined = ohlcv_resampled.copy().set_index("datetime")
+            combined["signal"] = signal_series
+            combined = combined.dropna(subset=["signal"]).reset_index()
+            signals = combined[["datetime", "signal"]]
+        else:
+            indicator_df, condition_df, signal_series = generate_signals(
+                ohlcv_resampled, config_dict=raw_config
+            )
+            combined = pd.concat([indicator_df, condition_df], axis=1)
+            combined["signal"] = signal_series
+            combined = combined.dropna().reset_index(drop=True)
+            signals = combined[["datetime", "signal"]]
 
         ohlcv_1m = get_candles_from_db(conn, exchange, symbol, config["start_date"], config["end_date"])
         if ohlcv_1m.empty:

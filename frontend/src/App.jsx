@@ -8,6 +8,7 @@ import Execution from './pages/Execution';
 import ExecutionDetails from './pages/ExecutionDetails';
 import Backtests from './pages/Backtests';
 import BacktestDetails from './pages/BacktestDetails';
+import StrategyBuilder from './pages/StrategyBuilder';
 import Models from './pages/Models';
 import ModelDetails from './pages/ModelDetails';
 import Sentiment from './pages/Sentiment';
@@ -25,6 +26,7 @@ function App() {
             <Route path="/execution/:exchange/:symbol" element={<ExecutionDetails />} />
             <Route path="/backtests" element={<Backtests />} />
             <Route path="/backtests/:id" element={<BacktestDetails />} />
+            <Route path="/strategy-builder" element={<StrategyBuilder />} />
             <Route path="/models" element={<Models />} />
             <Route path="/models/:id" element={<ModelDetails />} />
             <Route path="/sentiment" element={<Sentiment />} />

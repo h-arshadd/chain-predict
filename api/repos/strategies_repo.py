@@ -43,6 +43,8 @@ from crypto_pipeline.utils.metadata_utils import (
     get_strategies,
     get_strategy,
     set_strategy_enabled,
+    insert_strategy,
+    get_playbook,
 )
 from crypto_pipeline.utils.db_utils import (
     get_execution_config,
@@ -437,3 +439,109 @@ def _list_trades_from_table(conn, schema_name: str, table_name: str, limit: int)
     rows = [dict(zip(columns, r)) for r in cursor.fetchall()]
     cursor.close()
     return rows
+
+# ==========================================================
+# Strategy Builder: build_and_save_strategy
+# ==========================================================
+# Strategy_Builder_Module.pdf's "Saving Strategies" step -- takes the
+# builder's selected playbook entries (+ optional ML model run_ids),
+# resolves each playbook_id to its actual strategy_config (ML model
+# components pass their run_id through as-is; nothing to resolve until
+# backtest time), and inserts one metadata.strategy row via the existing
+# insert_strategy(). Does NOT run a backtest itself -- that's a separate
+# POST /api/backtests call the frontend makes afterward with the returned
+# strategy_id, same flow every other strategy already uses (see
+# STRATEGY_BUILDER_SPEC.md Section 2.2 -- "the entire backtest pipeline
+# only ever needs a valid strategy_id").
+
+def build_and_save_strategy(
+    conn,
+    strategy_name: str,
+    components: list[dict],
+    combine_rule: str,
+    coin: str,
+    time_horizon: str = "1h",
+    exchange: str = "bybit",
+    take_profit_type: str | None = None,
+    take_profit_value: float | None = None,
+    stop_loss_type: str | None = None,
+    stop_loss_value: float | None = None,
+    weights: list[float] | None = None,
+    threshold: float | None = None,
+) -> dict:
+    """
+    components: list of either
+        {"kind": "playbook", "playbook_id": 3, "persist_bars": 5}
+        {"kind": "ml_model", "run_id": "...", "persist_bars": 0}
+    Each playbook component is resolved here (its strategy_config +
+    strategy_name pulled from metadata.playbook) before being handed to
+    assemble_strategy_config() -- the builder/frontend only ever needs to
+    send playbook_id, not the full config it already fetched once to
+    display the picker.
+
+    exchange defaults to "bybit" -- the only exchange currently run (see
+    STRATEGY_BUILDER_SPEC.md decisions) -- callers can still override it
+    explicitly if that changes later.
+
+    Raises ValueError (turned into a 400 by the router) if:
+      - components is empty
+      - any playbook_id doesn't exist
+      - strategy_name already exists for this (exchange, coin)
+    """
+    from crypto_pipeline.strategy_builder.assemble import assemble_strategy_config
+    # NOTE: build_and_save_strategy() only SAVES the combined config --
+    # it does not resolve/run signals (no OHLCV window exists yet at
+    # save time). Actually resolving an "ml_model" component's signal
+    # (via db_utils.get_model_signals) happens later, at backtest run
+    # time, in the combined-strategy backtest path -- see
+    # backtests_repo.run_backtest_job()'s builder-aware branch.
+
+    if not components:
+        raise ValueError("At least one playbook entry or ML model must be selected.")
+
+    resolved_components = []
+    for c in components:
+        if c["kind"] == "playbook":
+            playbook_row = get_playbook(conn, c["playbook_id"])
+            if playbook_row is None:
+                raise ValueError(f"Playbook entry {c['playbook_id']} not found.")
+            resolved_components.append({
+                "kind": "playbook",
+                "playbook_id": c["playbook_id"],
+                "strategy_name": playbook_row["strategy_name"],
+                "strategy_config": playbook_row["strategy_config"],
+                "persist_bars": c.get("persist_bars", 0) or 0,
+            })
+        elif c["kind"] == "ml_model":
+            resolved_components.append({
+                "kind": "ml_model",
+                "run_id": c["run_id"],
+                "persist_bars": c.get("persist_bars", 0) or 0,
+            })
+        else:
+            raise ValueError(f"Unknown component kind: {c['kind']!r}")
+
+    # Reject a duplicate name up front with a clear message, same pattern
+    # create_backtest_request() uses for its own validation -- rather
+    # than letting insert_strategy()'s UNIQUE constraint throw a raw
+    # psycopg2 IntegrityError.
+    existing = get_strategies(conn, exchange=exchange, coin=coin)
+    if any(s["strategy_name"] == strategy_name for s in existing):
+        raise ValueError(
+            f"Strategy name {strategy_name!r} already exists for {exchange}/{coin}. "
+            "Choose a different name."
+        )
+
+    strategy_config = assemble_strategy_config(
+        resolved_components, combine_rule, weights=weights, threshold=threshold,
+    )
+
+    strategy_id = insert_strategy(
+        conn, strategy_name, exchange, coin, strategy_config,
+        time_horizon=time_horizon,
+        take_profit_type=take_profit_type,
+        take_profit_value=take_profit_value,
+        stop_loss_type=stop_loss_type,
+        stop_loss_value=stop_loss_value,
+    )
+    return get_strategy(conn, strategy_id)

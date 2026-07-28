@@ -31,6 +31,34 @@ class StrategyEnabledUpdate(BaseModel):
     execution_enabled: bool
 
 
+class StrategyBuildComponent(BaseModel):
+    """One selected playbook entry or ML model in a Strategy Builder request."""
+    kind: str  # "playbook" | "ml_model"
+    playbook_id: Optional[int] = None   # required if kind == "playbook"
+    run_id: Optional[str] = None         # required if kind == "ml_model"
+    persist_bars: int = 0                # whole-strategy persist, see combine.py
+
+
+class StrategyBuildRequest(BaseModel):
+    """
+    Strategy Builder's "Save Strategy" step -- combine N playbook entries
+    (+ optional ML models) into one metadata.strategy row. See
+    api/repos/strategies_repo.build_and_save_strategy().
+    """
+    strategy_name: str
+    components: list[StrategyBuildComponent]
+    combine_rule: str  # "AND" | "OR" | "MAJORITY" | "WEIGHTED"
+    coin: str
+    exchange: str = "bybit"
+    time_horizon: str = "1h"
+    take_profit_type: Optional[str] = None
+    take_profit_value: Optional[float] = None
+    stop_loss_type: Optional[str] = None
+    stop_loss_value: Optional[float] = None
+    weights: Optional[list[float]] = None
+    threshold: Optional[float] = None
+
+
 class PnlSeriesPoint(BaseModel):
     """One point in a strategy row's dashboard sparkline -- v is % return vs initial_balance, not raw balance."""
     t: str

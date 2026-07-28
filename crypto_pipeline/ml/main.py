@@ -620,6 +620,28 @@ def _run_one_algorithm(
         signals_df = predictions_df.copy()
         signals_df["signal"] = signals
     _dump("06_signals.csv", signals_df)
+
+    # Additive Postgres write, regression/classification only (never
+    # timeseries -- this whole branch is the `else` of `if model_type ==
+    # "timeseries"` a few lines up). CSV dump above is unchanged/kept --
+    # this is purely for the Strategy Builder to read an ML model's
+    # signal series back by run_id (see STRATEGY_BUILDER_SPEC.md Section
+    # 5.2, db_utils.save_model_signals/get_model_signals).
+    if model_type != "timeseries":
+        try:
+            from crypto_pipeline.utils.db_utils import get_db_connection, save_model_signals
+            _signals_conn = get_db_connection()
+            try:
+                save_model_signals(_signals_conn, resolved_run_id, signals_df)
+            finally:
+                _signals_conn.close()
+        except Exception as exc:
+            # Never fail a training run over this write -- CSV artifacts
+            # (already dumped above) remain the source of truth on disk
+            # regardless. Log and move on, same "best-effort" posture
+            # request_log.py's DB logging already uses elsewhere.
+            logger.warning(f"[{algorithm}] Failed to save model_signals to ml.model_signals: {exc}")
+
     algo_signal_counts = signal_counts(signals)
     logger.info(f"[{algorithm}] Signal counts: {algo_signal_counts}")
 
