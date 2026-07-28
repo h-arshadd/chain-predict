@@ -6,7 +6,7 @@
 # generation, evaluation -- is controlled from here. There is only one
 # entry point (ml/main.py) and only one config file.
 
-model_type: classification # regression | classification | timeseries
+model_type: regression # regression | classification | timeseries
 
 # ---------------------------------------------------------------------
 # Data Prep stages (market data, features, sentiment, target)
@@ -15,7 +15,7 @@ model_type: classification # regression | classification | timeseries
 data:
   enabled: true
   calculate_ohlcv: true  # Set to false to skip OHLCV calculation (use features only)
-  symbol: eth
+  symbol: btc
   exchange: bybit
   timeframe: 1h
   start_date: "2024-01-01"

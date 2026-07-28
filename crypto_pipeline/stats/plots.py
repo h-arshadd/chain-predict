@@ -56,11 +56,28 @@ def _rolling_volatility_data(returns: pd.Series, equity: pd.Series) -> dict:
     return {"rolling_volatility": _series_to_records(rolling)}
 
 
+_MONTH_ABBR_TO_NUM = {
+    "JAN": "1", "FEB": "2", "MAR": "3", "APR": "4", "MAY": "5", "JUN": "6",
+    "JUL": "7", "AUG": "8", "SEP": "9", "OCT": "10", "NOV": "11", "DEC": "12",
+}
+
+
 def _monthly_heatmap_data(returns: pd.Series, equity: pd.Series) -> dict:
     monthly = qs.stats.monthly_returns(returns)
     if isinstance(monthly, pd.DataFrame):
         monthly.index = monthly.index.astype(str)
-        table = {str(year): row.dropna().to_dict() for year, row in monthly.iterrows()}
+        # qs.stats.monthly_returns() columns are 'JAN'..'DEC' plus a
+        # trailing 'EOY' summary column -- remap to the "1".."12" string
+        # keys the frontend (monthlyHeatmapToRows) looks up, and drop EOY
+        # since it isn't a month.
+        table = {
+            str(year): {
+                _MONTH_ABBR_TO_NUM[month]: val
+                for month, val in row.dropna().to_dict().items()
+                if month in _MONTH_ABBR_TO_NUM
+            }
+            for year, row in monthly.iterrows()
+        }
     else:
         table = _series_to_records(monthly)
     return {"monthly_returns": table}
