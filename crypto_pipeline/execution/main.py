@@ -778,7 +778,7 @@ if __name__ == "__main__":
         finally:
             metadata_conn.close()
 
-        enabled_rows = [s for s in strategy_rows if s.get("execution_enabled", True)]
+        enabled_rows = [s for s in strategy_rows if s.get("execution_enabled") is True]
 
         if len(enabled_rows) == 0:
             print(f"{exchange} {symbol}: no execution_enabled strategy found in metadata.strategy -- skipping.")

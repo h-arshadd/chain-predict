@@ -543,5 +543,16 @@ def build_and_save_strategy(
         take_profit_value=take_profit_value,
         stop_loss_type=stop_loss_type,
         stop_loss_value=stop_loss_value,
+        # execution_enabled must default False: execution allows only ONE
+        # live strategy per (exchange, coin) pair, and the real opt-in
+        # mechanism is assigning the strategy to a wallet on the Wallets
+        # page (wallets_repo.assign_strategy() -> set_execution_enabled),
+        # not the act of saving it here. simulator_enabled stays True --
+        # simulator has no per-pair exclusivity (simulator/main.py runs
+        # every simulator_enabled row for a pair side by side), so a
+        # newly saved strategy should paper-trade immediately alongside
+        # everything else already running there, same as the user expects.
+        simulator_enabled=True,
+        execution_enabled=False,
     )
     return get_strategy(conn, strategy_id)
