@@ -52,8 +52,7 @@ export default function Sidebar() {
             width: 30,
             height: 30,
             borderRadius: 9,
-            background: 'radial-gradient(circle at 30% 30%, #3DDC97, #1F9E6B)',
-            boxShadow: '0 0 16px rgba(61, 220, 151, 0.5)',
+            background: '#3DDC97',
           }}
         />
         <span style={{ fontSize: 19, fontWeight: 700, color: '#F5F6F7', letterSpacing: -0.3 }}>
