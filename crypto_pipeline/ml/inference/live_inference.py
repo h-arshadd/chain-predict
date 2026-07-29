@@ -4,16 +4,25 @@
 live_inference.py
 ------------------
 Load a trained run's model, run it on real data (the model's own
-symbol/exchange/timeframe, from its training start_date through now --
-NOT the held-out test split inference_check.py replays), convert
-predictions to signals, and upsert into ml.model_signals -- one row per
-(run_id, datetime), same table every run_id writes to.
+symbol/exchange/timeframe) and upsert the resulting signals into
+ml.model_signals -- one row per (run_id, datetime), same table every
+run_id writes to.
 
 Meant to be run on a schedule (Task Scheduler / cron, see
-run_live_inference.bat). Each run just re-predicts the whole range and
-upserts -- save_model_signals() already upserts on (run_id, datetime),
-so re-writing bars that haven't changed costs nothing and needs no
-separate "what's already saved" bookkeeping.
+run_live_inference.bat), often every few minutes. Each run resumes from
+where this run_id last left off (see get_last_signal_timestamp), so a
+scheduled run only fetches/predicts the small new gap since last time --
+EXCEPT the very first run for a given run_id (or after retraining wipes
+its signals), which backfills the model's *entire* trained history in
+one go. The backfill matters because Strategy Builder lets the user
+pick any historical date range to backtest against, and
+resolve_component_signal() silently fills any bar missing a signal row
+with 0/Hold -- so every bar back to the model's training start_date
+needs a real signal on file, not just recent ones.
+
+save_model_signals() upserts on (run_id, datetime), so this is safe to
+run on a tight schedule with no risk of duplicating or corrupting rows
+either way.
 
 Only real difference from inference_check.py's dataset build: this does
 NOT call load_dataset()/generate_target(), because target generation
@@ -45,7 +54,9 @@ from crypto_pipeline.ml.signals.classification_signals import generate_classific
 from crypto_pipeline.ml.signals.regression_signals import generate_regression_signals
 from crypto_pipeline.ml.signals.signal_utils import signals_to_int
 from crypto_pipeline.ml.utils.logger import setup_logging
-from crypto_pipeline.utils.db_utils import get_db_connection, save_model_signals, list_ml_run_configs
+from crypto_pipeline.utils.db_utils import (
+    get_db_connection, save_model_signals, list_ml_run_configs, get_last_signal_timestamp,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +66,40 @@ logger = logging.getLogger(__name__)
 # never wired into this table.
 _SUPPORTED_MODEL_KINDS = {"regressor", "classifier", "deep_learning_regressor", "deep_learning_classifier"}
 
+# Every talib_indicators.py wrapper takes its window length under one of
+# these parameter names (see crypto_pipeline/indicators/talib_indicators.py --
+# "period" for most, "timeperiod" for a few, "fastperiod"/"slowperiod" for
+# MACD/APO-style ones). Patterns (DOJI, ENGULFING, etc.) take no period at
+# all and are simply absent from any config_item's "parameters".
+_PERIOD_PARAM_NAMES = ("period", "timeperiod", "slowperiod", "fastperiod", "signalperiod")
+
+
+def _max_indicator_period(data_prep_config: dict, default: int = 50) -> int:
+    """
+    Largest indicator lookback period configured for this run, so the
+    live-inference lookback window (see run_live_inference) is always
+    wide enough for that indicator's warm-up regardless of what this
+    specific run_id was configured with. Falls back to `default` if no
+    period-like parameter is found (e.g. features disabled, or only
+    pattern indicators configured).
+    """
+    indicators_config = data_prep_config.get("features", {}).get("indicators", {})
+    periods = [
+        int(config_item["parameters"][name])
+        for configs in indicators_config.values()
+        for config_item in configs
+        for name in _PERIOD_PARAM_NAMES
+        if name in config_item.get("parameters", {})
+    ]
+    return max(periods) if periods else default
+
 
 def run_live_inference(run_id: str, conn=None) -> dict:
     """
-    Load run_id's model, run it on data from its own training
-    start_date through now, and upsert the resulting signal series into
-    ml.model_signals.
+    Load run_id's model, run it on data from either just after its last
+    saved signal (normal scheduled run) or its full training start_date
+    (first run / after retraining), through now, and upsert the
+    resulting signal series into ml.model_signals.
 
     Returns:
         dict: run_id, n_rows written, skipped (True if this run_id's
@@ -88,18 +127,79 @@ def run_live_inference(run_id: str, conn=None) -> dict:
         # trained with, end_date pushed to now instead of the original
         # training end_date. No target generation (see module docstring).
         #
-        # data.enabled forced True (not read from data_prep_config):
-        # metadata.build_data_prep_metadata() rebuilds the "data" block
-        # field-by-field (symbol/exchange/timeframe/start_date/end_date/
-        # calculate_ohlcv) and never included "enabled" in that list, so
-        # it's simply never in ml.run_configs to read back -- collect_
-        # market_data() would see it missing and refuse to run. A run_id
-        # existing in ml.run_configs at all already proves data
-        # collection was enabled when it trained, so this sets it rather
-        # than trying to read a value that was never persisted.
+        # start_date resumes from where this run_id left off in
+        # ml.model_signals, instead of blindly re-scoring the model's
+        # entire history on every scheduled run:
+        #   - If this run_id already has signal rows, resume from just
+        #     after the last one, minus a warm-up buffer (indicators
+        #     like EMA-50 need bars *before* their first signal date to
+        #     compute correctly -- dropna() below trims the buffer rows
+        #     back off before they're written).
+        #   - If this run_id has NO signal rows yet (first run, or after
+        #     a fresh training run), fall back to the model's own
+        #     training start_date and backfill the *entire* range in one
+        #     go. This matters because Strategy Builder lets the user
+        #     pick any historical date range to backtest against
+        #     (assemble.py's resolve_component_signal reindexes onto
+        #     whatever range ohlcv covers and fills missing signal rows
+        #     with 0/Hold) -- so every bar back to training start_date
+        #     needs a real signal in the table, not just recent ones.
+        # Either way, save_model_signals() upserts on (run_id, datetime),
+        # so this is safe to re-run on a schedule with no risk of
+        # duplicating or corrupting existing rows.
+        lookback_bars = _max_indicator_period(data_prep_config)
+        timeframe_str = data_prep_config.get("data", {}).get("timeframe", "1h")
+        try:
+            bar_duration = pd.Timedelta(timeframe_str)
+            if pd.isna(bar_duration):
+                raise ValueError(f"unparseable timeframe: {timeframe_str!r}")
+        except (ValueError, TypeError):
+            bar_duration = pd.Timedelta(hours=1)
+        warmup_buffer = max(bar_duration * lookback_bars * 3, pd.Timedelta(days=1))
+
+        last_signal_ts = get_last_signal_timestamp(conn, run_id)
+        training_start = data_prep_config.get("data", {}).get("start_date")
+
+        if last_signal_ts is not None:
+            # Resume: rewind by the warm-up buffer so indicators have
+            # enough prior bars, but never go earlier than training_start
+            # (no point re-fetching data from before the model's own
+            # training window even existed).
+            #
+            # Normalize both sides to naive UTC before comparing/
+            # subtracting -- ml.model_signals.datetime is a plain
+            # TIMESTAMP column (naive) so last_signal_ts is naive in
+            # practice, but don't assume that blindly; this is the same
+            # class of bug fixed in data_downloader.get_data().
+            last_signal_ts = pd.Timestamp(last_signal_ts)
+            if last_signal_ts.tzinfo is not None:
+                last_signal_ts = last_signal_ts.tz_convert("UTC").tz_localize(None)
+
+            resume_start = last_signal_ts - warmup_buffer
+            if training_start is not None:
+                training_start_ts = pd.Timestamp(training_start)
+                if training_start_ts.tzinfo is not None:
+                    training_start_ts = training_start_ts.tz_convert("UTC").tz_localize(None)
+                resume_start = max(resume_start, training_start_ts)
+            fetch_start = resume_start.to_pydatetime()
+            logger.info(f"[{run_id}] Resuming from last signal at {last_signal_ts}, fetching from {fetch_start}.")
+        else:
+            # First run for this run_id -- backfill the full range so
+            # Strategy Builder has signals for the model's entire
+            # trained history, not just recent bars.
+            fetch_start = training_start if training_start is not None else (
+                datetime.now(timezone.utc) - warmup_buffer
+            )
+            logger.info(f"[{run_id}] No existing signals -- backfilling from training start_date {fetch_start}.")
+
         run_config = {
             **data_prep_config,
-            "data": {**data_prep_config.get("data", {}), "enabled": True, "end_date": datetime.now(timezone.utc)},
+            "data": {
+                **data_prep_config.get("data", {}),
+                "enabled": True,
+                "start_date": fetch_start,
+                "end_date": datetime.now(timezone.utc),
+            },
         }
         df = collect_market_data(run_config)
         if run_config.get("features", {}).get("enabled", False):

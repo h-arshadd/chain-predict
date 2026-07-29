@@ -2784,6 +2784,32 @@ def save_model_signals(conn, run_id: str, signals_df: pd.DataFrame,
     logger.info(f"Saved {len(rows)} signal rows: {_ML_SCHEMA}.model_signals (run_id='{run_id}')")
 
 
+def get_last_signal_timestamp(conn, run_id: str):
+    """
+    Return the most recent datetime already stored in ml.model_signals
+    for this run_id, or None if this run_id has no signal rows yet
+    (first-ever inference run for it). Same pattern/purpose as
+    get_last_timestamp() for candle data: lets live_inference.py resume
+    scoring from where it left off instead of re-predicting a run's
+    entire history on every scheduled run.
+    """
+    _ensure_ml_model_signals_table(conn)
+    cursor = conn.cursor()
+
+    cursor.execute(sql.SQL("SELECT MAX(datetime) FROM {schema}.model_signals WHERE run_id = %s").format(
+        schema=sql.Identifier(_ML_SCHEMA)
+    ), [run_id])
+    result = cursor.fetchone()[0]
+    cursor.close()
+
+    if result:
+        logger.info(f"Last stored signal timestamp for run_id={run_id!r}: {result}")
+    else:
+        logger.info(f"No existing signals found for run_id={run_id!r}. Will score from the run's start_date.")
+
+    return result
+
+
 def get_model_signals(conn, run_id: str, start_date=None, end_date=None) -> pd.Series:
     """
     Read one run's per-bar signal series back as a datetime-indexed

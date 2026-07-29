@@ -31,9 +31,9 @@ DEFAULT_EXCHANGE = "bybit"
 def resolve_component_signal(component: dict, ohlcv: pd.DataFrame, get_model_signals=None) -> pd.Series:
     """
     Resolve ONE selected builder component (a playbook entry OR an ML
-    model reference) down to a single 1/0/-1 pd.Series aligned to ohlcv's
-    index, with that component's own whole-strategy persist_bars already
-    applied.
+    model reference) down to a single 1/0/-1(/NaN) pd.Series aligned to
+    ohlcv's index, with that component's own whole-strategy persist_bars
+    already applied.
 
     component shape (one of):
         {"kind": "playbook", "strategy_config": {...}, "persist_bars": 5}
@@ -44,23 +44,51 @@ def resolve_component_signal(component: dict, ohlcv: pd.DataFrame, get_model_sig
     keeps strategy_builder/ decoupled from the DB layer per the "combine
     resolved signals" scope decided in STRATEGY_BUILDER_SPEC.md Section
     5.4. Callers (the API repo) pass in the real function.
+
+    NaN vs 0, and why ml_model does NOT get fillna(0) here: a playbook
+    entry's signal is computed live against this exact ohlcv, so a NaN
+    there only ever means genuine indicator warm-up with no real signal
+    -- 0/neutral is the correct, honest value. An ml_model's signal is
+    read back from ml.model_signals, a separately-populated table that
+    can legitimately have no row yet for a given bar (inference hasn't
+    caught up, a gap, etc.) -- reindexing that onto ohlcv and forcing
+    missing bars to 0 would silently claim "the model predicted Hold"
+    when the truth is "we don't know what the model would have said".
+    That corrupts every combine rule differently (AND treats a missing
+    model as active disagreement, WEIGHTED dilutes the score, etc.), so
+    ml_model bars with no real row stay NaN and combine_signals() is
+    responsible for treating NaN as this component abstaining, not
+    voting neutral.
     """
     persist_bars = component.get("persist_bars", 0) or 0
 
     if component["kind"] == "playbook":
         _, _, signal = generate_signals(ohlcv, config_dict=component["strategy_config"])
         signal = signal.reindex(ohlcv.index).fillna(0).astype(int)
+        signal = apply_whole_strategy_persist(signal, persist_bars)
 
     elif component["kind"] == "ml_model":
         if get_model_signals is None:
             raise ValueError("get_model_signals callable required to resolve an ml_model component.")
         signal = get_model_signals(component["run_id"])
-        signal = signal.reindex(ohlcv.index).fillna(0).astype(int)
+        signal = signal.reindex(ohlcv.index)  # NaN where this run_id has no row for that bar -- not filled.
+        # apply_whole_strategy_persist requires an int series (it does
+        # signal.fillna(0).astype(int) internally), which would re-
+        # introduce the exact fake-0 problem this function exists to
+        # avoid. Persist bars only where we have a real signal, and
+        # restore the true NaN gaps afterward so they still propagate
+        # to combine_signals() as "no data" rather than "neutral".
+        missing_mask = signal.isna()
+        if persist_bars > 0:
+            persisted = apply_whole_strategy_persist(signal.fillna(0).astype(int), persist_bars)
+            signal = persisted.astype(float)
+            signal[missing_mask] = float("nan")
+        return signal
 
     else:
         raise ValueError(f"Unknown component kind: {component['kind']!r}")
 
-    return apply_whole_strategy_persist(signal, persist_bars)
+    return signal
 
 
 def build_combined_signal(components: list, ohlcv: pd.DataFrame, combine_rule: str,

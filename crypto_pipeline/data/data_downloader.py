@@ -163,8 +163,18 @@ def get_data(exchange, symbol, start_date, end_date, timeframe="1h", config=None
     config = config or DEFAULT_FETCH_CONFIG
     resample_timeframe = normalize_timeframe(timeframe)
 
+    if isinstance(start_date, (datetime, pd.Timestamp)) and start_date.tzinfo is not None:
+        # Same naive-UTC normalization as end_date below -- start_date is
+        # compared against/used to query naive timestamps too.
+        start_date = start_date.astimezone(timezone.utc).replace(tzinfo=None)
+
     if end_date == "now":
         end_date = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
+    elif isinstance(end_date, (datetime, pd.Timestamp)) and end_date.tzinfo is not None:
+        # Callers (e.g. live_inference) may pass a tz-aware datetime. The DB
+        # stores naive UTC timestamps (see parse_candles), so normalize here
+        # to avoid "can't compare offset-naive and offset-aware datetimes".
+        end_date = end_date.astimezone(timezone.utc).replace(tzinfo=None)
 
     last_complete_minute = end_date - TIMEFRAME_DELTA
 
