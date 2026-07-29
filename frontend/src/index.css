@@ -122,6 +122,14 @@ html, body, #root {
     background: #12171D;
 }
 
+button {
+    outline: none;
+}
+button:focus,
+button:focus-visible {
+    outline: none;
+}
+
 /* Signature element: ambient glow blobs behind the shell, matching the reference image */
 .glow-field {
     position: fixed;
@@ -134,34 +142,35 @@ html, body, #root {
 .glow-blob {
     position: absolute;
     border-radius: 50%;
-    filter: blur(90px);
-    opacity: 0.6;
+    filter: blur(140px);
+    opacity: 0.55;
 }
 
 .glow-blob--mint {
-    width: 680px;
-    height: 680px;
-    top: -160px;
-    left: -200px;
+    width: 820px;
+    height: 820px;
+    top: -220px;
+    left: -260px;
     background: radial-gradient(circle, #3DDC97 0%, rgba(61, 220, 151, 0) 70%);
+    opacity: 0.32;
 }
 
 .glow-blob--amber {
-    width: 640px;
-    height: 640px;
-    bottom: -180px;
-    left: 8%;
+    width: 780px;
+    height: 780px;
+    bottom: -240px;
+    left: 6%;
     background: radial-gradient(circle, #FF8A5C 0%, rgba(255, 138, 92, 0) 70%);
-    opacity: 0.45;
+    opacity: 0.4;
 }
 
 .glow-blob--blue {
-    width: 640px;
-    height: 640px;
-    top: 15%;
-    right: -220px;
+    width: 780px;
+    height: 780px;
+    top: 10%;
+    right: -280px;
     background: radial-gradient(circle, #5B9CF6 0%, rgba(91, 156, 246, 0) 70%);
-    opacity: 0.38;
+    opacity: 0.34;
 }
 
 .app-shell {

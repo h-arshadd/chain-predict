@@ -29,9 +29,10 @@ export default function Sidebar() {
       style={{
         width: 264,
         flexShrink: 0,
-        background: 'rgba(40, 48, 56, 0.42)',
-        backdropFilter: 'blur(28px) saturate(160%)',
-        borderRight: '1px solid rgba(255,255,255,0.09)',
+        background: 'rgba(110, 118, 126, 0.14)',
+        backdropFilter: 'blur(30px) saturate(150%)',
+        borderRight: '1px solid rgba(255,255,255,0.16)',
+        boxShadow: 'inset -1px 0 0 rgba(255,255,255,0.06)',
         display: 'flex',
         flexDirection: 'column',
         padding: '24px 16px',
@@ -58,14 +59,15 @@ export default function Sidebar() {
                 width: '100%',
                 padding: '12px 16px',
                 borderRadius: 14,
-                border: 'none',
+                border: active ? '1px solid rgba(61,220,151,0.35)' : '1px solid transparent',
+                outline: 'none',
                 cursor: 'pointer',
                 fontSize: 14.5,
                 fontWeight: 600,
                 textAlign: 'left',
-                transition: 'background 0.15s, color 0.15s',
-                background: active ? '#3DDC97' : 'transparent',
-                color: active ? '#0B0E11' : '#9096A0',
+                transition: 'background 0.15s, color 0.15s, border-color 0.15s',
+                background: active ? 'rgba(61,220,151,0.16)' : 'transparent',
+                color: active ? '#3DDC97' : '#9096A0',
               }}
               onMouseEnter={(e) => {
                 if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.05)';

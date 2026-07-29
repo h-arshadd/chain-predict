@@ -30,7 +30,7 @@ export default function Logo({ style }) {
           width: 30,
           height: 30,
           borderRadius: 9,
-          background: '#3DDC97',
+          background: '#2FA876',
           flexShrink: 0,
         }}
       />
