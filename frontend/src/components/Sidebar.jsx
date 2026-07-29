@@ -29,9 +29,9 @@ export default function Sidebar() {
       style={{
         width: 264,
         flexShrink: 0,
-        background: 'rgba(18, 22, 27, 0.7)',
-        backdropFilter: 'blur(20px)',
-        borderRight: '1px solid rgba(255,255,255,0.06)',
+        background: 'rgba(40, 48, 56, 0.42)',
+        backdropFilter: 'blur(28px) saturate(160%)',
+        borderRight: '1px solid rgba(255,255,255,0.09)',
         display: 'flex',
         flexDirection: 'column',
         padding: '24px 16px',

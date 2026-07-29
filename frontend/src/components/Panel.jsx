@@ -6,16 +6,16 @@ import { InfoCircleOutlined } from '@ant-design/icons';
 // gradient glass card (list/table pages: Backtests, Dashboard, Execution,
 // Models, Wallets). Pass variant="gradient" to opt into the latter.
 export const panelFlat = {
-  background: 'rgba(21, 26, 31, 0.75)',
-  backdropFilter: 'blur(16px)',
-  border: '1px solid rgba(255,255,255,0.07)',
+  background: 'rgba(45, 52, 58, 0.4)',
+  backdropFilter: 'blur(24px) saturate(160%)',
+  border: '1px solid rgba(255,255,255,0.1)',
   borderRadius: 22,
 };
 
 export const panelGradient = {
-  background: 'linear-gradient(155deg, rgba(30, 36, 34, 0.8) 0%, rgba(19, 23, 27, 0.8) 100%)',
-  backdropFilter: 'blur(16px)',
-  border: '1px solid rgba(255,255,255,0.08)',
+  background: 'linear-gradient(155deg, rgba(55, 65, 60, 0.45) 0%, rgba(42, 48, 52, 0.4) 100%)',
+  backdropFilter: 'blur(24px) saturate(160%)',
+  border: '1px solid rgba(255,255,255,0.11)',
   borderRadius: 20,
 };
 

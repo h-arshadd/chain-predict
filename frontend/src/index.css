@@ -119,7 +119,7 @@
 }
 
 html, body, #root {
-    background: #0B0E11;
+    background: #12171D;
 }
 
 /* Signature element: ambient glow blobs behind the shell, matching the reference image */
@@ -135,33 +135,33 @@ html, body, #root {
     position: absolute;
     border-radius: 50%;
     filter: blur(90px);
-    opacity: 0.45;
+    opacity: 0.6;
 }
 
 .glow-blob--mint {
-    width: 560px;
-    height: 560px;
-    top: -140px;
-    left: -180px;
+    width: 680px;
+    height: 680px;
+    top: -160px;
+    left: -200px;
     background: radial-gradient(circle, #3DDC97 0%, rgba(61, 220, 151, 0) 70%);
 }
 
 .glow-blob--amber {
-    width: 520px;
-    height: 520px;
-    bottom: -160px;
+    width: 640px;
+    height: 640px;
+    bottom: -180px;
     left: 8%;
     background: radial-gradient(circle, #FF8A5C 0%, rgba(255, 138, 92, 0) 70%);
-    opacity: 0.32;
+    opacity: 0.45;
 }
 
 .glow-blob--blue {
-    width: 520px;
-    height: 520px;
+    width: 640px;
+    height: 640px;
     top: 15%;
-    right: -200px;
+    right: -220px;
     background: radial-gradient(circle, #5B9CF6 0%, rgba(91, 156, 246, 0) 70%);
-    opacity: 0.26;
+    opacity: 0.38;
 }
 
 .app-shell {

@@ -1,8 +1,8 @@
 // Dark theme tokens — matches the reference dashboard (near-black bg, mint accent, glass panels)
 export const colors = {
-  bg: '#0B0E11',
-  panel: '#12161B',
-  panelAlt: '#161B21',
+  bg: '#12171D',
+  panel: '#1C232B',
+  panelAlt: '#212A32',
   border: 'rgba(255, 255, 255, 0.07)',
   borderStrong: 'rgba(255, 255, 255, 0.12)',
   textPrimary: '#F5F6F7',

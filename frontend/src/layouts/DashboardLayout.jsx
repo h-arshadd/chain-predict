@@ -4,7 +4,7 @@ import TopBar from '../components/Topbar';
 
 export default function DashboardLayout() {
   return (
-    <div style={{ minHeight: '100vh', background: '#0B0E11', position: 'relative' }}>
+    <div style={{ minHeight: '100vh', background: '#12171D', position: 'relative' }}>
       {/* Signature ambient glow blobs, matching the reference image's lighting */}
       <div className="glow-field">
         <div className="glow-blob glow-blob--mint" />
