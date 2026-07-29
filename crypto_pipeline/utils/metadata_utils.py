@@ -862,6 +862,28 @@ def fail_backtest(conn, backtest_id, error: str):
     cursor.close()
 
 
+def link_backtest_to_strategy(conn, backtest_id, strategy_id):
+    """
+    Point an existing backtest row at a metadata.strategy row -- used
+    when an ad-hoc backtest (Strategy Builder's "Backtest" button,
+    strategy_id NULL, full definition stashed in
+    backtest_config["ad_hoc_strategy"] -- see
+    backtests_repo.create_backtest_request) is saved as a real strategy
+    *after* the run already completed (backtests_repo.save_strategy_from_backtest).
+
+    Plain UPDATE, no lifecycle/status side effects -- this only rewrites
+    which strategy the run is attributed to, same row otherwise.
+    """
+    cursor = conn.cursor()
+    cursor.execute(sql.SQL("""
+        UPDATE {schema}.backtest SET strategy_id = %s
+        WHERE backtest_id = %s
+    """).format(schema=sql.Identifier(SCHEMA)), (strategy_id, backtest_id))
+    conn.commit()
+    cursor.close()
+    logger.info(f"Linked {SCHEMA}.backtest backtest_id={backtest_id} -> strategy_id={strategy_id}")
+
+
 def get_backtest(conn, backtest_id):
     """
     Fetch one backtest row by id. Returns None if it doesn't exist.

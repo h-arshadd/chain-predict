@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Tag, Table, Spin, Alert } from 'antd';
-import { ArrowLeftOutlined } from '@ant-design/icons';
+import { Tag, Table, Spin, Alert, message } from 'antd';
+import { ArrowLeftOutlined, SaveOutlined, CheckCircleFilled } from '@ant-design/icons';
 import { api } from '../lib/api';
 import { fmtUsd } from '../lib/format';
 import { recordsToSeries, monthlyHeatmapToRows, heatColor } from '../lib/quantstats';
@@ -40,6 +40,7 @@ export default function BacktestDetails() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
   const pollRef = useRef(null);
 
   const load = useCallback(() => {
@@ -51,6 +52,25 @@ export default function BacktestDetails() {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [id]);
+
+  // "Save Strategy" for a run that was backtested ad-hoc from the
+  // Strategy Builder (never saved first -- data.strategy_id is null,
+  // see api/routers/backtests.py's save-strategy endpoint). Reuses this
+  // exact run's components/combine_rule/TP/SL, so the saved strategy is
+  // precisely what produced the results on screen. Once saved, re-fetch
+  // so data.strategy_id flips and the button swaps to the "Saved" state.
+  const saveAsStrategy = async () => {
+    setSaving(true);
+    try {
+      const res = await api.post(`/api/backtests/${id}/save-strategy`, {});
+      message.success(`Strategy "${res.data.strategy_name}" saved.`);
+      load();
+    } catch (err) {
+      message.error(err.message || 'Failed to save strategy');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // Backtests now run as a background job (see routers/backtests.py) --
   // a freshly submitted request comes back 'pending', then flips to
@@ -141,6 +161,23 @@ export default function BacktestDetails() {
             </div>
           </div>
         </div>
+
+        {/* Only meaningful once the run has actually produced results
+            (status === 'completed'). If strategy_id is already set, this
+            run was saved before it was backtested (the normal Backtests
+            page flow) -- nothing left to do, so show a static confirmation
+            instead of a second save action. */}
+        {data.status === 'completed' && (
+          data.strategy_id ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: MINT, fontSize: 13.5, fontWeight: 600 }}>
+              <CheckCircleFilled /> Saved as strategy
+            </div>
+          ) : (
+            <button onClick={saveAsStrategy} disabled={saving} style={saveBtnStyle(saving)}>
+              <SaveOutlined /> {saving ? 'Saving…' : 'Save as Strategy'}
+            </button>
+          )
+        )}
       </div>
 
       {data.status === 'pending' && (
@@ -365,3 +402,10 @@ const backBtnStyle = {
   background: 'rgba(255,255,255,0.04)', color: '#F5F6F7', cursor: 'pointer',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
 };
+
+const saveBtnStyle = (saving) => ({
+  display: 'flex', alignItems: 'center', gap: 8,
+  padding: '10px 16px', borderRadius: 10, border: 'none',
+  background: MINT, color: '#0B0F12', fontWeight: 700, fontSize: 13.5,
+  cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1,
+});

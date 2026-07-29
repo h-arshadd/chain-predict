@@ -376,15 +376,38 @@ def insert_trades(conn, exchange, symbol, trade_ledger):
     _copy_dataframe(conn, trade_ledger, "backtest", table_name)
 
 
-def _backtest_run_table(backtest_id):
-    """Table name for one specific backtest run's permanent trade ledger."""
-    return f"run_{backtest_id}"
+def _backtest_run_table(backtest_id, strategy_name=None):
+    """
+    Table name for one specific backtest run's permanent trade ledger.
+
+    Was just f"run_{backtest_id}" (e.g. backtest.run_22) -- unreadable
+    without cross-referencing metadata.backtest.strategy_name separately.
+    Now backtest.{strategy_name}_{backtest_id} (e.g.
+    backtest.btc_1h_ema_rsi_and_22) -- strategy_name is sanitized the
+    same way _execution_trades_table() already does (non-alnum -> "_"),
+    and backtest_id is ALWAYS kept as a suffix (not optional) since it's
+    the only guaranteed-unique piece: re-running the same strategy
+    produces a new backtest_id each time, so the table name still can't
+    collide even though the readable prefix repeats.
+
+    strategy_name is optional so existing callers/rows that only have a
+    backtest_id (or an unnamed/blank strategy_name) still resolve to a
+    valid table name -- falls back to the old run_{backtest_id} shape.
+    """
+    if not strategy_name:
+        return f"run_{backtest_id}"
+    safe_strategy_name = re.sub(r"[^0-9a-zA-Z_]", "_", strategy_name).strip("_").lower()
+    if not safe_strategy_name:
+        return f"run_{backtest_id}"
+    return f"{safe_strategy_name}_{backtest_id}"
 
 
-def insert_backtest_trades(conn, backtest_id, trade_ledger):
+def insert_backtest_trades(conn, backtest_id, trade_ledger, strategy_name=None):
     """
     Store one specific backtest run's trade ledger permanently, keyed by
-    backtest_id -- backtest.run_{backtest_id}, e.g. backtest.run_42.
+    backtest_id -- backtest.{strategy_name}_{backtest_id}, e.g.
+    backtest.btc_1h_ema_rsi_and_42 (falls back to backtest.run_42 if
+    strategy_name is omitted/blank -- see _backtest_run_table()).
 
     Unlike insert_trades() (backtest.{exchange}_{symbol}, DROPPED and
     rebuilt on every run of that pair -- only the latest run survives),
@@ -405,7 +428,7 @@ def insert_backtest_trades(conn, backtest_id, trade_ledger):
     special-case "no ledger table" vs "ledger table with zero rows".
     """
     cursor = conn.cursor()
-    table_name = _backtest_run_table(backtest_id)
+    table_name = _backtest_run_table(backtest_id, strategy_name)
 
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS backtest"))
 
@@ -460,14 +483,22 @@ def insert_backtest_trades(conn, backtest_id, trade_ledger):
     _copy_dataframe(conn, trade_ledger, "backtest", table_name)
 
 
-def get_backtest_trades(conn, backtest_id):
+def get_backtest_trades(conn, backtest_id, strategy_name=None):
     """
     Read back one backtest run's permanent trade ledger
-    (backtest.run_{backtest_id}), oldest first. Returns an empty
-    DataFrame (not None) if the table doesn't exist yet or has no rows
-    -- callers can always call .empty on the result.
+    (backtest.{strategy_name}_{backtest_id}, or backtest.run_{backtest_id}
+    if strategy_name is omitted -- see _backtest_run_table()), oldest
+    first. Returns an empty DataFrame (not None) if the table doesn't
+    exist yet or has no rows -- callers can always call .empty on the
+    result.
+
+    strategy_name must match what insert_backtest_trades() was called
+    with for this same backtest_id, or the table won't be found -- pass
+    backtest_row["strategy_name"] (metadata.backtest's own column, set
+    at request time and never changes) the same way callers already had
+    backtest_id in hand.
     """
-    table_name = _backtest_run_table(backtest_id)
+    table_name = _backtest_run_table(backtest_id, strategy_name)
     cursor = conn.cursor()
     qualified_name = sql.SQL(".").join(
         [sql.Identifier("backtest"), sql.Identifier(table_name)]
@@ -488,19 +519,21 @@ def get_backtest_trades(conn, backtest_id):
     )
 
 
-def save_backtest_equity_curve(conn, backtest_id, equity_curve):
+def save_backtest_equity_curve(conn, backtest_id, equity_curve, strategy_name=None):
     """
     Persist one backtest run's full equity curve (run_backtest()'s own
     "equity_curve" Series, datetime-indexed, one point per 1-minute bar)
-    to backtest.run_{backtest_id}_equity -- a separate table from the
-    trade ledger since the equity curve is a much denser, purely
-    numeric series (one row per bar, not per trade) that compute_stats()
-    needs as input but the trade list/UI table doesn't.
+    to backtest.{strategy_name}_{backtest_id}_equity (or
+    backtest.run_{backtest_id}_equity if strategy_name is omitted -- see
+    _backtest_run_table()) -- a separate table from the trade ledger
+    since the equity curve is a much denser, purely numeric series (one
+    row per bar, not per trade) that compute_stats() needs as input but
+    the trade list/UI table doesn't.
 
     equity_curve : pandas Series, index = datetime, values = balance.
     """
     cursor = conn.cursor()
-    table_name = f"{_backtest_run_table(backtest_id)}_equity"
+    table_name = f"{_backtest_run_table(backtest_id, strategy_name)}_equity"
 
     cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS backtest"))
     cursor.execute(sql.SQL("DROP TABLE IF EXISTS {schema}.{table}").format(
@@ -519,14 +552,18 @@ def save_backtest_equity_curve(conn, backtest_id, equity_curve):
     _copy_dataframe(conn, df, "backtest", table_name)
 
 
-def get_backtest_equity_curve(conn, backtest_id):
+def get_backtest_equity_curve(conn, backtest_id, strategy_name=None):
     """
     Read back one backtest run's full equity curve as a datetime-indexed
     pandas Series (same shape run_backtest() itself returns), or None if
     it was never saved (e.g. a failed run that never reached the save
     step).
+
+    strategy_name must match what save_backtest_equity_curve() was
+    called with for this same backtest_id -- see get_backtest_trades()'s
+    docstring for the same note.
     """
-    table_name = f"{_backtest_run_table(backtest_id)}_equity"
+    table_name = f"{_backtest_run_table(backtest_id, strategy_name)}_equity"
     cursor = conn.cursor()
     qualified_name = sql.SQL(".").join(
         [sql.Identifier("backtest"), sql.Identifier(table_name)]

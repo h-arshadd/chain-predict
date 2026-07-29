@@ -21,8 +21,9 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 
 from api.core.db import get_conn
 from api.core.responses import item, list_response
-from api.schemas.backtests import BacktestRequestIn, BacktestSummary, BacktestDetail
-from api.repos import backtests_repo
+from api.schemas.backtests import BacktestRequestIn, BacktestSummary, BacktestDetail, SaveStrategyFromBacktestIn
+from api.schemas.strategies import StrategyDetail
+from api.repos import backtests_repo, strategies_repo
 
 router = APIRouter(prefix="/api/backtests", tags=["backtests"])
 
@@ -67,3 +68,30 @@ def get_backtest(backtest_id: int, conn=Depends(get_conn)):
     if detail is None:
         raise HTTPException(status_code=404, detail="Backtest not found")
     return item(BacktestDetail(**detail).model_dump())
+
+
+@router.post("/{backtest_id}/save-strategy")
+def save_strategy_from_backtest(backtest_id: int, body: SaveStrategyFromBacktestIn, conn=Depends(get_conn)):
+    """
+    Backtest / Backtest Details page's "Save Strategy" button -- for a
+    run that was backtested ad-hoc from the Strategy Builder (never
+    saved first). Saves the exact strategy this run used (same
+    components/combine_rule/TP/SL, read back out of
+    backtest_config["ad_hoc_strategy"]) into metadata.strategy -- same
+    as POST /api/strategies/build would -- and links this backtest row
+    to the new strategy_id so it shows up under that strategy from here
+    on, instead of staying an orphaned ad-hoc run.
+
+    If this backtest already has a strategy_id (it was saved BEFORE
+    being backtested), just returns that existing strategy -- calling
+    this twice, or on a run that never needed it, is harmless.
+    """
+    try:
+        saved = backtests_repo.save_strategy_from_backtest(conn, backtest_id, strategy_name=body.strategy_name)
+    except ValueError as exc:
+        if "not found" in str(exc):
+            raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    detail = strategies_repo.get_strategy_detail(conn, saved["strategy_id"])
+    return item(StrategyDetail(**detail).model_dump())

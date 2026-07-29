@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Select, Spin, InputNumber, Checkbox, Radio, Input, message, Empty, Tag } from 'antd';
+import { Select, Spin, InputNumber, Checkbox, Radio, Input, message, Empty, Tag, DatePicker } from 'antd';
 import { PlayCircleOutlined, SaveOutlined } from '@ant-design/icons';
+import dayjs from 'dayjs';
 import { api } from '../lib/api';
 import Panel, { panelGradient as panel } from '../components/Panel';
 
@@ -16,6 +17,10 @@ const COMBINE_RULES = ['AND', 'OR', 'MAJORITY', 'WEIGHTED'];
 // override anyway (POST /api/strategies/build defaults to "bybit").
 const EXCHANGE = 'bybit';
 const COINS = ['btc', 'eth', 'sol', 'doge', 'ada', 'ltc', 'mina', 'sui'];
+
+// Same guard Backtests.jsx uses -- no candle data in the DB before this,
+// for any coin/exchange (see crypto_pipeline/data/*/config_*.yml).
+const EARLIEST_DATA_DATE = dayjs('2024-01-01');
 
 // Just the common shortcuts shown as quick-pick suggestions -- the field
 // itself accepts ANY timeframe (see TIMEFRAME_RE), since the backend
@@ -77,6 +82,11 @@ export default function StrategyBuilder() {
   const [strategyName, setStrategyName] = useState('');
   const [takeProfitValue, setTakeProfitValue] = useState(2);
   const [stopLossValue, setStopLossValue] = useState(1);
+  // Backtest-only -- not part of buildStrategyPayload(), since a saved
+  // strategy config has no date range of its own (see StrategyBuildRequest);
+  // only the "Run Backtest" action needs one, same as Backtests.jsx's own
+  // New Backtest modal.
+  const [dateRange, setDateRange] = useState([dayjs().subtract(3, 'month'), dayjs()]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -194,11 +204,25 @@ export default function StrategyBuilder() {
   // Posts the full definition inline (ad_hoc_strategy) instead of a
   // strategy_id, so no metadata.strategy row is created. Only
   // metadata.backtest gets a row, same as any other backtest request.
+  //
+  // start_date/end_date are required here (unlike saveStrategy) --
+  // without them the backend silently fell back to backtest/config.yaml's
+  // hardcoded default window (2026-04-01 -> 2026-06-01) regardless of
+  // what was actually selected, so every ad-hoc run tested the same
+  // fixed 2-month slice no matter the coin or intent.
   const runBacktest = async () => {
     if (!validateBeforeSubmit()) return;
+    if (!dateRange || !dateRange[0] || !dateRange[1]) {
+      message.warning('Select a date range to backtest.');
+      return;
+    }
     setSaving(true);
     try {
-      const res = await api.post('/api/backtests', { ad_hoc_strategy: buildStrategyPayload() });
+      const res = await api.post('/api/backtests', {
+        ad_hoc_strategy: buildStrategyPayload(),
+        start_date: dateRange[0].format('YYYY-MM-DD'),
+        end_date: dateRange[1].format('YYYY-MM-DD'),
+      });
       message.success('Backtest submitted — running in the background.');
       navigate(`/backtests/${res.data.backtest_id}`);
     } catch (err) {
@@ -363,6 +387,16 @@ export default function StrategyBuilder() {
               <Tag style={{ background: 'rgba(61,220,151,0.10)', color: MINT, border: 'none' }}>{EXCHANGE}</Tag>
               <Tag style={{ background: 'rgba(255,138,92,0.10)', color: AMBER, border: 'none' }}>{coin.toUpperCase()}</Tag>
               <Tag style={{ background: 'rgba(255,255,255,0.06)', color: '#9096A0', border: 'none' }}>{timeHorizon}</Tag>
+            </div>
+
+            <div>
+              <div style={{ fontSize: 12.5, color: '#9096A0', marginBottom: 8, fontWeight: 600 }}>BACKTEST DATE RANGE</div>
+              <DatePicker.RangePicker
+                style={{ width: '100%' }}
+                value={dateRange}
+                onChange={setDateRange}
+                disabledDate={(current) => !!current && (current < EARLIEST_DATA_DATE.startOf('day') || current > dayjs().endOf('day'))}
+              />
             </div>
 
             <button style={primaryBtnStyle} disabled={!canBuild || saving} onClick={runBacktest}>

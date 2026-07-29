@@ -79,6 +79,18 @@ class AdHocStrategyConfig(BaseModel):
     stop_loss_value: Optional[float] = None
 
 
+class SaveStrategyFromBacktestIn(BaseModel):
+    """
+    Body for POST /api/backtests/{backtest_id}/save-strategy -- the
+    Backtest Details page's own "Save Strategy" button, for a backtest
+    that was run ad-hoc (Strategy Builder's "Backtest" button, never
+    saved first). strategy_name is optional -- defaults to the ad-hoc
+    definition's own strategy_name if omitted, same default behavior
+    Strategy Builder's picker already shows before the user overrides it.
+    """
+    strategy_name: Optional[str] = None
+
+
 class BacktestRequestIn(BaseModel):
     # Exactly one of strategy_id / ad_hoc_strategy must be given --
     # strategy_id runs against an already-saved metadata.strategy row

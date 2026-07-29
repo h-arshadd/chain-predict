@@ -59,6 +59,7 @@ from crypto_pipeline.utils.metadata_utils import (
     fail_backtest,
     get_backtest,
     get_backtests,
+    link_backtest_to_strategy,
 )
 from crypto_pipeline.data.data_downloader import get_data
 from crypto_pipeline.signals.main import generate_signals
@@ -389,8 +390,8 @@ def run_backtest_job(backtest_id: int):
 
         result = run_backtest(ohlcv_1m, signals, config)
 
-        insert_backtest_trades(conn, backtest_id, result["trade_ledger"])
-        save_backtest_equity_curve(conn, backtest_id, result["equity_curve"])
+        insert_backtest_trades(conn, backtest_id, result["trade_ledger"], strategy_name=backtest_row["strategy_name"])
+        save_backtest_equity_curve(conn, backtest_id, result["equity_curve"], strategy_name=backtest_row["strategy_name"])
 
         complete_backtest(conn, backtest_id, {
             "final_balance": result["final_balance"],
@@ -403,6 +404,93 @@ def run_backtest_job(backtest_id: int):
         fail_backtest(conn, backtest_id, str(exc))
     finally:
         conn.close()
+
+
+def save_strategy_from_backtest(conn, backtest_id: int, strategy_name: str | None = None) -> dict:
+    """
+    "Save Strategy" from the Backtest / Backtest Details page -- the
+    ad-hoc counterpart to Strategy Builder's own POST /api/strategies/build.
+
+    Only meaningful for an AD-HOC run (backtest_row["strategy_id"] is
+    NULL, full definition stashed inline under
+    backtest_config["ad_hoc_strategy"] -- see create_backtest_request's
+    docstring for why that split exists per Strategy_Builder_Module.pdf:
+    "Backtest" and "Saving Strategies" are deliberately separate steps,
+    so clicking Backtest must not silently create a strategy row).
+    If this run already has a strategy_id, it was already saved before
+    it was backtested -- nothing to do, just return that existing row
+    rather than erroring on what isn't really a mistake.
+
+    Reuses strategies_repo.build_and_save_strategy() -- the exact same
+    function POST /api/strategies/build calls -- fed the same
+    components/combine_rule/coin/exchange/TP/SL this run actually used,
+    read back out of backtest_config["ad_hoc_strategy"] instead of typed
+    in again. Once saved, the run itself is retroactively pointed at the
+    new strategy_id (metadata_utils.link_backtest_to_strategy) so
+    get_backtest_detail() -- and the Strategies page's own backtest
+    history -- shows this result as belonging to the strategy from here
+    on, instead of staying orphaned as an ad-hoc run forever.
+
+    strategy_name: optional override. Defaults to the ad-hoc strategy's
+    own strategy_name (whatever the Strategy Builder form had the user
+    type/default before running the backtest) if not given.
+
+    Raises ValueError (turned into a 400 by the router) if the backtest
+    doesn't exist, hasn't completed yet, or (for the already-linked case)
+    the existing strategy_id no longer resolves -- and re-raises whatever
+    strategies_repo.build_and_save_strategy() itself raises (e.g. a
+    duplicate strategy_name) unchanged, same 400 behavior as the
+    Strategy Builder's own save endpoint.
+    """
+    from api.repos import strategies_repo
+
+    backtest_row = get_backtest(conn, backtest_id)
+    if backtest_row is None:
+        raise ValueError(f"backtest_id {backtest_id} not found")
+
+    if backtest_row["strategy_id"]:
+        # Already a saved strategy (this run was backtested AFTER being
+        # saved, not before) -- nothing to save, just hand back what's
+        # already there so callers can treat this endpoint idempotently.
+        strategy_row = get_strategy(conn, backtest_row["strategy_id"])
+        if strategy_row is None:
+            raise ValueError(
+                f"backtest_id {backtest_id} is linked to strategy_id "
+                f"{backtest_row['strategy_id']}, which no longer exists."
+            )
+        return strategy_row
+
+    if backtest_row["status"] != "completed":
+        raise ValueError(
+            f"backtest_id {backtest_id} has status {backtest_row['status']!r} -- "
+            "only a completed backtest can be saved as a strategy."
+        )
+
+    ad_hoc = (backtest_row["backtest_config"] or {}).get("ad_hoc_strategy")
+    if ad_hoc is None:
+        raise ValueError(
+            f"backtest_id {backtest_id} has no strategy_id and no ad_hoc_strategy "
+            "on record -- nothing to save."
+        )
+
+    saved = strategies_repo.build_and_save_strategy(
+        conn,
+        strategy_name=strategy_name or ad_hoc["strategy_name"],
+        components=ad_hoc["components"],
+        combine_rule=ad_hoc["combine_rule"],
+        coin=ad_hoc["coin"],
+        exchange=ad_hoc.get("exchange", "bybit"),
+        time_horizon=ad_hoc.get("time_horizon", "1h"),
+        take_profit_type=ad_hoc.get("take_profit_type"),
+        take_profit_value=ad_hoc.get("take_profit_value"),
+        stop_loss_type=ad_hoc.get("stop_loss_type"),
+        stop_loss_value=ad_hoc.get("stop_loss_value"),
+        weights=ad_hoc.get("weights"),
+        threshold=ad_hoc.get("threshold"),
+    )
+
+    link_backtest_to_strategy(conn, backtest_id, saved["strategy_id"])
+    return saved
 
 
 def list_backtests(conn) -> list[dict]:
@@ -484,11 +572,11 @@ def get_backtest_detail(conn, backtest_id: int) -> dict | None:
     detail["total_trades"] = result_summary.get("total_trades", 0)
     detail["win_loss"] = result_summary.get("win_loss")
 
-    trades_df = get_backtest_trades(conn, backtest_id)
+    trades_df = get_backtest_trades(conn, backtest_id, strategy_name=backtest_row["strategy_name"])
     if not trades_df.empty:
         detail["trades"] = trades_df.to_dict(orient="records")
 
-    equity = get_backtest_equity_curve(conn, backtest_id)
+    equity = get_backtest_equity_curve(conn, backtest_id, strategy_name=backtest_row["strategy_name"])
     if equity is not None:
         # Downsample for the chart -- long date ranges at 1-minute resolution
         # can produce a point per minute (e.g. a 2-year range is 1M+ rows),
