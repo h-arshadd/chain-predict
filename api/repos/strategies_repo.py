@@ -489,6 +489,7 @@ def build_and_save_strategy(
       - strategy_name already exists for this (exchange, coin)
     """
     from crypto_pipeline.strategy_builder.assemble import assemble_strategy_config
+    from crypto_pipeline.data.data_downloader import normalize_timeframe
     # NOTE: build_and_save_strategy() only SAVES the combined config --
     # it does not resolve/run signals (no OHLCV window exists yet at
     # save time). Actually resolving an "ml_model" component's signal
@@ -498,6 +499,16 @@ def build_and_save_strategy(
 
     if not components:
         raise ValueError("At least one playbook entry or ML model must be selected.")
+
+    # time_horizon is now free text (Strategy Builder no longer limits
+    # the user to a fixed dropdown) -- validate/normalize it here so a
+    # typo'd or nonsensical timeframe ("15m", "3x") fails this request
+    # with a clear 400 instead of silently reaching get_data() inside a
+    # background backtest job and failing there with a far less useful
+    # error. Store the normalized, pandas-valid form (e.g. "15min") so
+    # every downstream reader (get_data/resample, the ML-model timeframe
+    # filter, etc.) sees one consistent value.
+    time_horizon = normalize_timeframe(time_horizon)
 
     resolved_components = []
     for c in components:

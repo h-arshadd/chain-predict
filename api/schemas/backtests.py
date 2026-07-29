@@ -49,8 +49,45 @@ class BacktestWinLoss(BaseModel):
     losses: int
 
 
+class AdHocStrategyConfig(BaseModel):
+    """
+    A full strategy definition sent inline with a backtest request,
+    instead of a strategy_id -- what Strategy Builder's "Backtest" button
+    now sends (per Strategy_Builder_Module.pdf: "Once the strategy has
+    been assembled, the user can immediately execute a backtest" is a
+    separate step from "Saving Strategies", not implied by it). Same
+    shape build_and_save_strategy() would have written to
+    metadata.strategy, just never persisted there unless the user
+    separately clicks "Save Strategy".
+
+    components/combine_rule mirror StrategyBuildRequest exactly (see
+    schemas/strategies.py) -- kept as plain dicts here rather than
+    importing that schema, since this lives in backtest_config JSONB,
+    not metadata.strategy.
+    """
+    strategy_name: str
+    components: list[dict]
+    combine_rule: str = "AND"
+    coin: str
+    exchange: str = "bybit"
+    time_horizon: str = "1h"
+    weights: Optional[list[float]] = None
+    threshold: Optional[float] = None
+    take_profit_type: Optional[str] = None
+    take_profit_value: Optional[float] = None
+    stop_loss_type: Optional[str] = None
+    stop_loss_value: Optional[float] = None
+
+
 class BacktestRequestIn(BaseModel):
-    strategy_id: int
+    # Exactly one of strategy_id / ad_hoc_strategy must be given --
+    # strategy_id runs against an already-saved metadata.strategy row
+    # (the normal Backtests page flow); ad_hoc_strategy runs a strategy
+    # that was never saved (Strategy Builder's "Backtest" button) --
+    # enforced in backtests_repo.create_backtest_request, not here, so
+    # the 400 message can be specific.
+    strategy_id: Optional[int] = None
+    ad_hoc_strategy: Optional[AdHocStrategyConfig] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     initial_balance: Optional[float] = None

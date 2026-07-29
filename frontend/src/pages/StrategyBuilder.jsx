@@ -16,7 +16,31 @@ const COMBINE_RULES = ['AND', 'OR', 'MAJORITY', 'WEIGHTED'];
 // override anyway (POST /api/strategies/build defaults to "bybit").
 const EXCHANGE = 'bybit';
 const COINS = ['btc', 'eth', 'sol', 'doge', 'ada', 'ltc', 'mina', 'sui'];
-const TIME_HORIZONS = ['15m', '1h', '2h', '4h', '1d'];
+
+// Just the common shortcuts shown as quick-pick suggestions -- the field
+// itself accepts ANY timeframe (see TIMEFRAME_RE), since the backend
+// resamples from raw 1-minute candles and isn't limited to this list.
+const TIME_HORIZON_PRESETS = ['5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d', '1w'];
+
+// Mirrors crypto_pipeline.data.data_downloader.normalize_timeframe on the
+// backend -- a number followed by min/m (minutes), h (hours), d (days),
+// or w (weeks). Checked client-side just for instant feedback; the
+// backend re-validates/normalizes this exact same shape regardless.
+const TIMEFRAME_RE = /^\d+\s*(min|m|h|d|w)$/i;
+
+// Mirrors crypto_pipeline.data.data_downloader.normalize_timeframe --
+// same shorthand ("15m") -> pandas-valid form ("15min") mapping, so what
+// this page sends to /api/ml-models?timeframe= matches the normalized
+// form time_horizon is actually stored as (build_and_save_strategy
+// normalizes it the same way before saving).
+const TIMEFRAME_UNIT_MAP = { min: 'min', m: 'min', h: 'h', d: 'D', w: 'W' };
+function normalizeTimeHorizon(value) {
+  const match = TIMEFRAME_RE.exec((value || '').trim().replace(/\s+/g, ''));
+  if (!match) return null;
+  const amount = match[0].match(/^\d+/)[0];
+  const unit = match[1].toLowerCase();
+  return `${amount}${TIMEFRAME_UNIT_MAP[unit]}`;
+}
 
 const primaryBtnStyle = {
   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%',
@@ -47,6 +71,7 @@ export default function StrategyBuilder() {
   const [selectedMlRunIds, setSelectedMlRunIds] = useState([]);
   const [coin, setCoin] = useState('btc');
   const [timeHorizon, setTimeHorizon] = useState('1h');
+  const timeHorizonValid = TIMEFRAME_RE.test((timeHorizon || '').trim());
 
   // --- Panel 3: Backtest / save ---
   const [strategyName, setStrategyName] = useState('');
@@ -63,10 +88,20 @@ export default function StrategyBuilder() {
 
   // ML models are restricted to the strategy's own time_horizon (PDF:
   // "Only models trained on the same timeframe ... should be available").
+  // Normalized the same way the backend stores time_horizon, so e.g.
+  // typing "1H" or "60min" still matches models saved as "1h". Skipped
+  // entirely while the field doesn't parse yet, rather than querying
+  // with a half-typed value on every keystroke.
   useEffect(() => {
+    const normalized = normalizeTimeHorizon(timeHorizon);
+    if (!normalized) {
+      setMlModels([]);
+      setSelectedMlRunIds([]);
+      return;
+    }
     setMlModelsLoading(true);
     setSelectedMlRunIds([]);
-    api.get(`/api/ml-models?timeframe=${timeHorizon}&limit=200`)
+    api.get(`/api/ml-models?timeframe=${encodeURIComponent(normalized)}&limit=200`)
       .then((res) => setMlModels(res.data))
       .catch(() => setMlModels([])) // endpoint/filter may not exist yet -- fail quiet, ML step is optional
       .finally(() => setMlModelsLoading(false));
@@ -104,28 +139,47 @@ export default function StrategyBuilder() {
     })),
   ];
 
-  const canBuild = selectedIds.length + selectedMlRunIds.length >= 1 && strategyName.trim().length > 0;
+  const canBuild = selectedIds.length + selectedMlRunIds.length >= 1
+    && strategyName.trim().length > 0
+    && timeHorizonValid;
 
+  // Shape shared by both actions -- saveStrategy sends it as the whole
+  // body to /api/strategies/build; runBacktest nests it under
+  // ad_hoc_strategy in the /api/backtests body (see AdHocStrategyConfig
+  // on the backend). Same fields either way.
+  const buildStrategyPayload = () => ({
+    strategy_name: strategyName.trim(),
+    components: buildComponents(),
+    combine_rule: combineRule,
+    coin,
+    exchange: EXCHANGE,
+    time_horizon: timeHorizon,
+    take_profit_type: takeProfitValue != null ? 'percentage' : null,
+    take_profit_value: takeProfitValue,
+    stop_loss_type: stopLossValue != null ? 'percentage' : null,
+    stop_loss_value: stopLossValue,
+  });
+
+  const validateBeforeSubmit = () => {
+    if (canBuild) return true;
+    message.warning(
+      !timeHorizonValid
+        ? 'Enter a valid timeframe (e.g. "15m", "1h", "4h", "1d").'
+        : 'Select at least one playbook entry or ML model, and enter a strategy name.'
+    );
+    return false;
+  };
+
+  // "Save Strategy Only" -- the ONLY action that writes to
+  // metadata.strategy. Per Strategy_Builder_Module.pdf: backtesting and
+  // "Saving Strategies" are described as two separate steps ("If the
+  // user is satisfied with the results, the strategy can be saved") --
+  // running a backtest must never implicitly save a strategy.
   const saveStrategy = async () => {
-    if (!canBuild) {
-      message.warning('Select at least one playbook entry or ML model, and enter a strategy name.');
-      return;
-    }
+    if (!validateBeforeSubmit()) return null;
     setSaving(true);
     try {
-      const payload = {
-        strategy_name: strategyName.trim(),
-        components: buildComponents(),
-        combine_rule: combineRule,
-        coin,
-        exchange: EXCHANGE,
-        time_horizon: timeHorizon,
-        take_profit_type: takeProfitValue != null ? 'percentage' : null,
-        take_profit_value: takeProfitValue,
-        stop_loss_type: stopLossValue != null ? 'percentage' : null,
-        stop_loss_value: stopLossValue,
-      };
-      const res = await api.post('/api/strategies/build', payload);
+      const res = await api.post('/api/strategies/build', buildStrategyPayload());
       message.success(`Strategy "${res.data.strategy_name}" saved.`);
       return res.data.strategy_id;
     } catch (err) {
@@ -136,15 +190,21 @@ export default function StrategyBuilder() {
     }
   };
 
-  const saveAndBacktest = async () => {
-    const strategyId = await saveStrategy();
-    if (!strategyId) return;
+  // "Run Backtest" -- runs against the assembled components directly.
+  // Posts the full definition inline (ad_hoc_strategy) instead of a
+  // strategy_id, so no metadata.strategy row is created. Only
+  // metadata.backtest gets a row, same as any other backtest request.
+  const runBacktest = async () => {
+    if (!validateBeforeSubmit()) return;
+    setSaving(true);
     try {
-      const res = await api.post('/api/backtests', { strategy_id: strategyId });
+      const res = await api.post('/api/backtests', { ad_hoc_strategy: buildStrategyPayload() });
       message.success('Backtest submitted — running in the background.');
       navigate(`/backtests/${res.data.backtest_id}`);
     } catch (err) {
-      message.error(err.message || 'Strategy saved, but backtest failed to start.');
+      message.error(err.message || 'Failed to start backtest');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -249,15 +309,34 @@ export default function StrategyBuilder() {
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 12.5, color: '#9096A0', marginBottom: 8, fontWeight: 600 }}>TIMEFRAME</div>
-                <Select style={{ width: '100%' }} value={timeHorizon} onChange={setTimeHorizon}
-                  options={TIME_HORIZONS.map((t) => ({ value: t, label: t }))} />
+                <Select
+                  mode="tags"
+                  maxCount={1}
+                  style={{ width: '100%' }}
+                  value={timeHorizon ? [timeHorizon] : []}
+                  status={timeHorizonValid ? undefined : 'error'}
+                  placeholder="e.g. 15m, 1h, 4h, 1d"
+                  // Pick a preset or type your own -- anything the
+                  // backend can resample from 1m candles (see
+                  // normalize_timeframe on the backend for the exact
+                  // accepted shape: <number><min|m|h|d|w>). tags mode +
+                  // maxCount=1 is what lets a typed value commit as the
+                  // selection without needing to already be an option.
+                  options={TIME_HORIZON_PRESETS.map((t) => ({ value: t, label: t }))}
+                  onChange={(vals) => setTimeHorizon(vals[vals.length - 1] || '')}
+                />
+                {!timeHorizonValid && (
+                  <div style={{ color: '#F0466B', fontSize: 11, marginTop: 4 }}>
+                    Use a number + unit: min/m, h, d, or w (e.g. "15m", "4h", "1d").
+                  </div>
+                )}
               </div>
             </div>
           </div>
         </Panel>
 
         {/* ---------------- Panel 3: Save / Backtest ---------------- */}
-        <Panel title="3. Save & Backtest" hint="Name it, set TP/SL, then run" variant="gradient">
+        <Panel title="3. Save & Backtest" hint="Name it, set TP/SL, then run or save" variant="gradient">
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div>
               <div style={{ fontSize: 12.5, color: '#9096A0', marginBottom: 8, fontWeight: 600 }}>STRATEGY NAME</div>
@@ -286,9 +365,12 @@ export default function StrategyBuilder() {
               <Tag style={{ background: 'rgba(255,255,255,0.06)', color: '#9096A0', border: 'none' }}>{timeHorizon}</Tag>
             </div>
 
-            <button style={primaryBtnStyle} disabled={!canBuild || saving} onClick={saveAndBacktest}>
+            <button style={primaryBtnStyle} disabled={!canBuild || saving} onClick={runBacktest}>
               <PlayCircleOutlined /> Run Backtest
             </button>
+            <div style={{ color: '#5C6370', fontSize: 11, textAlign: 'center', marginTop: -8 }}>
+              Runs a backtest only — nothing is saved to Strategies.
+            </div>
             <button style={secondaryBtnStyle} disabled={!canBuild || saving} onClick={saveStrategy}>
               <SaveOutlined /> Save Strategy Only
             </button>

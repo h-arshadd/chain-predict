@@ -126,7 +126,7 @@ def _validate_backtest_dates(config: dict) -> None:
         raise ValueError("start_date must be before end_date.")
 
 
-def create_backtest_request(conn, strategy_id: int, overrides: dict) -> dict:
+def create_backtest_request(conn, strategy_id: int | None, overrides: dict, ad_hoc_strategy: dict | None = None) -> dict:
     """
     Register a new backtest request (metadata.backtest, status
     'pending') and merge the request's overrides on top of backtest/
@@ -136,6 +136,22 @@ def create_backtest_request(conn, strategy_id: int, overrides: dict) -> dict:
     row first, do the work after" order the frontend's Backtest
     Requests page needs to show a pending row immediately.
 
+    Exactly one of strategy_id / ad_hoc_strategy is expected:
+
+      - strategy_id: run against an already-saved metadata.strategy row
+        (the normal "New Backtest" flow on the Backtests page).
+      - ad_hoc_strategy: a full strategy definition (same shape
+        StrategyBuildRequest/assemble_strategy_config produce -- see
+        schemas/backtests.AdHocStrategyConfig) that was never saved to
+        metadata.strategy. This is what Strategy Builder's "Backtest"
+        button sends per Strategy_Builder_Module.pdf -- backtesting and
+        "Saving Strategies" are described as two separate steps, so
+        clicking Backtest must not silently create a strategy row.
+        Stored inline inside backtest_config (already a free-form JSONB
+        blob) with strategy_id left NULL; run_backtest_job() reads the
+        strategy shape back out of backtest_config instead of joining
+        metadata.strategy when strategy_id is NULL.
+
     overrides: whatever subset of backtest/config.yaml's keys the
     request form actually sent (start_date, end_date, initial_balance,
     commission, slippage, take_profit, stop_loss, position_size,
@@ -143,12 +159,12 @@ def create_backtest_request(conn, strategy_id: int, overrides: dict) -> dict:
     falls back to the config.yaml default, exactly like running the
     script with no config changes would.
 
-    Raises ValueError if strategy_id doesn't exist -- the router turns
-    this into a 404.
+    Raises ValueError if neither/both of strategy_id and ad_hoc_strategy
+    are given, or if strategy_id doesn't exist -- the router turns these
+    into a 400/404.
     """
-    strategy_row = get_strategy(conn, strategy_id)
-    if strategy_row is None:
-        raise ValueError(f"strategy_id {strategy_id} not found")
+    if bool(strategy_id) == bool(ad_hoc_strategy):
+        raise ValueError("Provide exactly one of strategy_id or ad_hoc_strategy, not both/neither.")
 
     # Idempotent -- CREATE TABLE IF NOT EXISTS + self-healing ALTER for
     # the strategy_id/status/error/started_at/finished_at/result_summary
@@ -161,9 +177,22 @@ def create_backtest_request(conn, strategy_id: int, overrides: dict) -> dict:
 
     _validate_backtest_dates(config)
 
+    if strategy_id is not None:
+        strategy_row = get_strategy(conn, strategy_id)
+        if strategy_row is None:
+            raise ValueError(f"strategy_id {strategy_id} not found")
+        strategy_name = strategy_row["strategy_name"]
+    else:
+        # No metadata.strategy row exists yet -- the ad-hoc definition
+        # itself carries strategy_name, so use that for the label column
+        # (same non-FK "just a label" role strategy_name already plays
+        # on this table -- see create_backtest_table's docstring).
+        strategy_name = ad_hoc_strategy["strategy_name"]
+        config["ad_hoc_strategy"] = ad_hoc_strategy
+
     backtest_id = insert_backtest(
         conn,
-        strategy_name=strategy_row["strategy_name"],
+        strategy_name=strategy_name,
         backtest_config=config,
         strategy_id=strategy_id,
         status="pending",
@@ -203,18 +232,45 @@ def run_backtest_job(backtest_id: int):
 
         start_backtest(conn, backtest_id)
 
-        strategy_row = get_strategy(conn, backtest_row["strategy_id"]) if backtest_row["strategy_id"] else None
-        if strategy_row is None:
-            fail_backtest(conn, backtest_id, "Strategy no longer exists.")
-            return
-
         config = dict(backtest_row["backtest_config"])
         config["start_date"] = _parse_date(config["start_date"])
         config["end_date"] = _parse_date(config["end_date"])
 
-        exchange = strategy_row["exchange"]
-        symbol = strategy_row["coin"]
-        timeframe = strategy_row.get("time_horizon") or "1h"
+        # Two ways this run's strategy shape (exchange/coin/timeframe +
+        # the actual signal-generating config) gets resolved:
+        #   - strategy_id set  -> look it up in metadata.strategy, same
+        #     as before.
+        #   - strategy_id NULL -> this was an ad-hoc backtest (Strategy
+        #     Builder's "Backtest" button, never saved) -- the full
+        #     definition was stashed inline under
+        #     backtest_config["ad_hoc_strategy"] at request time (see
+        #     create_backtest_request). Build the exact same "builder"-
+        #     shaped raw_config assemble_strategy_config() would have
+        #     produced, so the branch below treats both cases identically
+        #     from here on.
+        ad_hoc = config.pop("ad_hoc_strategy", None)
+        if backtest_row["strategy_id"]:
+            strategy_row = get_strategy(conn, backtest_row["strategy_id"])
+            if strategy_row is None:
+                fail_backtest(conn, backtest_id, "Strategy no longer exists.")
+                return
+            exchange = strategy_row["exchange"]
+            symbol = strategy_row["coin"]
+            timeframe = strategy_row.get("time_horizon") or "1h"
+            raw_config = strategy_row["strategy_config"]
+        elif ad_hoc is not None:
+            from crypto_pipeline.strategy_builder.assemble import assemble_strategy_config
+
+            exchange = ad_hoc["exchange"]
+            symbol = ad_hoc["coin"]
+            timeframe = ad_hoc.get("time_horizon") or "1h"
+            raw_config = assemble_strategy_config(
+                ad_hoc["components"], ad_hoc["combine_rule"],
+                weights=ad_hoc.get("weights"), threshold=ad_hoc.get("threshold"),
+            )
+        else:
+            fail_backtest(conn, backtest_id, "This backtest has no strategy_id and no ad_hoc_strategy -- nothing to run.")
+            return
 
         hourly_result = get_data(
             exchange=exchange,
@@ -243,7 +299,10 @@ def run_backtest_job(backtest_id: int):
         # OHLCV window (per STRATEGY_BUILDER_SPEC.md decision 5: "recompute
         # live, no new signal-cache table" -- the only durable/cached piece
         # is an ML model's own signal series, read via get_model_signals).
-        raw_config = strategy_row["strategy_config"]
+        # raw_config was already resolved above (from strategy_row for a
+        # saved strategy, or from assemble_strategy_config(ad_hoc...) for
+        # an ad-hoc run) -- NOT re-read here, since strategy_row doesn't
+        # exist on the ad-hoc path.
         if isinstance(raw_config, dict) and "builder" in raw_config:
             from crypto_pipeline.strategy_builder.assemble import build_combined_signal
             from crypto_pipeline.utils.db_utils import get_model_signals
@@ -368,6 +427,30 @@ def get_backtest_detail(conn, backtest_id: int) -> dict | None:
         return None
 
     strategy_row = get_strategy(conn, backtest_row["strategy_id"]) if backtest_row["strategy_id"] else None
+
+    # Ad-hoc runs (Strategy Builder's "Backtest" button, never saved)
+    # have no metadata.strategy row to read exchange/coin/time_horizon/
+    # strategy_config from -- that shape was stashed inline under
+    # backtest_config["ad_hoc_strategy"] at request time instead (see
+    # create_backtest_request). Build a strategy_row-shaped dict out of
+    # it so the rest of this function (and _strategy_config_detail,
+    # which expects that shape) doesn't need a separate code path.
+    ad_hoc = (backtest_row["backtest_config"] or {}).get("ad_hoc_strategy") if strategy_row is None else None
+    if ad_hoc is not None:
+        from crypto_pipeline.strategy_builder.assemble import assemble_strategy_config
+        strategy_row = {
+            "exchange": ad_hoc.get("exchange"),
+            "coin": ad_hoc.get("coin"),
+            "time_horizon": ad_hoc.get("time_horizon"),
+            "strategy_config": assemble_strategy_config(
+                ad_hoc["components"], ad_hoc["combine_rule"],
+                weights=ad_hoc.get("weights"), threshold=ad_hoc.get("threshold"),
+            ),
+            "take_profit_type": ad_hoc.get("take_profit_type"),
+            "take_profit_value": ad_hoc.get("take_profit_value"),
+            "stop_loss_type": ad_hoc.get("stop_loss_type"),
+            "stop_loss_value": ad_hoc.get("stop_loss_value"),
+        }
 
     detail = {
         "backtest_id": backtest_row["backtest_id"],

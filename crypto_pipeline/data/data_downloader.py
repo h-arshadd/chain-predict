@@ -15,6 +15,7 @@ Handles:
 """
 
 import logging
+import re
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone
@@ -61,10 +62,53 @@ def parse_candles(raw_candles):
     return df
 
 
+# Bare "m" used to mean minutes in older pandas, but pandas now reserves
+# it for month-end -- "15m" silently means something totally different
+# (or, on current pandas, just raises). Anything users naturally type as
+# shorthand ("15m", "15 min", "4H", "1d") gets normalized to pandas'
+# real offset aliases (min/h/D/W) before ever reaching df.resample(),
+# here and at the point timeframe strings are first accepted (Strategy
+# Builder's free-text field) so a bad string fails loud and early instead
+# of quietly resampling into the wrong bucket size or blowing up deep in
+# a background backtest job.
+_TIMEFRAME_RE = re.compile(r"^(\d+)\s*(min|m|h|d|w)$", re.IGNORECASE)
+_UNIT_TO_PANDAS = {"min": "min", "m": "min", "h": "h", "d": "D", "w": "W"}
+
+
+def normalize_timeframe(timeframe: str) -> str:
+    """
+    Turn user-facing timeframe shorthand ("15m", "15min", "4H", "1d",
+    "2 w") into a pandas-valid offset alias ("15min", "4h", "1D", "2W").
+
+    Raises ValueError with a clear message on anything that doesn't
+    parse, rather than letting a bad string reach df.resample() and
+    throw pandas' own much less helpful error later.
+    """
+    if not isinstance(timeframe, str) or not timeframe.strip():
+        raise ValueError(f"Timeframe must be a non-empty string, got {timeframe!r}.")
+
+    cleaned = timeframe.strip().replace(" ", "")
+    match = _TIMEFRAME_RE.match(cleaned)
+    if not match:
+        raise ValueError(
+            f"Invalid timeframe {timeframe!r}. Use a number followed by a unit: "
+            "min/m (minutes), h (hours), d (days), or w (weeks) -- e.g. '15m', "
+            "'1h', '4h', '1d'."
+        )
+
+    amount, unit = match.groups()
+    if int(amount) <= 0:
+        raise ValueError(f"Invalid timeframe {timeframe!r}: amount must be greater than 0.")
+
+    return f"{amount}{_UNIT_TO_PANDAS[unit.lower()]}"
+
+
 def resample(timeframe, df):
     """
     Resample 1-minute candles into a bigger timeframe.
-    timeframe must be a pandas-native offset string, e.g. "5min", "1h", "1D".
+    timeframe must be a pandas-native offset string, e.g. "5min", "1h", "1D"
+    -- callers should run user-facing input through normalize_timeframe()
+    first (get_data() already does this).
 
     df must already be indexed by datetime.
     Returns a DataFrame with columns: datetime, open, high, low, close, volume
@@ -117,7 +161,7 @@ def get_data(exchange, symbol, start_date, end_date, timeframe="1h", config=None
     Returns a dict: {"one_min": DataFrame, "resampled": DataFrame} or {"resampled": DataFrame}
     """
     config = config or DEFAULT_FETCH_CONFIG
-    resample_timeframe = timeframe
+    resample_timeframe = normalize_timeframe(timeframe)
 
     if end_date == "now":
         end_date = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
