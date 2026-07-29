@@ -95,10 +95,39 @@ export default function Backtests() {
     }
   };
 
-  const strategyOptions = useMemo(() => strategies.map((s) => ({
-    value: s.strategy_id,
-    label: `${s.strategy_name} — ${s.coin.toUpperCase()} · ${s.exchange} · ${s.time_horizon}`,
-  })), [strategies]);
+  // Coin picked first, then only that coin's strategies are shown --
+  // avoids one giant flat list of 100+ "name — coin · exchange · tf"
+  // options that's hard to scan when there are many strategies per coin.
+  const coinOptions = useMemo(() => {
+    const seen = new Set();
+    const list = [];
+    for (const s of strategies) {
+      if (seen.has(s.coin)) continue;
+      seen.add(s.coin);
+      list.push(s.coin);
+    }
+    return list
+      .sort((a, b) => a.localeCompare(b))
+      .map((coin) => ({ value: coin, label: coin.toUpperCase() }));
+  }, [strategies]);
+
+  const selectedCoin = Form.useWatch('coin_key', form);
+
+  // Most coins only trade on one exchange, so the strategy label just
+  // shows name + timeframe. If a coin is listed on more than one
+  // exchange, the exchange is appended so those strategies stay
+  // distinguishable without cluttering the common case.
+  const strategiesForCoin = useMemo(() => {
+    if (!selectedCoin) return [];
+    const matches = strategies.filter((s) => s.coin === selectedCoin);
+    const exchangeCount = new Set(matches.map((s) => s.exchange)).size;
+    return matches.map((s) => ({
+      value: s.strategy_id,
+      label: exchangeCount > 1
+        ? `${s.strategy_name} · ${s.exchange} · ${s.time_horizon}`
+        : `${s.strategy_name} · ${s.time_horizon}`,
+    }));
+  }, [strategies, selectedCoin]);
 
   const submitRequest = async () => {
     try {
@@ -256,15 +285,29 @@ export default function Backtests() {
           take_profit_value: 2.0,
           stop_loss_value: 1.0,
         }}>
-          <Form.Item name="strategy_id" label="Strategy" rules={[{ required: true, message: 'Select a strategy' }]}>
-            <Select
-              showSearch
-              loading={strategiesLoading}
-              placeholder="Select a strategy"
-              options={strategyOptions}
-              filterOption={(input, option) => option.label.toLowerCase().includes(input.toLowerCase())}
-            />
-          </Form.Item>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <Form.Item name="coin_key" label="Coin" rules={[{ required: true, message: 'Select a coin' }]}>
+              <Select
+                showSearch
+                loading={strategiesLoading}
+                placeholder="Select a coin"
+                options={coinOptions}
+                filterOption={(input, option) => option.label.toLowerCase().includes(input.toLowerCase())}
+                onChange={() => form.setFieldValue('strategy_id', undefined)}
+              />
+            </Form.Item>
+
+            <Form.Item name="strategy_id" label="Strategy" rules={[{ required: true, message: 'Select a strategy' }]}>
+              <Select
+                showSearch
+                disabled={!selectedCoin}
+                placeholder={selectedCoin ? 'Select a strategy' : 'Pick a coin first'}
+                options={strategiesForCoin}
+                filterOption={(input, option) => option.label.toLowerCase().includes(input.toLowerCase())}
+                notFoundContent="No strategies for this coin."
+              />
+            </Form.Item>
+          </div>
 
           <Form.Item name="date_range" label="Date Range" rules={[{ required: true, message: 'Select a date range' }]}>
             <DatePicker.RangePicker

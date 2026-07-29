@@ -383,7 +383,6 @@ export default function StrategyBuilder() {
             </div>
 
             <div style={{ padding: '10px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-              <div style={{ fontSize: 11.5, color: '#9096A0', marginBottom: 4 }}>Position size is set per backtest run, not saved on the strategy.</div>
               <Tag style={{ background: 'rgba(61,220,151,0.10)', color: MINT, border: 'none' }}>{EXCHANGE}</Tag>
               <Tag style={{ background: 'rgba(255,138,92,0.10)', color: AMBER, border: 'none' }}>{coin.toUpperCase()}</Tag>
               <Tag style={{ background: 'rgba(255,255,255,0.06)', color: '#9096A0', border: 'none' }}>{timeHorizon}</Tag>
