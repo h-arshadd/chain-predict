@@ -350,7 +350,7 @@ export default function ModelDetails() {
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                 <XAxis dataKey="name" tick={axisStyle} axisLine={false} tickLine={false} />
                 <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v) => fmtNum(v)} />
+                <Tooltip cursor={false} contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v) => fmtNum(v)} />
                 <Bar dataKey="value" radius={[6, 6, 6, 6]} fill={MINT} />
               </BarChart>
             </ResponsiveContainer>
@@ -367,7 +367,7 @@ export default function ModelDetails() {
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
                     <XAxis type="number" tick={axisStyle} axisLine={false} tickLine={false} />
                     <YAxis type="category" dataKey="name" tick={axisStyle} axisLine={false} tickLine={false} width={100} />
-                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v) => fmtNum(v, 2)} />
+                    <Tooltip cursor={false} contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v) => fmtNum(v, 2)} />
                     <Bar dataKey="value" radius={[0, 6, 6, 0]}>
                       {tradingRatioChartData.map((entry, i) => (
                         <Cell key={i} fill={entry.value >= 0 ? MINT : RED} />
@@ -382,7 +382,7 @@ export default function ModelDetails() {
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
                     <XAxis type="number" tick={axisStyle} axisLine={false} tickLine={false} tickFormatter={(v) => `${v.toFixed(0)}%`} />
                     <YAxis type="category" dataKey="name" tick={axisStyle} axisLine={false} tickLine={false} width={100} />
-                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v) => `${v.toFixed(2)}%`} />
+                    <Tooltip cursor={false} contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v) => `${v.toFixed(2)}%`} />
                     <Bar dataKey="value" radius={[0, 6, 6, 0]}>
                       {tradingPercentChartData.map((entry, i) => (
                         <Cell key={i} fill={entry.value >= 0 ? MINT : RED} />
@@ -409,7 +409,7 @@ export default function ModelDetails() {
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                 <XAxis dataKey="name" tick={axisStyle} axisLine={false} tickLine={false} />
                 <YAxis tick={axisStyle} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+                <Tooltip cursor={false} contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
                 <Bar dataKey="value" radius={[6, 6, 6, 6]}>
                   {signalChartData.map((entry, i) => (
                     <Cell key={i} fill={SIGNAL_COLORS[entry.name] || BLUE} />

@@ -327,7 +327,7 @@ export default function Sentiment() {
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
                     <XAxis dataKey="label" tick={axisStyle} axisLine={false} tickLine={false} interval="preserveStartEnd" />
                     <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
-                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+                    <Tooltip cursor={false} contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
                     <Bar dataKey="bullish" stackId="a" fill={MINT} radius={[0, 0, 0, 0]} />
                     <Bar dataKey="neutral" stackId="a" fill="#9096A0" radius={[0, 0, 0, 0]} />
                     <Bar dataKey="bearish" stackId="a" fill={RED} radius={[4, 4, 0, 0]} />

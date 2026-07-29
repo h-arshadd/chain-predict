@@ -66,21 +66,26 @@ def _monthly_heatmap_data(returns: pd.Series, equity: pd.Series) -> dict:
     monthly = qs.stats.monthly_returns(returns)
     if isinstance(monthly, pd.DataFrame):
         monthly.index = monthly.index.astype(str)
-        # qs.stats.monthly_returns() fabricates 0.0 (not NaN) for months
-        # after the data ends in the final, in-progress year -- e.g. data
-        # ending Jan 2026 still gets Feb..Dec 2026 filled with 0.0. Cap
-        # each year at the last real (year, month) actually present in
-        # `returns` so those don't get displayed as real 0% months.
+        # qs.stats.monthly_returns() fabricates 0.0 (not NaN) for every
+        # month of a year that isn't fully covered by `returns` -- both
+        # the first year (e.g. data starting Jul 2026 still gets
+        # Jan..Jun 2026 filled with 0.0) and the final, in-progress year
+        # (e.g. data ending Jan 2026 still gets Feb..Dec 2026 filled with
+        # 0.0). Cap each year to the actual (year, month) range present in
+        # `returns` so months outside real trading history are dropped
+        # instead of shown as fabricated 0% months.
+        first_year, first_month = returns.index.min().year, returns.index.min().month
         last_year, last_month = returns.index.max().year, returns.index.max().month
 
         table = {}
         for year, row in monthly.iterrows():
             year_int = int(year)
+            month_floor = first_month if year_int == first_year else 1
             month_cap = last_month if year_int == last_year else 12
             table[str(year)] = {
                 _MONTH_ABBR_TO_NUM[month]: val
                 for month, val in row.dropna().to_dict().items()
-                if month in _MONTH_ABBR_TO_NUM and int(_MONTH_ABBR_TO_NUM[month]) <= month_cap
+                if month in _MONTH_ABBR_TO_NUM and month_floor <= int(_MONTH_ABBR_TO_NUM[month]) <= month_cap
             }
     else:
         table = _series_to_records(monthly)

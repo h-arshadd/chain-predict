@@ -8,7 +8,7 @@ import { recordsToSeries, monthlyHeatmapToRows, heatColor } from '../lib/quantst
 import { METRIC_CARDS_COL_1, METRIC_CARDS_COL_2, fmtMetric } from '../lib/metricCards';
 import Panel from '../components/Panel';
 import EmptyChart from '../components/EmptyChart';
-import TradePnlChart from '../components/TradePnlChart';
+import TradeWinLossDonut from '../components/TradeWinLossDonut';
 import EquityCurveChart from '../components/EquityCurveChart';
 import DrawdownChart from '../components/DrawdownChart';
 import RollingSharpeChart from '../components/RollingSharpeChart';
@@ -227,13 +227,13 @@ export default function SimulationDetails() {
         </Panel>
       </div>
 
-      {/* Yearly Returns + Trade PnL sequence */}
+      {/* Yearly Returns + Trade Win/Loss */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
         <Panel title="Yearly Returns">
           <YearlyReturnsChart data={yearlyReturns} centered emptyText="Not enough history to compute yearly returns." />
         </Panel>
-        <Panel title="Trade PnL Sequence">
-          <TradePnlChart trades={data.trades} reverse />
+        <Panel title="Trade Win/Loss">
+          <TradeWinLossDonut trades={data.trades} />
         </Panel>
       </div>
 

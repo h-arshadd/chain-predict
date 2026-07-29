@@ -8,7 +8,7 @@ import { recordsToSeries, monthlyHeatmapToRows, heatColor } from '../lib/quantst
 import { METRIC_CARDS_COL_1, METRIC_CARDS_COL_2, fmtMetric } from '../lib/metricCards';
 import Panel from '../components/Panel';
 import EmptyChart from '../components/EmptyChart';
-import TradePnlChart from '../components/TradePnlChart';
+import TradeWinLossDonut from '../components/TradeWinLossDonut';
 import EquityCurveChart from '../components/EquityCurveChart';
 import DrawdownChart from '../components/DrawdownChart';
 import RollingSharpeChart from '../components/RollingSharpeChart';
@@ -323,8 +323,8 @@ export default function BacktestDetails() {
             <Panel title="Yearly Returns">
               <YearlyReturnsChart data={yearlyReturns} emptyText="Not enough history to compute yearly returns." />
             </Panel>
-            <Panel title="Trade Distribution (Per-Trade PnL)">
-              <TradePnlChart trades={data.trades} />
+            <Panel title="Trade Win/Loss">
+              <TradeWinLossDonut trades={data.trades} />
             </Panel>
           </div>
 

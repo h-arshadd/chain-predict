@@ -7,7 +7,6 @@ import {
   ThunderboltOutlined,
   PlayCircleOutlined,
   RocketOutlined,
-  WalletOutlined,
   ExperimentOutlined,
   BarChartOutlined,
 } from '@ant-design/icons';
@@ -147,7 +146,6 @@ export default function Dashboard() {
     { title: 'Active Strategies', value: fmtCount(summary.active_strategies), icon: <ThunderboltOutlined /> },
     { title: 'Running Executions', value: fmtCount(summary.running_executions), icon: <RocketOutlined /> },
     { title: 'Running Simulations', value: fmtCount(summary.running_simulations), icon: <PlayCircleOutlined /> },
-    { title: 'Connected Accounts', value: fmtCount(summary.connected_accounts), icon: <WalletOutlined /> },
     { title: 'Trained ML Models', value: fmtCount(summary.trained_ml_models), icon: <ExperimentOutlined /> },
     {
       title: `Total Backtests${summary.total_backtests == null ? ' (not available yet)' : ''}`,
@@ -210,8 +208,8 @@ export default function Dashboard() {
           <Spin size="large" />
         </div>
       ) : summary ? (
-        // One flat grid, exactly the 10 spec'd widgets.
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 16, marginBottom: 28 }}>
+        // Fixed 4-column grid so the 8 cards form two even rows.
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gridAutoRows: '1fr', gap: 16, marginBottom: 28 }}>
           {statCards.map((stat, i) => (
             <div key={stat.title} style={{ ...panel, padding: 18 }}>
               <div style={iconBadge(badgeAccents[i % badgeAccents.length])}>{stat.icon}</div>

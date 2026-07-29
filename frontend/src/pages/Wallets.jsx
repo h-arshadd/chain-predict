@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Table, Switch, Modal, Form, Input, Select, message, Tooltip, Spin, Alert } from 'antd';
+import { useNavigate } from 'react-router-dom';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined,
   WalletOutlined, WarningFilled, ControlOutlined,
@@ -7,7 +8,6 @@ import {
 import { api } from '../lib/api';
 import { fmtUsd, pnlColor } from '../lib/format';
 import { panelGradient as panel } from '../components/Panel';
-import WalletStatsModal from '../components/WalletStatsModal';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
@@ -20,10 +20,10 @@ const subPanel = {
 };
 
 export default function Wallets() {
+  const navigate = useNavigate();
   const [wallets, setWallets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [statsWallet, setStatsWallet] = useState(null); // account_name currently shown in the stats modal
   const [modalOpen, setModalOpen] = useState(false);
   const [editingWallet, setEditingWallet] = useState(null); // null = add mode
   const [submitting, setSubmitting] = useState(false);
@@ -123,8 +123,7 @@ export default function Wallets() {
     });
   };
 
-  const openStatsModal = (row) => setStatsWallet(row.account_name);
-  const closeStatsModal = () => setStatsWallet(null);
+  const openWalletDetails = (row) => navigate(`/wallets/${row.account_name}`);
 
   const openAssignModal = (wallet) => {
     setAssignWallet(wallet);
@@ -308,7 +307,7 @@ export default function Wallets() {
             dataSource={tableData}
             pagination={false}
             onRow={(row) => ({
-              onClick: () => openStatsModal(row),
+              onClick: () => openWalletDetails(row),
               style: { cursor: 'pointer' },
             })}
             locale={{ emptyText: 'No wallets connected yet. Click "Add Wallet" to connect your first exchange account.' }}
@@ -433,12 +432,6 @@ export default function Wallets() {
           </div>
         )}
       </Modal>
-
-      <WalletStatsModal
-        accountName={statsWallet}
-        open={!!statsWallet}
-        onClose={closeStatsModal}
-      />
     </div>
   );
 }

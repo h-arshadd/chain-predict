@@ -4,6 +4,7 @@ import { themeConfig } from './theme';
 import DashboardLayout from './layouts/DashboardLayout';
 import Dashboard from './pages/Dashboard';
 import Wallets from './pages/Wallets';
+import WalletDetails from './pages/WalletDetails';
 import Execution from './pages/Execution';
 import ExecutionDetails from './pages/ExecutionDetails';
 import Backtests from './pages/Backtests';
@@ -22,6 +23,7 @@ function App() {
           <Route element={<DashboardLayout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/wallets" element={<Wallets />} />
+            <Route path="/wallets/:accountName" element={<WalletDetails />} />
             <Route path="/execution" element={<Execution />} />
             <Route path="/execution/:exchange/:symbol" element={<ExecutionDetails />} />
             <Route path="/backtests" element={<Backtests />} />
