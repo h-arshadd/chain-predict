@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Select, Spin, InputNumber, Checkbox, Radio, Input, message, Empty, Tag, DatePicker } from 'antd';
-import { PlayCircleOutlined, SaveOutlined } from '@ant-design/icons';
+import { Select, Spin, InputNumber, Checkbox, Radio, Input, message, Empty, DatePicker } from 'antd';
+import { PlayCircleOutlined, SaveOutlined, RiseOutlined, SwapOutlined, ThunderboltOutlined, FundOutlined, LineChartOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../lib/api';
 import Panel, { panelGradient as panel } from '../components/Panel';
@@ -9,6 +9,29 @@ import Panel, { panelGradient as panel } from '../components/Panel';
 // Same palette every other page uses (Backtests.jsx, Dashboard.jsx).
 const MINT = '#3DDC97';
 const AMBER = '#FF8A5C';
+const BLUE = '#5B9CF6';
+
+// Playbook entries only carry a strategy_name from the API -- no
+// category/description field exists server-side. Infer a rough category +
+// icon from the name itself (it already encodes indicator patterns like
+// ema/rsi/macd) purely for a friendlier list item; falls back to a generic
+// "Strategy" label when nothing matches.
+function inferStrategyMeta(name) {
+  const n = name.toLowerCase();
+  if (n.includes('trend') || n.includes('ema') || n.includes('sma')) {
+    return { icon: <RiseOutlined />, color: MINT, label: 'Trend following' };
+  }
+  if (n.includes('rsi') || n.includes('reversal') || n.includes('mean')) {
+    return { icon: <SwapOutlined />, color: AMBER, label: 'Mean reversion' };
+  }
+  if (n.includes('macd') || n.includes('cross')) {
+    return { icon: <LineChartOutlined />, color: BLUE, label: 'Momentum' };
+  }
+  if (n.includes('scalp') || n.includes('extreme')) {
+    return { icon: <ThunderboltOutlined />, color: AMBER, label: 'Scalping' };
+  }
+  return { icon: <FundOutlined />, color: '#9096A0', label: 'Strategy' };
+}
 
 const COMBINE_RULES = ['AND', 'OR', 'MAJORITY', 'WEIGHTED'];
 
@@ -249,9 +272,10 @@ export default function StrategyBuilder() {
           ) : playbooks.length === 0 ? (
             <Empty description={<span style={{ color: '#9096A0' }}>No playbook entries yet</span>} />
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {playbooks.map((p) => {
                 const checked = selectedIds.includes(p.playbook_id);
+                const meta = inferStrategyMeta(p.strategy_name);
                 return (
                   <div
                     key={p.playbook_id}
@@ -263,10 +287,22 @@ export default function StrategyBuilder() {
                       border: `1px solid ${checked ? 'rgba(61,220,151,0.35)' : 'rgba(255,255,255,0.06)'}`,
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <Checkbox checked={checked} onChange={() => togglePlaybook(p.playbook_id)} />
-                      <span style={{ fontWeight: 600, color: '#F5F6F7', fontSize: 13.5 }}>{p.strategy_name}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                      <div style={{
+                        width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+                        background: `${meta.color}18`, color: meta.color,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15,
+                      }}>
+                        {meta.icon}
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, color: '#F5F6F7', fontSize: 13.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {p.strategy_name}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: '#8A909A', marginTop: 1 }}>{meta.label}</div>
+                      </div>
                     </div>
+                    <Checkbox checked={checked} onChange={() => togglePlaybook(p.playbook_id)} />
                   </div>
                 );
               })}
@@ -382,10 +418,20 @@ export default function StrategyBuilder() {
               </div>
             </div>
 
-            <div style={{ padding: '10px 12px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-              <Tag style={{ background: 'rgba(61,220,151,0.10)', color: MINT, border: 'none' }}>{EXCHANGE}</Tag>
-              <Tag style={{ background: 'rgba(255,138,92,0.10)', color: AMBER, border: 'none' }}>{coin.toUpperCase()}</Tag>
-              <Tag style={{ background: 'rgba(255,255,255,0.06)', color: '#9096A0', border: 'none' }}>{timeHorizon}</Tag>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 0, padding: '12px 16px', borderRadius: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingRight: 14 }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: MINT, flexShrink: 0 }} />
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#D5D8DC' }}>{EXCHANGE}</span>
+              </div>
+              <div style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.08)' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px' }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: AMBER, flexShrink: 0 }} />
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#D5D8DC' }}>{coin.toUpperCase()}</span>
+              </div>
+              <div style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.08)' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 14 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#9096A0' }}>{timeHorizon}</span>
+              </div>
             </div>
 
             <div>
@@ -401,9 +447,6 @@ export default function StrategyBuilder() {
             <button style={primaryBtnStyle} disabled={!canBuild || saving} onClick={runBacktest}>
               <PlayCircleOutlined /> Run Backtest
             </button>
-            <div style={{ color: '#5C6370', fontSize: 11, textAlign: 'center', marginTop: -8 }}>
-              Runs a backtest only — nothing is saved to Strategies.
-            </div>
             <button style={secondaryBtnStyle} disabled={!canBuild || saving} onClick={saveStrategy}>
               <SaveOutlined /> Save Strategy Only
             </button>
