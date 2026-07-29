@@ -42,6 +42,175 @@ PREPROCESSING_REGISTRY: Dict[str, Callable] = {
 }
 
 
+def apply_fitted_preprocessing(
+    source_df: pd.DataFrame,
+    feature_columns: List[str],
+    fit_info: dict,
+    transform_fn: Callable,
+    params: dict,
+    preceding_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Re-apply ONE already-fitted (fit on train only, at training time)
+    preprocessing step to some other DataFrame -- val/test during
+    run_preprocessing() below, or brand-new live data during inference
+    (see apply_saved_preprocessing()). Never re-fits anything; every
+    branch here only uses fit_info's already-learned parameters (a
+    fitted sklearn scaler object, saved clip bounds, etc.) or, for the
+    purely backward-looking methods, no fitted parameters at all.
+
+    Args:
+        source_df: the data to transform (val, test, or a live tail).
+        feature_columns: same list used at fit time, same order.
+        fit_info: one entry's fit_info, as returned by a
+            crypto_pipeline.ml.preprocessing.scalers/stationarity
+            transform function and persisted in
+            {run_dir}/preprocessing.joblib (see model_loader.load_run()'s
+            "fit_objects" return value).
+        transform_fn: the same registered method (PREPROCESSING_REGISTRY[method])
+            used at fit time.
+        params: that step's configured params (fractional_differencing's
+            d/threshold, etc.) -- needed because the backward-looking
+            branches below call transform_fn() again rather than only
+            reading fit_info.
+        preceding_df: whichever data comes immediately before source_df
+            in time -- only used to seed differencing's warm-up window
+            (see the weight_length/order branch below); ignored by
+            every other branch. For inference, this is simply the extra
+            leading history rows already fetched alongside source_df
+            (see apply_saved_preprocessing()), not a separate train/val
+            split.
+
+    Returns:
+        pd.DataFrame, feature_columns only, same index as source_df.
+    """
+    if "_sklearn_object" in fit_info:
+        fitted_scaler = fit_info["_sklearn_object"]
+        return pd.DataFrame(
+            fitted_scaler.transform(source_df[feature_columns].values),
+            columns=feature_columns,
+            index=source_df.index,
+        )
+    elif "lower_bounds" in fit_info and "upper_bounds" in fit_info:
+        lower = pd.Series(fit_info["lower_bounds"])[feature_columns]
+        upper = pd.Series(fit_info["upper_bounds"])[feature_columns]
+        return source_df[feature_columns].clip(lower=lower, upper=upper, axis=1)
+    elif "weight_length" in fit_info or "order" in fit_info:
+        # Fractional/simple differencing (stationarity.py) -- purely
+        # backward-looking, but each call independently computes its own
+        # leading warm-up window (weight_length-1 rows for fractional,
+        # `order` rows for simple) from whatever DataFrame it's given.
+        # Calling it on source_df ALONE would produce a warm-up window
+        # with no real history behind it, generating a fresh block of
+        # leading NaNs right at the start of source_df. Fixed by
+        # prepending preceding_df's tail (enough rows to cover the
+        # warm-up window) as real history, transforming that combined
+        # frame, then slicing the prepended rows back off -- source_df's
+        # own first rows end up computed from real preceding values
+        # instead of restarting cold. Nothing here leaks any FITTED
+        # (data-driven) train statistic since these methods have none --
+        # only raw feature values (already-public market data) are reused.
+        warmup = fit_info.get("weight_length", fit_info.get("order", 1) + 1) - 1
+        warmup = max(warmup, 0)
+        if warmup == 0:
+            transformed, _ = transform_fn(source_df[feature_columns], **params)
+            return transformed
+        history = preceding_df[feature_columns].iloc[-warmup:]
+        combined = pd.concat([history, source_df[feature_columns]])
+        transformed, _ = transform_fn(combined, **params)
+        return transformed.iloc[warmup:].set_axis(source_df.index)
+    else:
+        # Purely backward-looking/causal methods with no separate
+        # warm-up window (row-wise Normalizer, rolling_zscore) have
+        # nothing data-driven to leak from train and don't create a
+        # leading gap, so they're just re-run directly.
+        transformed, _ = transform_fn(source_df[feature_columns], **params)
+        return transformed
+
+
+def apply_saved_preprocessing(
+    df: pd.DataFrame,
+    feature_columns: List[str],
+    fit_objects: List[dict],
+) -> pd.DataFrame:
+    """
+    Apply a run's already-fitted preprocessing chain (as persisted at
+    training time and read back by
+    crypto_pipeline.ml.persistence.model_loader.load_run()'s
+    "fit_objects" return value) to a NEW DataFrame -- the entry point
+    run_preprocessing()'s own docstring says doesn't exist yet ("there is
+    no separate apply-an-already-fitted-transform-to-new-data entry
+    point in this codebase"). This is that entry point, for live
+    inference (crypto_pipeline.ml.inference.live_inference): never
+    re-fits anything, only replays fit_objects's already-learned
+    parameters in the exact order they were originally applied.
+
+    df must already include enough LEADING history before the rows you
+    actually want signals for to cover every step's warm-up window (the
+    same role preceding_df plays in run_preprocessing() for val/test) --
+    e.g. an EMA_50 feature or a fractional-differencing step both need
+    real prior bars, not just the newest candle. live_inference.py
+    handles fetching that extra lookback; this function only walks the
+    preprocessing chain across whatever df it's given, using df itself
+    as its own "preceding" history for the warm-up window (there is no
+    separate earlier split to draw from here, unlike train->val->test).
+
+    Args:
+        df: feature dataframe (feature_columns present, extra leading
+            rows for warm-up included), NOT yet preprocessed.
+        feature_columns: same list/order the run was trained with
+            (model_loader.load_run()'s "feature_columns").
+        fit_objects: the run's persisted preprocessing chain, in
+            original application order -- each entry
+            {"method": str, "fit_info": dict}.
+
+    Returns:
+        pd.DataFrame, same shape/index as df, with feature_columns
+        replaced by their preprocessed values. Non-feature columns
+        (datetime, close, etc.) pass through untouched. Leading rows
+        that are still NaN after the chain (not enough real history was
+        provided to fully cover every step's warm-up) are left as NaN
+        rather than silently dropped -- callers decide what to do with
+        an incomplete tail.
+    """
+    if not fit_objects:
+        return df
+
+    out = df
+    for entry in fit_objects:
+        method_name = entry["method"]
+        fit_info = entry["fit_info"]
+        if method_name not in PREPROCESSING_REGISTRY:
+            raise ValueError(
+                f"Unknown preprocessing method '{method_name}' in saved fit_objects. "
+                f"Available: {list(PREPROCESSING_REGISTRY.keys())}"
+            )
+        transform_fn = PREPROCESSING_REGISTRY[method_name]
+        # fit_info mixes real transform_fn kwargs (d, threshold, window,
+        # norm, ...) with bookkeeping this module added when it was first
+        # written (method, note, weight_length, last_values, bound
+        # dicts, the fitted sklearn object itself) -- none of the
+        # transform_fn implementations in scalers.py/stationarity.py
+        # accept **kwargs, so every bookkeeping key has to be stripped
+        # before calling transform_fn(**params) again for the
+        # backward-looking branches in apply_fitted_preprocessing().
+        # order/window/d/threshold/n_quantiles/norm/etc. are exactly the
+        # keys each apply_*() function's own signature defines beyond
+        # df/fit_mask -- everything else here is metadata, not a param.
+        _NON_PARAM_KEYS = {
+            "method", "note", "weight_length", "last_values",
+            "lower_bounds", "upper_bounds", "_sklearn_object",
+        }
+        params = {k: v for k, v in fit_info.items() if k not in _NON_PARAM_KEYS}
+        transformed = apply_fitted_preprocessing(
+            out, feature_columns, fit_info, transform_fn, params, preceding_df=out,
+        )
+        out = out.drop(columns=feature_columns)
+        out = pd.concat([out, transformed], axis=1)[df.columns]
+
+    return out
+
+
 def run_preprocessing(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
@@ -112,68 +281,7 @@ def run_preprocessing(
     test_initial_rows = len(test_out)
 
     def _apply_fitted(source_df: pd.DataFrame, fit_info: dict, transform_fn: Callable, params: dict, preceding_df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Re-apply an already-fitted (on train only) transform to some
-        other split (val or test) -- shared so val and test go through
-        the exact same logic and can never accidentally diverge.
-
-        preceding_df: whichever split comes immediately before
-            source_df in time (train_out for val, or val_out for test
-            when a val split exists -- otherwise train_out for test
-            too) -- only used to seed differencing's warm-up window
-            (see the weight_length/order branch below); ignored by
-            every other branch.
-        """
-        if "_sklearn_object" in fit_info:
-            fitted_scaler = fit_info["_sklearn_object"]
-            return pd.DataFrame(
-                fitted_scaler.transform(source_df[feature_columns].values),
-                columns=feature_columns,
-                index=source_df.index,
-            )
-        elif "lower_bounds" in fit_info and "upper_bounds" in fit_info:
-            lower = pd.Series(fit_info["lower_bounds"])[feature_columns]
-            upper = pd.Series(fit_info["upper_bounds"])[feature_columns]
-            return source_df[feature_columns].clip(lower=lower, upper=upper, axis=1)
-        elif "weight_length" in fit_info or "order" in fit_info:
-            # Fractional/simple differencing (stationarity.py) -- purely
-            # backward-looking, but each call independently computes its
-            # own leading warm-up window (weight_length-1 rows for
-            # fractional, `order` rows for simple) from whatever
-            # DataFrame it's given. Calling it on val/test ALONE would
-            # produce a warm-up window with no real history behind it,
-            # generating a fresh block of leading NaNs inside val/test
-            # that then get dropped -- leaving an actual GAP in the time
-            # index right at the split boundary once everything is
-            # concatenated back together (this is exactly what broke
-            # ml/timeseries/*: Darts' TimeSeries requires a regular,
-            # gap-free time index, and silently produced one with a hole
-            # in it here). Fixed by prepending preceding_df's tail
-            # (enough rows to cover the warm-up window -- train's tail
-            # for val, or val's tail for test when val exists, since
-            # that's the segment chronologically adjacent to source_df)
-            # as real history, transforming that combined frame, then
-            # slicing the prepended rows back off -- source_df's own
-            # first rows end up computed from real preceding values
-            # instead of restarting cold, so no gap, and nothing here
-            # leaks any FITTED (data-driven) train statistic since these
-            # methods have none -- only raw feature values are reused.
-            warmup = fit_info.get("weight_length", fit_info.get("order", 1) + 1) - 1
-            warmup = max(warmup, 0)
-            if warmup == 0:
-                transformed, _ = transform_fn(source_df[feature_columns], **params)
-                return transformed
-            history = preceding_df[feature_columns].iloc[-warmup:]
-            combined = pd.concat([history, source_df[feature_columns]])
-            transformed, _ = transform_fn(combined, **params)
-            return transformed.iloc[warmup:].set_axis(source_df.index)
-        else:
-            # Purely backward-looking/causal methods with no separate
-            # warm-up window (row-wise Normalizer, rolling_zscore) have
-            # nothing data-driven to leak from train and don't create a
-            # leading gap, so they're just re-run directly.
-            transformed, _ = transform_fn(source_df[feature_columns], **params)
-            return transformed
+        return apply_fitted_preprocessing(source_df, feature_columns, fit_info, transform_fn, params, preceding_df)
 
     for step in steps:
         method_name = step["method"]

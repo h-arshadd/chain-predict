@@ -116,3 +116,41 @@ def get_thresholds(ml_config: dict, section: str) -> Dict[str, float]:
 def signal_counts(signals: np.ndarray) -> Dict[str, int]:
     """Quick summary of how many Buy/Sell/Hold signals were generated -- useful for logging."""
     return {label: int(np.sum(signals == label)) for label in SIGNALS}
+
+
+# Buy/Sell/Hold -> 1/0/-1. This module's own signals (regression_signals.py /
+# classification_signals.py) are always the string labels above -- but
+# everything downstream that persists a signal series to Postgres
+# (crypto_pipeline.utils.db_utils.save_model_signals/get_model_signals,
+# and by extension crypto_pipeline.strategy_builder.assemble, which treats
+# an ML model's resolved signal identically to a playbook signal) uses the
+# int 1/0/-1 convention that the rest of the codebase's signal-producing
+# code (crypto_pipeline.signals.main.generate_signals,
+# preprocessing_lab/model_evaluation/signal_conversion.py) already uses.
+# Converting here, once, at the one shared boundary, means every caller
+# that needs the int form uses the exact same mapping instead of each
+# re-inventing (and potentially disagreeing on) Buy->1/Sell->-1 itself.
+SIGNAL_LABEL_TO_INT = {BUY: 1, HOLD: 0, SELL: -1}
+
+
+def signals_to_int(signals: np.ndarray) -> np.ndarray:
+    """
+    Convert an array of "Buy"/"Sell"/"Hold" string labels (this module's
+    own signal convention) into the 1/0/-1 int convention used everywhere
+    a signal series gets persisted or combined with other strategies'
+    signals (ml.model_signals, strategy_builder/assemble.py).
+
+    Raises on any value that isn't one of SIGNALS, rather than silently
+    mapping an unrecognized label to 0/Hold -- a label that isn't
+    Buy/Sell/Hold means something upstream produced the wrong shape, and
+    that should fail loudly here instead of quietly corrupting the signal
+    series written to Postgres.
+    """
+    signals = np.asarray(signals)
+    unknown = set(np.unique(signals)) - set(SIGNAL_LABEL_TO_INT)
+    if unknown:
+        raise ValueError(
+            f"signals_to_int() got label(s) outside {SIGNALS}: {sorted(unknown)}. "
+            f"Expected only Buy/Sell/Hold string labels."
+        )
+    return np.array([SIGNAL_LABEL_TO_INT[s] for s in signals], dtype=int)

@@ -231,8 +231,21 @@ class BaseNetwork(ABC):
         torch.save(checkpoint, path)
 
     def load(self, path: str) -> "BaseNetwork":
-        """Load a previously-saved checkpoint from `path` into this instance."""
-        checkpoint = torch.load(path, map_location=self.device)
+        """Load a previously-saved checkpoint from `path` into this instance.
+
+        weights_only=False: PyTorch 2.6 changed torch.load()'s default to
+        weights_only=True, which refuses to unpickle anything beyond raw
+        tensors -- this checkpoint's hyperparams/input_dim/extra-state
+        entries (see save() above) include plain Python/numpy objects,
+        not just tensors, so the strict default rejects them
+        (numpy._core.multiarray._reconstruct not an allowed global).
+        Safe here specifically because every checkpoint this project
+        loads was written by this same save() method, from a model this
+        project itself trained (see class docstring / ml/main.py) --
+        never a checkpoint downloaded from an untrusted third party,
+        which is the actual risk weights_only=True guards against.
+        """
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         saved_class = checkpoint.get("class_name")
         if saved_class != type(self).__name__:
             raise ValueError(
