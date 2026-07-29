@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Table, Tag, Switch, Modal, Form, Input, Select, message, Tooltip, Spin, Alert } from 'antd';
+import { Table, Switch, Modal, Form, Input, Select, message, Tooltip, Spin, Alert } from 'antd';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined,
   WalletOutlined, WarningFilled, ControlOutlined,
@@ -7,12 +7,11 @@ import {
 import { api } from '../lib/api';
 import { fmtUsd, pnlColor } from '../lib/format';
 import { panelGradient as panel } from '../components/Panel';
+import WalletStatsModal from '../components/WalletStatsModal';
 
 const MINT = '#3DDC97';
 const RED = '#F0466B';
 const AMBER = '#FF8A5C';
-
-
 
 const subPanel = {
   background: 'rgba(255,255,255,0.02)',
@@ -20,157 +19,11 @@ const subPanel = {
   borderRadius: 14,
 };
 
-
-
-function SectionLabel({ children }) {
-  return (
-    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, color: '#6B7280', textTransform: 'uppercase', marginBottom: 10 }}>
-      {children}
-    </div>
-  );
-}
-
-function MiniTable({ columns, data, emptyText }) {
-  if (!data.length) {
-    return <div style={{ color: '#6B7280', fontSize: 13, padding: '10px 2px' }}>{emptyText}</div>;
-  }
-  return (
-    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-      <thead>
-        <tr>
-          {columns.map((c) => (
-            <th
-              key={c.key}
-              style={{
-                textAlign: c.align || 'left', color: '#6B7280', fontWeight: 600,
-                fontSize: 11.5, textTransform: 'uppercase', letterSpacing: 0.3,
-                padding: '0 10px 8px', borderBottom: '1px solid rgba(255,255,255,0.06)',
-              }}
-            >
-              {c.title}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {data.map((row, i) => (
-          <tr key={i} style={{ borderBottom: i < data.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
-            {columns.map((c) => (
-              <td key={c.key} style={{ padding: '9px 10px', textAlign: c.align || 'left', color: '#F5F6F7' }}>
-                {c.render ? c.render(row) : row[c.key]}
-              </td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-// Strategies/positions/open orders/executions are always [] for now --
-// the wallets API stubs these until the Execution module is
-// wired up to join against them. The expandable row still renders
-// correctly with its own empty states in the meantime.
-function WalletExpandedRow({ wallet }) {
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, padding: '4px 8px 16px' }}>
-      <div style={{ ...subPanel, padding: 16 }}>
-        <SectionLabel>Strategies Assigned</SectionLabel>
-        <MiniTable
-          emptyText="No strategies assigned to this wallet."
-          columns={[
-            { key: 'name', title: 'Strategy' },
-            { key: 'symbol', title: 'Symbol' },
-            {
-              key: 'status', title: 'Status',
-              render: (r) => (
-                <Tag style={{
-                  background: r.status === 'Active' ? 'rgba(61,220,151,0.12)' : 'rgba(255,138,92,0.14)',
-                  color: r.status === 'Active' ? MINT : AMBER,
-                  border: 'none', borderRadius: 8, fontWeight: 600,
-                }}>
-                  {r.status}
-                </Tag>
-              ),
-            },
-          ]}
-          data={wallet.strategies}
-        />
-      </div>
-
-      <div style={{ ...subPanel, padding: 16 }}>
-        <SectionLabel>Active Positions</SectionLabel>
-        <MiniTable
-          emptyText="No open positions."
-          columns={[
-            { key: 'symbol', title: 'Symbol' },
-            {
-              key: 'side', title: 'Side',
-              render: (r) => <span style={{ color: r.side === 'Long' ? MINT : RED, fontWeight: 600 }}>{r.side}</span>,
-            },
-            { key: 'size', title: 'Size', align: 'right' },
-            {
-              key: 'pnl', title: 'PnL', align: 'right',
-              render: (r) => <span style={{ color: pnlColor(r.pnl), fontFamily: 'ui-monospace, monospace', fontWeight: 600 }}>
-                {r.pnl >= 0 ? '+' : ''}{r.pnl.toFixed(2)}
-              </span>,
-            },
-          ]}
-          data={wallet.positions}
-        />
-      </div>
-
-      <div style={{ ...subPanel, padding: 16 }}>
-        <SectionLabel>Open Orders</SectionLabel>
-        <MiniTable
-          emptyText="No open orders."
-          columns={[
-            { key: 'symbol', title: 'Symbol' },
-            {
-              key: 'side', title: 'Side',
-              render: (r) => <span style={{ color: r.side === 'Buy' ? MINT : RED, fontWeight: 600 }}>{r.side}</span>,
-            },
-            { key: 'type', title: 'Type' },
-            { key: 'price', title: 'Price', align: 'right' },
-            { key: 'qty', title: 'Qty', align: 'right' },
-          ]}
-          data={wallet.open_orders}
-        />
-      </div>
-
-      <div style={{ ...subPanel, padding: 16 }}>
-        <SectionLabel>Running Executions</SectionLabel>
-        <MiniTable
-          emptyText="No running executions."
-          columns={[
-            { key: 'strategy', title: 'Strategy' },
-            { key: 'symbol', title: 'Symbol' },
-            {
-              key: 'status', title: 'Status',
-              render: (r) => (
-                <Tag style={{
-                  background: r.status === 'Running' ? 'rgba(61,220,151,0.12)' : 'rgba(255,255,255,0.06)',
-                  color: r.status === 'Running' ? MINT : '#9096A0',
-                  border: 'none', borderRadius: 8, fontWeight: 600,
-                }}>
-                  {r.status}
-                </Tag>
-              ),
-            },
-            { key: 'uptime', title: 'Uptime', align: 'right' },
-          ]}
-          data={wallet.executions}
-        />
-      </div>
-    </div>
-  );
-}
-
 export default function Wallets() {
   const [wallets, setWallets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [expandedRows, setExpandedRows] = useState({}); // account_name -> detail (fetched on expand)
+  const [statsWallet, setStatsWallet] = useState(null); // account_name currently shown in the stats modal
   const [modalOpen, setModalOpen] = useState(false);
   const [editingWallet, setEditingWallet] = useState(null); // null = add mode
   const [submitting, setSubmitting] = useState(false);
@@ -270,12 +123,8 @@ export default function Wallets() {
     });
   };
 
-  const handleExpand = (expanded, row) => {
-    if (!expanded || expandedRows[row.account_name]) return;
-    api.get(`/api/wallets/${row.account_name}`)
-      .then((res) => setExpandedRows((prev) => ({ ...prev, [row.account_name]: res.data })))
-      .catch((err) => message.error(err.message));
-  };
+  const openStatsModal = (row) => setStatsWallet(row.account_name);
+  const closeStatsModal = () => setStatsWallet(null);
 
   const openAssignModal = (wallet) => {
     setAssignWallet(wallet);
@@ -413,11 +262,7 @@ export default function Wallets() {
   const totalPnl = wallets.reduce((s, w) => s + (w.total_pnl ?? 0), 0);
   const enabledCount = wallets.filter((w) => w.enabled).length;
 
-  const tableData = wallets.map((w) => ({
-    ...w,
-    key: w.account_name,
-    ...(expandedRows[w.account_name] || {}),
-  }));
+  const tableData = wallets.map((w) => ({ ...w, key: w.account_name }));
 
   return (
     <div style={{ paddingTop: 8 }}>
@@ -462,10 +307,10 @@ export default function Wallets() {
             columns={columns}
             dataSource={tableData}
             pagination={false}
-            expandable={{
-              expandedRowRender: (row) => <WalletExpandedRow wallet={row} />,
-              onExpand: handleExpand,
-            }}
+            onRow={(row) => ({
+              onClick: () => openStatsModal(row),
+              style: { cursor: 'pointer' },
+            })}
             locale={{ emptyText: 'No wallets connected yet. Click "Add Wallet" to connect your first exchange account.' }}
           />
         )}
@@ -588,6 +433,12 @@ export default function Wallets() {
           </div>
         )}
       </Modal>
+
+      <WalletStatsModal
+        accountName={statsWallet}
+        open={!!statsWallet}
+        onClose={closeStatsModal}
+      />
     </div>
   );
 }

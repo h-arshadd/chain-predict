@@ -193,6 +193,29 @@ def get_wallet(account_name: str, conn=Depends(get_conn)):
     return item(detail.model_dump())
 
 
+@router.get("/{account_name}/stats")
+def get_wallet_stats(account_name: str, conn=Depends(get_conn)):
+    """
+    accounts.stats -- the full ~85-stat ledger_stats() block for this
+    account (FIFO-derived realized PnL, win rate, fees, volume, streaks,
+    drawdown, long/short split, holding time, time-of-day/day-of-week
+    breakdowns, per_symbol sub-dict, etc), refreshed on whatever schedule
+    run_accounts.py runs on. Not recomputed here -- this just reads
+    accounts.stats as it currently stands.
+
+    404 if the wallet itself doesn't exist. If the wallet exists but
+    accounts.stats has no row for it yet (run_accounts.py hasn't run for
+    this account, or the table doesn't exist yet), returns
+    {"data": null} rather than a 404 -- the wallet is real, its stats
+    just aren't computed yet.
+    """
+    if wallets_repo.get_wallet(conn, account_name) is None:
+        raise HTTPException(status_code=404, detail=f"Wallet '{account_name}' not found")
+
+    stats = get_account_stats(conn, account_name)
+    return item(stats)
+
+
 @router.post("", status_code=201)
 def create_wallet(body: WalletCreate, conn=Depends(get_conn)):
     existing = wallets_repo.get_wallet(conn, body.account_name)

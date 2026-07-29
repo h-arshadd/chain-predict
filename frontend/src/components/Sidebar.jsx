@@ -8,6 +8,7 @@ import {
   SmileOutlined,
   BuildOutlined,
 } from '@ant-design/icons';
+import Logo from './Logo';
 
 const menuItems = [
   { key: '/', icon: <DashboardOutlined />, label: 'Dashboard' },
@@ -40,27 +41,7 @@ export default function Sidebar() {
       }}
     >
       {/* Logo */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          padding: '0 8px',
-          marginBottom: 32,
-        }}
-      >
-        <div
-          style={{
-            width: 30,
-            height: 30,
-            borderRadius: 9,
-            background: '#3DDC97',
-          }}
-        />
-        <span style={{ fontSize: 19, fontWeight: 700, color: '#F5F6F7', letterSpacing: -0.3 }}>
-          ChainPredict
-        </span>
-      </div>
+      <Logo style={{ marginBottom: 32 }} />
 
       {/* Nav */}
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
