@@ -136,6 +136,7 @@ export default function StrategyBuilder() {
 
   // --- Panel 3: Backtest / save ---
   const [strategyName, setStrategyName] = useState('');
+  const [nameTouched, setNameTouched] = useState(false); // user has typed into the name field themselves
   const [takeProfitValue, setTakeProfitValue] = useState(2);
   const [stopLossValue, setStopLossValue] = useState(1);
   // Backtest-only -- not part of buildStrategyPayload(), since a saved
@@ -186,13 +187,26 @@ export default function StrategyBuilder() {
     [playbooks, selectedIds]
   );
 
-  // Default name: single playbook entry, nothing else selected -> reuse
-  // its own name (still editable). Matches assemble.default_strategy_name.
+  const selectedMlModels = useMemo(
+    () => mlModels.filter((m) => selectedMlRunIds.includes(m.run_id)),
+    [mlModels, selectedMlRunIds]
+  );
+
+  // Auto-name: first selected component (playbook entry or ML model,
+  // whichever was picked first) fills the field on its own; each
+  // additional component picked after that appends " + <its name>".
+  // Stops touching the field the moment the user types into it
+  // themselves (nameTouched, set by the Input's own onChange below) --
+  // from then on this effect never overwrites what they typed, even as
+  // the selection keeps changing.
   useEffect(() => {
-    if (selectedPlaybooks.length === 1 && selectedMlRunIds.length === 0) {
-      setStrategyName(selectedPlaybooks[0].strategy_name);
-    }
-  }, [selectedPlaybooks, selectedMlRunIds]);
+    if (nameTouched) return;
+    const parts = [
+      ...selectedPlaybooks.map((p) => p.strategy_name),
+      ...selectedMlModels.map((m) => `${m.algorithm} — ${m.symbol} · ${m.timeframe}`),
+    ];
+    setStrategyName(parts.join(' + '));
+  }, [selectedPlaybooks, selectedMlModels, nameTouched]);
 
   const buildComponents = () => [
     ...selectedIds.map((playbook_id) => ({
@@ -463,7 +477,10 @@ export default function StrategyBuilder() {
               <Input
                 placeholder={`${coin.toUpperCase()}_${timeHorizon}_...`}
                 value={strategyName}
-                onChange={(e) => setStrategyName(e.target.value)}
+                onChange={(e) => {
+                  setNameTouched(true);
+                  setStrategyName(e.target.value);
+                }}
               />
             </div>
 
