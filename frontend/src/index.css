@@ -208,3 +208,14 @@ button:focus-visible {
 .ant-select-dropdown .ant-select-item-option-active:not(.ant-select-item-option-disabled) {
     background: rgba(255, 255, 255, 0.06) !important;
 }
+
+/* Modal token colors (contentBg etc.) can't carry a backdrop-filter, so
+   the actual frosted-glass look -- same recipe as Panel.jsx's panelFlat
+   (blur + saturate + translucent bg + soft border) -- is applied here
+   directly to the modal's content wrapper. */
+.ant-modal .ant-modal-content {
+    background: rgba(45, 52, 58, 0.55) !important;
+    backdrop-filter: blur(24px) saturate(160%);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}

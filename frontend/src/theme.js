@@ -106,6 +106,19 @@ export const themeConfig = {
     Tag: {
       colorBgContainer: colors.panelAlt,
     },
+    Modal: {
+      // Solid tokens only -- contentBg/headerBg/footerBg can't carry a
+      // backdrop-blur, so the actual glass effect (blur + translucency,
+      // matching Panel.jsx's panelFlat) is added via .ant-modal-content
+      // in index.css. This rgba is just the fallback/base tint.
+      contentBg: 'rgba(45, 52, 58, 0.85)',
+      headerBg: 'transparent',
+      footerBg: 'transparent',
+      titleColor: colors.textPrimary,
+      colorIcon: colors.textSecondary,
+      colorIconHover: colors.textPrimary,
+      borderRadiusLG: 22,
+    },
     Tooltip: {
       colorBgSpotlight: colors.panelAlt,
       colorTextLightSolid: colors.textPrimary,
