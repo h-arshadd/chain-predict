@@ -9,8 +9,11 @@ __pycache__/
 *.pyc
 *.pyo
 
-# VS Code
-.vscode/
+# VS Code (keep settings.json -- shared project convention, e.g. lint suppressions;
+# ignore everything else, since launch.json/tasks.json etc. tend to hold
+# machine-specific paths)
+.vscode/*
+!.vscode/settings.json
 
 # OS files
 .DS_Store
