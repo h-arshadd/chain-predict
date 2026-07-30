@@ -137,6 +137,24 @@ export default function StrategyBuilder() {
   // --- Panel 3: Backtest / save ---
   const [strategyName, setStrategyName] = useState('');
   const [nameTouched, setNameTouched] = useState(false); // user has typed into the name field themselves
+  // Existing strategy_names for the current (exchange, coin) pair -- the
+  // same scope build_and_save_strategy() checks server-side (see
+  // strategies_repo.py). Fetched fresh whenever coin changes so the
+  // field can flag a collision before the user hits Save, instead of
+  // only finding out from the 400's error toast.
+  const [existingNames, setExistingNames] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    api.get(`/api/strategies?exchange=${EXCHANGE}&coin=${coin}&limit=500`)
+      .then((res) => {
+        if (cancelled) return;
+        setExistingNames((res.data || []).map((s) => s.strategy_name));
+      })
+      .catch(() => { if (!cancelled) setExistingNames([]); });
+    return () => { cancelled = true; };
+  }, [coin]);
+  const nameTaken = strategyName.trim().length > 0
+    && existingNames.includes(strategyName.trim());
   const [takeProfitValue, setTakeProfitValue] = useState(2);
   const [stopLossValue, setStopLossValue] = useState(1);
   // Backtest-only -- not part of buildStrategyPayload(), since a saved
@@ -223,7 +241,8 @@ export default function StrategyBuilder() {
 
   const canBuild = selectedIds.length + selectedMlRunIds.length >= 1
     && strategyName.trim().length > 0
-    && timeHorizonValid;
+    && timeHorizonValid
+    && !nameTaken;
 
   // Shape shared by both actions -- saveStrategy sends it as the whole
   // body to /api/strategies/build; runBacktest nests it under
@@ -247,6 +266,8 @@ export default function StrategyBuilder() {
     message.warning(
       !timeHorizonValid
         ? 'Enter a valid timeframe (e.g. "15m", "1h", "4h", "1d").'
+        : nameTaken
+        ? `"${strategyName.trim()}" is already used for ${coin.toUpperCase()} on ${EXCHANGE}. Pick a different name.`
         : 'Select at least one playbook entry or ML model, and enter a strategy name.'
     );
     return false;
@@ -475,6 +496,7 @@ export default function StrategyBuilder() {
             <div>
               <div style={{ fontSize: 12.5, color: '#9096A0', marginBottom: 8, fontWeight: 600 }}>STRATEGY NAME</div>
               <Input
+                status={nameTaken ? 'error' : undefined}
                 placeholder={`${coin.toUpperCase()}_${timeHorizon}_...`}
                 value={strategyName}
                 onChange={(e) => {
@@ -482,6 +504,11 @@ export default function StrategyBuilder() {
                   setStrategyName(e.target.value);
                 }}
               />
+              {nameTaken && (
+                <div style={{ fontSize: 12.5, color: '#F87171', marginTop: 6 }}>
+                  Already used for {coin.toUpperCase()} on {EXCHANGE} — pick a different name.
+                </div>
+              )}
             </div>
 
             <div style={{ display: 'flex', gap: 12 }}>
