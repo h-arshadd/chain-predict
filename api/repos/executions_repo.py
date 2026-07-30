@@ -52,7 +52,7 @@ from crypto_pipeline.utils.db_utils import (
     build_execution_equity_curve_from_ledger,
     _execution_trades_table,
 )
-from crypto_pipeline.utils.metadata_utils import get_strategies
+from crypto_pipeline.utils.metadata_utils import get_strategies, get_playbook
 from crypto_pipeline.accounts.accounts_utils import get_account_api_key
 from crypto_pipeline.execution.bybit_client import get_client, get_open_position
 from crypto_pipeline.stats.calculator import compute_stats
@@ -91,16 +91,71 @@ def _describe_condition(cond: dict) -> str:
     return text
 
 
-def _describe_side(strategy_config: dict, side: str) -> str | None:
+def _describe_builder_component(conn, component: dict, side: str) -> str | None:
     """
-    Render metadata.strategy.strategy_config["strategy"]["long"|"short"]
-    (rule + conditions list, same shape as signals/strategies/*.yaml) into
-    one readable line, e.g. "ind_sma_20 crosses above close" or
-    "A AND B" for multiple conditions. Returns None if this strategy has
-    no rule for that side (long-only/short-only strategies are common).
+    One builder component's contribution to a side's description.
+      - playbook: assemble_strategy_config() only stores playbook_id +
+        strategy_name for a playbook component (see assemble.py), not
+        its actual condition rules -- look the entry back up via
+        get_playbook() to get its real strategy_config, then recurse
+        into it with _describe_side() (same {"strategy": {side: {...}}}
+        shape a standalone playbook entry has).
+      - ml_model: no long/short rule to inspect (its signal comes from
+        a trained model, not a stored condition list) -- named plainly
+        by run_id so it's still visible in the description rather than
+        silently dropped.
+    Returns None if this component has nothing to say about this side
+    (e.g. a playbook entry that's long-only, on the short side), or if
+    a referenced playbook entry no longer exists.
+    """
+    if component.get("kind") == "playbook":
+        playbook_id = component.get("playbook_id")
+        playbook_row = get_playbook(conn, playbook_id) if playbook_id is not None else None
+        nested = playbook_row.get("strategy_config") if playbook_row else None
+        described = _describe_side(conn, nested, side) if nested else None
+        label = component.get("strategy_name") or (playbook_row or {}).get("strategy_name") or f"playbook #{playbook_id}"
+        return f"[{label}] {described}" if described else None
+    if component.get("kind") == "ml_model":
+        # ML model components don't gate by side -- the trained model's
+        # signal itself decides long/short/hold, there's no separate
+        # per-side condition list to describe.
+        return f"[ml_model {component.get('run_id')}] model signal"
+    return None
+
+
+def _describe_side(conn, strategy_config: dict, side: str) -> str | None:
+    """
+    Render a strategy_config's long/short rule as one readable line, e.g.
+    "ind_sma_20 crosses above close" or "A AND B" for multiple
+    conditions. Returns None if this strategy has no rule for that side
+    (long-only/short-only strategies are common).
+
+    Handles two shapes:
+      - a single playbook strategy: strategy_config["strategy"][side]
+        (rule + conditions list, same shape as signals/strategies/*.yaml)
+      - a Strategy Builder combined strategy: strategy_config["builder"]
+        (components + combine_rule, see assemble.assemble_strategy_config)
+        -- these never have a top-level "strategy" key, so without this
+        branch every builder-assembled strategy reads as having no
+        long/short rule at all, even when its components do. conn is
+        needed here to look each playbook component's real rule back up
+        (see _describe_builder_component).
     """
     if not strategy_config:
         return None
+
+    builder = strategy_config.get("builder")
+    if builder is not None:
+        parts = [
+            desc for desc in (
+                _describe_builder_component(conn, c, side) for c in builder.get("components", [])
+            ) if desc
+        ]
+        if not parts:
+            return None
+        rule = (builder.get("combine_rule") or "AND").upper()
+        return f" {rule} ".join(parts)
+
     side_block = (strategy_config.get("strategy") or {}).get(side)
     if not side_block:
         return None
@@ -114,13 +169,15 @@ def _describe_side(strategy_config: dict, side: str) -> str | None:
     return f" {rule} ".join(parts)
 
 
-def _strategy_config_detail(strategy_row: dict | None) -> dict:
+def _strategy_config_detail(conn, strategy_row: dict | None) -> dict:
     """
     Real Entry Logic / Exit Logic / indicators-used text, built from the
     actual stored strategy_config JSON -- not a hardcoded description.
     "Exit logic" here means the short-side (flip/close) rule if the
     strategy has one; take_profit/stop_loss are surfaced separately since
-    they're already their own columns.
+    they're already their own columns. conn is needed to resolve a
+    Strategy Builder combined strategy's playbook components back to
+    their real rules (see _describe_builder_component).
     """
     if strategy_row is None:
         return {
@@ -138,8 +195,8 @@ def _strategy_config_detail(strategy_row: dict | None) -> dict:
 
     return {
         "indicators": indicator_keys,
-        "entry_logic_long": _describe_side(config, "long"),
-        "entry_logic_short": _describe_side(config, "short"),
+        "entry_logic_long": _describe_side(conn, config, "long"),
+        "entry_logic_short": _describe_side(conn, config, "short"),
         "take_profit_type": strategy_row.get("take_profit_type"),
         "take_profit_value": strategy_row.get("take_profit_value"),
         "stop_loss_type": strategy_row.get("stop_loss_type"),
@@ -235,7 +292,7 @@ def get_execution_detail(conn, exchange, symbol):
     detail["win_loss"] = None
     detail["equity_curve"] = []
     detail["trades"] = []
-    detail["strategy_config"] = _strategy_config_detail(strategy_row)
+    detail["strategy_config"] = _strategy_config_detail(conn, strategy_row)
     detail["live_position"] = _live_bybit_position(summary.get("account_name"), conn, symbol)
     detail["stats"] = None
 

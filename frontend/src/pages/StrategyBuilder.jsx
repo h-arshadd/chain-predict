@@ -1,36 +1,69 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Select, Spin, InputNumber, Checkbox, Radio, Input, message, Empty, DatePicker } from 'antd';
-import { PlayCircleOutlined, SaveOutlined, RiseOutlined, SwapOutlined, ThunderboltOutlined, FundOutlined, LineChartOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, SaveOutlined, RiseOutlined, SwapOutlined, ThunderboltOutlined, FundOutlined, LineChartOutlined, ApartmentOutlined, RocketOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../lib/api';
 import Panel, { panelGradient as panel } from '../components/Panel';
 
-// Same palette every other page uses (Backtests.jsx, Dashboard.jsx).
+// Same palette every other page uses (Backtests.jsx, Dashboard.jsx),
+// plus two extras (PURPLE, PINK) so the newly-split ensemble/breakout
+// categories below get their own color instead of reusing one already
+// used elsewhere.
 const MINT = '#3DDC97';
 const AMBER = '#FF8A5C';
 const BLUE = '#5B9CF6';
+const PURPLE = '#A78BFA';
+const PINK = '#F472B6';
 
 // Playbook entries only carry a strategy_name from the API -- no
 // category/description field exists server-side. Infer a rough category +
 // icon from the name itself (it already encodes indicator patterns like
-// ema/rsi/macd) purely for a friendlier list item; falls back to a generic
-// "Strategy" label when nothing matches.
+// ema/rsi/macd) purely for a friendlier list item.
+//
+// Checked most-specific-first, since several names contain more than one
+// keyword (e.g. "sma200_breakout_macd_confirm" has both "sma" and
+// "breakout" -- breakout is the more meaningful category for that name,
+// so it has to be checked before the generic trend/ema/sma bucket).
+// Every branch below is reachable by at least one playbook entry seen so
+// far (majority_vote_3cond, weighted_multi_indicator,
+// ema_rsi_macd_confluence -> ensemble; sma200_breakout_macd_confirm ->
+// breakout; macd_crossover -> momentum; rsi/reversal/doji -> mean
+// reversion; scalp/extreme -> scalping; everything else with
+// ema/sma/trend/cross/golden -> trend following), so the generic
+// fallback below should be rare in practice rather than the common case.
 function inferStrategyMeta(name) {
   const n = name.toLowerCase();
-  if (n.includes('trend') || n.includes('ema') || n.includes('sma')) {
-    return { icon: <RiseOutlined />, color: MINT, label: 'Trend following' };
+  if (n.includes('vote') || n.includes('weighted') || n.includes('confluence') || n.includes('multi_indicator') || n.includes('multi_cond')) {
+    return { icon: <ApartmentOutlined />, color: PURPLE, label: 'Ensemble' };
   }
-  if (n.includes('rsi') || n.includes('reversal') || n.includes('mean')) {
-    return { icon: <SwapOutlined />, color: AMBER, label: 'Mean reversion' };
+  if (n.includes('breakout')) {
+    return { icon: <RocketOutlined />, color: PINK, label: 'Breakout' };
   }
-  if (n.includes('macd') || n.includes('cross')) {
+  if (n.includes('macd') || n.includes('crossover')) {
     return { icon: <LineChartOutlined />, color: BLUE, label: 'Momentum' };
+  }
+  if (n.includes('rsi') || n.includes('reversal') || n.includes('mean') || n.includes('doji')) {
+    return { icon: <SwapOutlined />, color: AMBER, label: 'Mean reversion' };
   }
   if (n.includes('scalp') || n.includes('extreme')) {
     return { icon: <ThunderboltOutlined />, color: AMBER, label: 'Scalping' };
   }
+  if (n.includes('trend') || n.includes('ema') || n.includes('sma') || n.includes('cross') || n.includes('golden')) {
+    return { icon: <RiseOutlined />, color: MINT, label: 'Trend following' };
+  }
   return { icon: <FundOutlined />, color: '#9096A0', label: 'Strategy' };
+}
+
+// /api/ml-models returns model_type as "regression" | "classification"
+// (see api/schemas/ml.py) -- deep learning/timeseries algorithms collapse
+// into these same two buckets (is_deep_learning is a separate flag), so
+// no third case is needed here. Falls back to the raw value (or a dash)
+// for any older run predating this field.
+function modelTypeLabel(modelType) {
+  if (modelType === 'classification') return 'Classification';
+  if (modelType === 'regression') return 'Regression';
+  return modelType || '—';
 }
 
 const COMBINE_RULES = ['AND', 'OR', 'MAJORITY', 'WEIGHTED'];
@@ -119,12 +152,14 @@ export default function StrategyBuilder() {
       .finally(() => setPlaybooksLoading(false));
   }, []);
 
-  // ML models are restricted to the strategy's own time_horizon (PDF:
-  // "Only models trained on the same timeframe ... should be available").
-  // Normalized the same way the backend stores time_horizon, so e.g.
-  // typing "1H" or "60min" still matches models saved as "1h". Skipped
-  // entirely while the field doesn't parse yet, rather than querying
-  // with a half-typed value on every keystroke.
+  // ML models are restricted to the strategy's own coin + time_horizon
+  // (PDF: "Only models trained on the same timeframe ... should be
+  // available"; same logic applies to symbol -- a BTC strategy shouldn't
+  // list ETH-trained models). Timeframe is normalized the same way the
+  // backend stores time_horizon, so e.g. typing "1H" or "60min" still
+  // matches models saved as "1h". Skipped entirely while the field
+  // doesn't parse yet, rather than querying with a half-typed value on
+  // every keystroke.
   useEffect(() => {
     const normalized = normalizeTimeHorizon(timeHorizon);
     if (!normalized) {
@@ -134,11 +169,11 @@ export default function StrategyBuilder() {
     }
     setMlModelsLoading(true);
     setSelectedMlRunIds([]);
-    api.get(`/api/ml-models?timeframe=${encodeURIComponent(normalized)}&limit=200`)
+    api.get(`/api/ml-models?timeframe=${encodeURIComponent(normalized)}&symbol=${encodeURIComponent(coin)}&limit=200`)
       .then((res) => setMlModels(res.data))
       .catch(() => setMlModels([])) // endpoint/filter may not exist yet -- fail quiet, ML step is optional
       .finally(() => setMlModelsLoading(false));
-  }, [timeHorizon]);
+  }, [timeHorizon, coin]);
 
   const togglePlaybook = (playbookId) => {
     setSelectedIds((prev) =>
@@ -344,11 +379,36 @@ export default function StrategyBuilder() {
                 mode="multiple"
                 allowClear
                 loading={mlModelsLoading}
-                placeholder={mlModels.length === 0 ? 'No models trained on this timeframe' : 'Select ML models'}
+                placeholder={mlModels.length === 0 ? `No models trained on ${coin.toUpperCase()} · ${timeHorizon}` : 'Select ML models'}
                 style={{ width: '100%' }}
                 value={selectedMlRunIds}
                 onChange={setSelectedMlRunIds}
-                options={mlModels.map((m) => ({ value: m.run_id, label: `${m.algorithm} — ${m.symbol} · ${m.timeframe}` }))}
+                optionFilterProp="label"
+                options={mlModels.map((m) => ({
+                  value: m.run_id,
+                  // Plain-text label -- drives search matching and the
+                  // selected-value chips (antd doesn't use optionRender there).
+                  label: `${m.algorithm} — ${m.symbol} · ${m.timeframe} (${modelTypeLabel(m.model_type)})`,
+                  model_type: m.model_type,
+                }))}
+                optionRender={(option) => (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <span>{option.label.replace(/\s\([^)]+\)$/, '')}</span>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        padding: '1px 8px',
+                        borderRadius: 999,
+                        whiteSpace: 'nowrap',
+                        color: option.data.model_type === 'classification' ? BLUE : AMBER,
+                        background: option.data.model_type === 'classification' ? 'rgba(91,156,246,0.15)' : 'rgba(255,138,92,0.15)',
+                      }}
+                    >
+                      {modelTypeLabel(option.data.model_type)}
+                    </span>
+                  </div>
+                )}
               />
             </div>
 
@@ -365,7 +425,7 @@ export default function StrategyBuilder() {
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 12.5, color: '#9096A0', marginBottom: 8, fontWeight: 600 }}>COIN</div>
                 <Select style={{ width: '100%' }} value={coin} onChange={setCoin}
-                  options={COINS.map((c) => ({ value: c, label: `${c.toUpperCase()} · Bybit` }))} />
+                  options={COINS.map((c) => ({ value: c, label: c.toUpperCase() }))} />
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 12.5, color: '#9096A0', marginBottom: 8, fontWeight: 600 }}>TIMEFRAME</div>

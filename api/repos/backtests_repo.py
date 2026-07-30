@@ -550,7 +550,7 @@ def get_backtest_detail(conn, backtest_id: int) -> dict | None:
         "status": backtest_row["status"],
         "error": backtest_row["error"],
         "backtest_config": backtest_row["backtest_config"],
-        "strategy_config": _strategy_config_detail(strategy_row),
+        "strategy_config": _strategy_config_detail(conn, strategy_row),
         "started_at": backtest_row["started_at"],
         "finished_at": backtest_row["finished_at"],
         "created_at": backtest_row["created_at"],
